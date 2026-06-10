@@ -7182,25 +7182,38 @@ export function AppShell() {
       .catch(() => undefined);
   }, []);
 
-  useEffect(() => {
-    const componentDynamicIslandSettings = readComponentDynamicIslandSettings();
-    if (!componentDynamicIslandSettings.enabled) {
-      return;
-    }
-
+  const buildComponentDynamicIslandSnapshot = (): ComponentDynamicIslandSnapshot => {
     const componentIslandThemeStyle = themeStyle as CSSProperties & Record<string, string | undefined>;
+    const displayTrackId = playbarDisplayTrackIdRef.current;
+    const displayTrack = displayTrackId ? (trackLookup.get(displayTrackId) ?? null) : null;
+    const artworkUrl =
+      displayTrack === null
+        ? null
+        : resolveDisplayTrackArtworkUrl(displayTrack) ??
+          (displayTrack.id === currentTrackIdRef.current ? playbarArtworkOverrideUrlRef.current : null);
+    const displayAudio = getPlaybarDisplayAudioElement();
+    const elapsedSeconds =
+      displayAudio && Number.isFinite(displayAudio.currentTime) ? Math.max(0, displayAudio.currentTime) : 0;
+    const durationSeconds =
+      displayAudio && Number.isFinite(displayAudio.duration) && displayAudio.duration > 0
+        ? displayAudio.duration
+        : displayTrack?.durationMs
+          ? displayTrack.durationMs / 1000
+          : 0;
+    const progressValue =
+      durationSeconds > 0 ? Math.min(100, Math.max(0, (elapsedSeconds / durationSeconds) * 100)) : 0;
 
-    const snapshot: ComponentDynamicIslandSnapshot = playbarDisplayTrack
+    return displayTrack
       ? {
           hasTrack: true,
-          title: playbarDisplayTrack.title,
-          artist: playbarDisplayTrack.artist?.trim() || null,
-          album: playbarDisplayTrack.album?.trim() || null,
-          artworkUrl: activeTrackArtworkUrl,
-          isPlaying,
-          progress,
-          elapsedLabel: formatTimeLabel(elapsedTrackSeconds),
-          durationLabel: formatDurationLabelForComponentIsland(playbarDisplayTrack.durationMs),
+          title: displayTrack.title,
+          artist: displayTrack.artist?.trim() || null,
+          album: displayTrack.album?.trim() || null,
+          artworkUrl,
+          isPlaying: isPlayingRef.current,
+          progress: progressValue,
+          elapsedLabel: formatTimeLabel(Math.round(elapsedSeconds)),
+          durationLabel: formatDurationLabelForComponentIsland(displayTrack.durationMs),
           colorScheme: settings.appearance.colorScheme,
           resolvedDynamicIslandBackground: String(
             componentIslandThemeStyle["--dynamic-island-bg"] ?? "",
@@ -7241,8 +7254,15 @@ export function AppShell() {
           surfaceColor: settings.appearance.customThemeSurface,
           updatedAtMs: Date.now(),
         };
+  };
 
-    void emitComponentDynamicIslandSnapshot(snapshot).catch(() => undefined);
+  useEffect(() => {
+    const componentDynamicIslandSettings = readComponentDynamicIslandSettings();
+    if (!componentDynamicIslandSettings.enabled) {
+      return;
+    }
+
+    void emitComponentDynamicIslandSnapshot(buildComponentDynamicIslandSnapshot()).catch(() => undefined);
   }, [
     activeTrackArtworkUrl,
     elapsedTrackSeconds,
@@ -7254,6 +7274,34 @@ export function AppShell() {
     settings.appearance.customThemeSecondary,
     settings.appearance.customThemeSurface,
     themeStyle,
+  ]);
+
+  useEffect(() => {
+    if (!readComponentDynamicIslandSettings().enabled) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const latestSettings = readComponentDynamicIslandSettings();
+      if (!latestSettings.enabled) {
+        return;
+      }
+
+      void emitComponentDynamicIslandSnapshot(buildComponentDynamicIslandSnapshot()).catch(() => undefined);
+    }, 400);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    currentTrackId,
+    playbarDisplayTrackId,
+    settings.appearance.colorScheme,
+    settings.appearance.customThemePrimary,
+    settings.appearance.customThemeSecondary,
+    settings.appearance.customThemeSurface,
+    themeStyle,
+    trackLookup,
   ]);
 
   useEffect(() => {
