@@ -1,0 +1,425 @@
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+.component-control-window__panel {
+  display: grid;
+  gap: 0;
+  align-content: start;
+}
+
+.component-control-window__section {
+  display: grid;
+  gap: 14px;
+  padding: 16px 0 0;
+}
+
+.component-control-window__section-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.component-control-window__section-copy h2 {
+  margin: 0;
+  color: #1b2340;
+  font-size: 1.2rem;
+  line-height: 1.15;
+}
+
+.component-control-window__entry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.component-control-window__entry-card {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--panel-border, rgba(124, 144, 178, 0.14));
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  text-align: left;
+  transition: transform 180ms ease, background-color 180ms ease;
+}
+
+.component-control-window__entry-card:hover {
+  background: color-mix(in srgb, var(--panel-bg, rgba(255, 255, 255, 0.7)) 72%, transparent 28%);
+}
+
+.component-control-window__entry-card:active {
+  transform: scale(0.985);
+}
+
+.component-control-window__card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.component-control-window__entry-copy {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.component-control-window__entry-copy h3 {
+  margin: 0;
+  color: #1b2340;
+  font-size: 1rem;
+}
+
+.component-control-window__page {
+  min-height: 100%;
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+
+.component-control-window__page-section {
+  display: grid;
+  gap: 16px;
+}
+
+.component-control-window__section-copy p {
+  margin: 0;
+  color: #67738e;
+  line-height: 1.6;
+}
+
+.component-control-window__back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1b2340;
+  font-size: 0.94rem;
+  font-weight: 700;
+  text-align: left;
+  transition: transform 180ms ease, color 180ms ease;
+}
+
+.component-control-window__back-button:hover {
+  color: #2d5fa8;
+}
+
+.component-control-window__back-button:active {
+  transform: scale(0.97);
+}
+
+.component-control-window__back-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.component-control-window__settings-stack {
+  display: grid;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .component-control-window__entry-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.component-dynamic-island-window {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: start center;
+  padding: 0 16px 16px;
+  box-sizing: border-box;
+  background: transparent;
+  pointer-events: none;
+}
+
+.component-dynamic-island {
+  --component-dynamic-island-scale: 1;
+  --component-dynamic-island-bg: rgba(10, 14, 20, 1);
+  --component-dynamic-island-text: #f8fbff;
+  --component-dynamic-island-subtext: rgba(248, 251, 255, 0.72);
+  --component-dynamic-island-accent: #a9d0ff;
+  --component-dynamic-island-track: rgba(255, 255, 255, 0.12);
+  --component-dynamic-island-progress-fill: #ffffff;
+  width: 416px;
+  min-height: 68px;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  zoom: var(--component-dynamic-island-scale);
+  pointer-events: auto;
+  transition:
+    opacity 180ms ease,
+    transform 220ms ease;
+}
+
+.component-dynamic-island--cursor-hidden {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.component-dynamic-island__body {
+  position: relative;
+  display: block;
+  width: 100%;
+  transform-origin: center top;
+  background: var(--component-dynamic-island-bg);
+  color: var(--component-dynamic-island-text);
+  box-shadow: none;
+  overflow: visible;
+  transition:
+    width 540ms cubic-bezier(0.22, 1, 0.36, 1),
+    min-height 540ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 540ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 220ms ease,
+    clip-path 540ms cubic-bezier(0.22, 1, 0.36, 1);
+  clip-path: inset(0 round 18px);
+}
+
+.component-dynamic-island__body--integrated {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  clip-path: inset(0 round 0 0 18px 18px);
+}
+
+.component-dynamic-island__body--idle {
+  width: 138px;
+  min-height: 36px;
+  border-radius: 14px;
+  clip-path: inset(0 round 14px);
+}
+
+.component-dynamic-island__body--playback {
+  width: 416px;
+  max-width: 528px;
+  min-height: 68px;
+  border-radius: 18px;
+  clip-path: inset(0 round 18px);
+}
+
+.component-dynamic-island__body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--component-dynamic-island-bg);
+  z-index: 0;
+}
+
+.component-dynamic-island__body--integrated.component-dynamic-island__body--idle,
+.component-dynamic-island__body--integrated.component-dynamic-island__body--playback {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.component-dynamic-island__body--integrated.component-dynamic-island__body--idle {
+  clip-path: inset(0 round 0 0 14px 14px);
+}
+
+.component-dynamic-island__body--integrated.component-dynamic-island__body--playback {
+  clip-path: inset(0 round 0 0 18px 18px);
+}
+
+.component-dynamic-island__body--integrated::before {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.component-dynamic-island__idle-row {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.component-dynamic-island__view {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-items: center;
+  opacity: 0;
+  transform: translateY(12px) scale(0.94);
+  transition:
+    opacity 260ms ease,
+    transform 540ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.component-dynamic-island__view--active {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.component-dynamic-island__view--idle {
+  justify-items: center;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.component-dynamic-island__view--playback {
+  justify-items: stretch;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.component-dynamic-island__body--integrated .component-dynamic-island__view--idle {
+  padding: 7px 10px 11px;
+}
+
+.component-dynamic-island__body--integrated .component-dynamic-island__view--playback {
+  padding: 7px 10px 11px;
+}
+
+.component-dynamic-island__body[data-mode="idle"] .component-dynamic-island__view--playback {
+  opacity: 0;
+  transform: translateY(14px) scale(0.92);
+}
+
+.component-dynamic-island__body[data-mode="playback"] .component-dynamic-island__view--idle {
+  opacity: 0;
+  transform: translateY(-10px) scale(0.94);
+}
+
+.component-dynamic-island__time {
+  width: 100%;
+  text-align: center;
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.component-dynamic-island__playback-layout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  width: 100%;
+}
+
+.component-dynamic-island__artwork {
+  width: 42px;
+  height: 42px;
+  overflow: hidden;
+  border-radius: 10px;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--component-dynamic-island-accent) 22%, transparent 78%);
+}
+
+.component-dynamic-island__artwork img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.component-dynamic-island__content {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding-right: 4px;
+}
+
+.component-dynamic-island__header {
+  display: block;
+  min-width: 0;
+}
+
+.component-dynamic-island__headline {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.component-dynamic-island__title,
+.component-dynamic-island__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.component-dynamic-island__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.component-dynamic-island__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--component-dynamic-island-subtext);
+  font-size: 0.7rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.component-dynamic-island__footer {
+  display: grid;
+  gap: 4px;
+}
+
+.component-dynamic-island__progress {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--component-dynamic-island-track);
+}
+
+.component-dynamic-island__progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--component-dynamic-island-progress-fill);
+  transition: width 220ms ease;
+}
+
+.component-dynamic-island__times {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--component-dynamic-island-subtext);
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .component-dynamic-island,
+  .component-dynamic-island__body,
+  .component-dynamic-island__view,
+  .component-dynamic-island__progress-fill {
+    transition: none;
+  }
+}
