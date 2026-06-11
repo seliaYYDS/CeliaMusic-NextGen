@@ -17,8 +17,7 @@ tauri-dev.err.log
 tauri-dev.out.log
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+.vscode/
 .idea
 .DS_Store
 *.suo
