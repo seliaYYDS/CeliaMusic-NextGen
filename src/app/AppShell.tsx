@@ -774,10 +774,6 @@ const UI_COPY = {
           songTransitionTimingHelper: "控制在歌曲结束前多久开始进行过渡。",
           rememberQueueLabel: "记住播放队列",
           rememberQueueDescription: "重新打开后恢复上次队列。",
-          rememberPositionLabel: "记住播放进度",
-          rememberPositionDescription: "恢复上次播放位置。",
-          autoplayLabel: "启动后自动播放",
-          autoplayDescription: "启动后自动恢复播放。",
         },
         shortcuts: {
           eyebrow: "快捷键",
@@ -1151,10 +1147,6 @@ const UI_COPY = {
           songTransitionTimingHelper: "Choose how long before the end of a song the transition should begin.",
           rememberQueueLabel: "Remember Queue",
           rememberQueueDescription: "Restore the previous queue after reopening the app.",
-          rememberPositionLabel: "Remember Position",
-          rememberPositionDescription: "Resume songs from their previous playback positions.",
-          autoplayLabel: "Autoplay on Launch",
-          autoplayDescription: "Resume playback automatically after the real playback engine is fully connected.",
         },
         shortcuts: {
           eyebrow: "Shortcuts",
@@ -1508,17 +1500,19 @@ type QueueDragState = {
 type PersistedPlaybackResumeState = {
   queueIds: string[];
   trackId: string | null;
-  positionMs: number;
-  wasPlaying: boolean;
 };
 
-type PendingPlaybackRestoreState = {
+type PlaybackRestoreSessionState = {
+  status: "scheduled" | "hydrating" | "restoring";
   queueIds: string[];
   trackId: string | null;
-  positionMs: number;
-  shouldAutoplay: boolean;
   sequence: number;
 } | null;
+
+type PlaybackStartIntent = {
+  trackId: string;
+  source: "restore" | "standard";
+};
 
 type ThemePresetId =
   | "celia-default"
@@ -3842,7 +3836,8 @@ export function AppShell() {
   const [isImmersivePlayerVisible, setIsImmersivePlayerVisible] = useState(false);
   const [isWallpaperModeEnabled, setIsWallpaperModeEnabled] = useState(false);
   const [draggingQueueTrackId, setDraggingQueueTrackId] = useState<string | null>(null);
-  const [pendingPlaybackRestore, setPendingPlaybackRestore] = useState<PendingPlaybackRestoreState>(null);
+  const [playbackRestoreSession, setPlaybackRestoreSession] =
+    useState<PlaybackRestoreSessionState>(null);
   const [queueDropIndex, setQueueDropIndex] = useState<number | null>(null);
   const [queueDragState, setQueueDragState] = useState<QueueDragState | null>(null);
   const [playbackQueueSourcePlaylist, setPlaybackQueueSourcePlaylist] = useState<PlaylistSelection>(null);
@@ -4002,8 +3997,7 @@ export function AppShell() {
   const songTransitionPreparationPromiseRef = useRef<Promise<PreparedSongTransition | null> | null>(null);
   const songTransitionPreparationSequenceRef = useRef(0);
   const pendingAutoplayRef = useRef(false);
-  const pendingResumeTimeRef = useRef(0);
-  const resumeFromSavedPositionTrackIdRef = useRef<string | null>(null);
+  const pendingPlaybackStartIntentRef = useRef<PlaybackStartIntent | null>(null);
   const cancelledAutoMixTrackIdRef = useRef<string | null>(null);
   const playbackCandidateIndexRef = useRef(0);
   const playbackCandidatesRef = useRef<string[]>([]);
@@ -4038,7 +4032,6 @@ export function AppShell() {
   const autoMixDecisionCacheRef = useRef<Record<string, TransitionDecision | null>>({});
   const hasRestoredPlaybackStateRef = useRef(false);
   const playbackRestoreSequenceRef = useRef(0);
-  const restoreAutoplayIntentRef = useRef(false);
   const queueDragStateRef = useRef<QueueDragState | null>(null);
   const queueDropIndexRef = useRef<number | null>(null);
   const lyricsCacheRef = useRef<Record<string, NeteaseSongLyrics | null>>({});
@@ -6608,22 +6601,11 @@ export function AppShell() {
       ? settings.playback.resumeQueueTrackIds.filter((trackId) => Boolean(trackId))
       : [];
     const fallbackTrackId = settings.playback.rememberQueue ? settings.playback.resumeTrackId : null;
-    const fallbackPositionMs =
-      settings.playback.rememberPlaybackPosition ? settings.playback.resumeTrackPositionMs : 0;
-    const fallbackWasPlaying =
-      settings.playback.autoplayOnLaunch ? settings.playback.resumeWasPlaying : false;
     const rawQueueIds =
       persistedState.queueIds.length > 0
         ? persistedState.queueIds
         : fallbackQueueIds;
     const rawTrackIdCandidate = persistedState.trackId ?? fallbackTrackId;
-    const restoredPositionMs =
-      settings.playback.rememberPlaybackPosition
-        ? Math.max(0, persistedState.positionMs || fallbackPositionMs || 0)
-        : 0;
-    const shouldAutoplay =
-      settings.playback.autoplayOnLaunch &&
-      Boolean(persistedState.wasPlaying || fallbackWasPlaying);
     const hasRestorableQueue = rawQueueIds.length > 0;
     const hasRestorableTrack = Boolean(rawTrackIdCandidate);
     const hasRestorablePlaybackState = hasRestorableQueue || hasRestorableTrack;
@@ -6632,38 +6614,43 @@ export function AppShell() {
       return;
     }
 
-    setPendingPlaybackRestore({
+    setPlaybackRestoreSession({
+      status: "scheduled",
       queueIds: rawQueueIds,
       trackId: rawTrackIdCandidate,
-      positionMs: restoredPositionMs,
-      shouldAutoplay,
       sequence: playbackRestoreSequenceRef.current + 1,
     });
   }, [
     isLibraryLoading,
     isSettingsLoading,
-    settings.playback.autoplayOnLaunch,
-    settings.playback.rememberPlaybackPosition,
     settings.playback.rememberQueue,
     settings.playback.resumeQueueTrackIds,
     settings.playback.resumeTrackId,
-    settings.playback.resumeTrackPositionMs,
-    settings.playback.resumeWasPlaying,
   ]);
 
   useEffect(() => {
     let isDisposed = false;
 
-    if (isSettingsLoading || isLibraryLoading || !pendingPlaybackRestore) {
+    if (isSettingsLoading || isLibraryLoading || !playbackRestoreSession) {
       return;
     }
 
     const restorePlaybackState = async () => {
-      const restoreSequence = pendingPlaybackRestore.sequence;
-      const rawQueueIds = pendingPlaybackRestore.queueIds;
-      const rawTrackIdCandidate = pendingPlaybackRestore.trackId;
-      const restoredPositionMs = pendingPlaybackRestore.positionMs;
-      const shouldAutoplay = pendingPlaybackRestore.shouldAutoplay;
+      const restoreSession = playbackRestoreSession;
+      const restoreSequence = restoreSession.sequence;
+      const rawQueueIds = restoreSession.queueIds;
+      const rawTrackIdCandidate = restoreSession.trackId;
+
+      if (restoreSession.status === "scheduled") {
+        setPlaybackRestoreSession((current) =>
+          current && current.sequence === restoreSequence
+            ? {
+                ...current,
+                status: "hydrating",
+              }
+            : current,
+        );
+      }
       const missingNeteaseTrackIds = Array.from(
         new Set(
           [...rawQueueIds, rawTrackIdCandidate]
@@ -6711,23 +6698,28 @@ export function AppShell() {
             : [];
 
       if (!restoredTrackId && restoredQueueIds.length === 0) {
-        restoreAutoplayIntentRef.current = false;
-        resumeFromSavedPositionTrackIdRef.current = null;
-        pendingResumeTimeRef.current = 0;
-        setPendingPlaybackRestore(null);
+        setPendingPlaybackStartIntent(null);
+        setPlaybackRestoreSession(null);
         pushDynamicIslandNotification(localeStrings.notifications.playbackRestoreFailed);
         return;
       }
 
       if (restoredTrackId) {
         const requestId = beginPlaybackRequest();
-        if (settings.playback.rememberPlaybackPosition && restoredPositionMs > 0) {
-          pendingResumeTimeRef.current = restoredPositionMs / 1000;
-          resumeFromSavedPositionTrackIdRef.current = restoredTrackId;
-        }
-        restoreAutoplayIntentRef.current = shouldAutoplay;
+        setPendingPlaybackStartIntent({
+          trackId: restoredTrackId,
+          source: "restore",
+        });
+        setPlaybackRestoreSession((current) =>
+          current && current.sequence === restoreSequence
+            ? {
+                ...current,
+                status: "restoring",
+              }
+            : current,
+        );
         void requestPreparedPlayback(restoredTrackId, restoredQueueForPlayback, {
-          autoplay: shouldAutoplay,
+          autoplay: false,
           requestId,
           announceNotice: false,
           preserveRestoreState: true,
@@ -6743,7 +6735,9 @@ export function AppShell() {
       }
 
       if (restoredTrackId || restoredQueueIds.length > 0) {
-        setPendingPlaybackRestore(null);
+        if (!restoredTrackId) {
+          setPlaybackRestoreSession(null);
+        }
       }
     };
 
@@ -6757,9 +6751,8 @@ export function AppShell() {
     isLibraryLoading,
     isSettingsLoading,
     localeStrings.notifications.playbackRestoreFailed,
-    pendingPlaybackRestore,
+    playbackRestoreSession,
     transientRemoteTracks,
-    settings.playback.rememberPlaybackPosition,
   ]);
 
   useEffect(() => {
@@ -6788,8 +6781,6 @@ export function AppShell() {
     currentTrackId,
     playbackQueueIds,
     settings.playback.rememberQueue,
-    settings.playback.rememberPlaybackPosition,
-    settings.playback.autoplayOnLaunch,
   ]);
 
   const libraryArtworks = mediaLibrary?.artworks ?? [];
@@ -6827,10 +6818,10 @@ export function AppShell() {
         .filter((name) => name.length > 0)
     : [];
   const isRestoringPlaybackState =
-    pendingPlaybackRestore !== null ||
+    playbackRestoreSession !== null ||
     (isPlaybackLoading &&
       currentTrack !== null &&
-      resumeFromSavedPositionTrackIdRef.current === currentTrack.id);
+      peekPendingPlaybackStartIntent(currentTrack.id)?.source === "restore");
   const immersivePlayerCopy = getImmersivePlayerCopy(copy.locale);
   const orderedQueueIds = useMemo(
     () => (playbackQueueIds.length > 0 ? playbackQueueIds.filter((id) => trackLookup.has(id)) : []),
@@ -7028,10 +7019,8 @@ export function AppShell() {
   const cancelPendingPlaybackRestore = () => {
     playbackRestoreSequenceRef.current += 1;
     hasRestoredPlaybackStateRef.current = true;
-    restoreAutoplayIntentRef.current = false;
-    resumeFromSavedPositionTrackIdRef.current = null;
-    pendingResumeTimeRef.current = 0;
-    setPendingPlaybackRestore(null);
+    setPendingPlaybackStartIntent(null);
+    setPlaybackRestoreSession(null);
   };
 
   const clearPlaybackLoadTimeout = () => {
@@ -7610,6 +7599,25 @@ export function AppShell() {
   const isPlaybackRequestCurrent = (requestId: number) =>
     playbackRequestSequenceRef.current === requestId;
 
+  function setPendingPlaybackStartIntent(intent: PlaybackStartIntent | null) {
+    pendingPlaybackStartIntentRef.current = intent;
+  }
+
+  function consumePendingPlaybackStartIntent(trackId: string) {
+    const intent = pendingPlaybackStartIntentRef.current;
+    if (!intent || intent.trackId !== trackId) {
+      return null;
+    }
+
+    pendingPlaybackStartIntentRef.current = null;
+    return intent;
+  }
+
+  function peekPendingPlaybackStartIntent(trackId: string) {
+    const intent = pendingPlaybackStartIntentRef.current;
+    return intent && intent.trackId === trackId ? intent : null;
+  }
+
   const findTrackById = (trackId: string) =>
     transientRemoteTracksRef.current[trackId] ??
     mediaLibraryRef.current?.tracks.find((track) => track.id === trackId) ??
@@ -7937,9 +7945,10 @@ export function AppShell() {
     const activeAudio = getActiveAudioElement();
 
     if (currentTrackIdRef.current === trackId && activeAudio?.src) {
-      if (pendingAutoplayRef.current || restoreAutoplayIntentRef.current) {
+      const pendingStartIntent = consumePendingPlaybackStartIntent(trackId);
+      const shouldAutoplayImmediately = pendingAutoplayRef.current;
+      if (shouldAutoplayImmediately) {
         pendingAutoplayRef.current = false;
-        restoreAutoplayIntentRef.current = false;
         void activeAudio.play().catch((error) => {
           console.error("[player] failed to resume playback", error);
           setIsPlaying(false);
@@ -7947,9 +7956,13 @@ export function AppShell() {
           pushDynamicIslandNotification(localeStrings.notifications.playbackFailed);
         });
       }
+      if (pendingStartIntent?.source === "restore") {
+        setPlaybackRestoreSession(null);
+      }
       return;
     }
 
+    currentTrackIdRef.current = trackId;
     setCurrentTrackId(trackId);
   };
 
@@ -8784,22 +8797,6 @@ export function AppShell() {
   );
 
   useEffect(() => {
-    if (settings.playback.rememberPlaybackPosition) {
-      return;
-    }
-
-    resumeFromSavedPositionTrackIdRef.current = null;
-    pendingResumeTimeRef.current = 0;
-  }, [settings.playback.rememberPlaybackPosition]);
-
-  useEffect(
-    () => () => {
-      resumeFromSavedPositionTrackIdRef.current = null;
-    },
-    [],
-  );
-
-  useEffect(() => {
     if (isPauseFadingRef.current || isSongTransitionRunningRef.current) {
       return;
     }
@@ -8862,25 +8859,19 @@ export function AppShell() {
           isPlaybackLoading: false,
         });
 
-        if (pendingResumeTimeRef.current > 0) {
-          const nextTime =
-            duration > 0 ? Math.min(duration, pendingResumeTimeRef.current) : pendingResumeTimeRef.current;
-          audio.currentTime = nextTime;
-          syncPlaybackVisualState({
-            currentTimeSeconds: nextTime,
-            visualCurrentTimeSeconds: nextTime,
-          });
-          pendingResumeTimeRef.current = 0;
-        }
-
-        if (pendingAutoplayRef.current || restoreAutoplayIntentRef.current) {
+        const activeTrackId = audio.dataset.trackId ?? currentTrackIdRef.current ?? "";
+        const pendingStartIntent = consumePendingPlaybackStartIntent(activeTrackId);
+        if (pendingAutoplayRef.current) {
           pendingAutoplayRef.current = false;
-          restoreAutoplayIntentRef.current = false;
           void audio.play().catch((error) => {
             console.error("[player] failed to start playback", error);
             setIsPlaying(false);
             pushDynamicIslandNotification(localeStrings.notifications.playbackFailed);
           });
+        }
+
+        if (pendingStartIntent?.source === "restore") {
+          setPlaybackRestoreSession(null);
         }
       };
 
@@ -8893,9 +8884,7 @@ export function AppShell() {
         syncPlaybackVisualState({
           currentTimeSeconds: nextTime,
         });
-        if (settingsRef.current.playback.rememberPlaybackPosition) {
-          schedulePlaybackResumePersistence(320);
-        }
+        schedulePlaybackResumePersistence(320);
 
         if (!isTimelineSeekingRef.current && !audio.paused) {
           return;
@@ -9027,14 +9016,18 @@ export function AppShell() {
         isPlaybackLoading: false,
       });
 
-      if ((pendingAutoplayRef.current || restoreAutoplayIntentRef.current) && activeAudio.paused) {
+      const pendingStartIntent = peekPendingPlaybackStartIntent(currentTrack.id);
+      if (pendingAutoplayRef.current && activeAudio.paused) {
         pendingAutoplayRef.current = false;
-        restoreAutoplayIntentRef.current = false;
+        consumePendingPlaybackStartIntent(currentTrack.id);
         void activeAudio.play().catch((error) => {
           console.error("[player] failed to resume playback", error);
           setIsPlaying(false);
           pushDynamicIslandNotification(localeStrings.notifications.playbackFailed);
         });
+      }
+      if (pendingStartIntent?.source === "restore") {
+        setPlaybackRestoreSession(null);
       }
       return;
     }
@@ -9059,13 +9052,6 @@ export function AppShell() {
 
     playbackCandidatesRef.current = nextCandidates;
     playbackCandidateIndexRef.current = 0;
-    const shouldResumeFromSavedPosition =
-      settings.playback.rememberPlaybackPosition &&
-      resumeFromSavedPositionTrackIdRef.current === currentTrack.id;
-    pendingResumeTimeRef.current = shouldResumeFromSavedPosition
-      ? Math.max(0, settings.playback.resumeTrackPositionMs || pendingResumeTimeRef.current * 1000) / 1000
-      : 0;
-    resumeFromSavedPositionTrackIdRef.current = null;
     pauseActiveTrackForTransition();
     activeAudio.dataset.trackId = currentTrack.id;
     setIsPlaybackLoading(true);
@@ -9073,15 +9059,13 @@ export function AppShell() {
     activeAudio.load();
     schedulePlaybackLoadTimeout(activeAudio, currentTrack.id);
     syncPlaybackVisualState({
-      currentTimeSeconds: pendingResumeTimeRef.current,
-      visualCurrentTimeSeconds: pendingResumeTimeRef.current,
+      currentTimeSeconds: 0,
+      visualCurrentTimeSeconds: 0,
       durationSeconds: (currentTrack.durationMs ?? 0) / 1000,
     });
   }, [
     currentTrackId,
     settings.playback.preferRemoteStreaming,
-    settings.playback.rememberPlaybackPosition,
-    settings.playback.resumeTrackPositionMs,
     localeStrings.notifications.playbackFailed,
     localeStrings.notifications.trackUnsupported,
   ]);
@@ -9208,13 +9192,13 @@ export function AppShell() {
 
   const readPersistedPlaybackResumeState = (): PersistedPlaybackResumeState => {
     if (typeof window === "undefined") {
-      return { queueIds: [], trackId: null, positionMs: 0, wasPlaying: false };
+      return { queueIds: [], trackId: null };
     }
 
     try {
       const rawValue = window.localStorage.getItem(PLAYBACK_RESUME_STORAGE_KEY);
       if (!rawValue) {
-        return { queueIds: [], trackId: null, positionMs: 0, wasPlaying: false };
+        return { queueIds: [], trackId: null };
       }
 
       const parsedValue = JSON.parse(rawValue) as Partial<PersistedPlaybackResumeState> | null;
@@ -9225,21 +9209,14 @@ export function AppShell() {
         typeof parsedValue?.trackId === "string" && parsedValue.trackId.trim().length > 0
           ? parsedValue.trackId
           : null;
-      const positionMs =
-        typeof parsedValue?.positionMs === "number" && Number.isFinite(parsedValue.positionMs)
-          ? Math.max(0, Math.round(parsedValue.positionMs))
-          : 0;
-      const wasPlaying = Boolean(parsedValue?.wasPlaying);
 
       return {
         queueIds,
         trackId,
-        positionMs,
-        wasPlaying,
       };
     } catch (error) {
       console.error("[player] failed to read persisted playback resume state", error);
-      return { queueIds: [], trackId: null, positionMs: 0, wasPlaying: false };
+      return { queueIds: [], trackId: null };
     }
   };
 
@@ -9297,8 +9274,6 @@ export function AppShell() {
       ...settingsSnapshot.playback,
       resumeQueueTrackIds: [],
       resumeTrackId: null,
-      resumeTrackPositionMs: 0,
-      resumeWasPlaying: false,
     },
   });
 
@@ -9314,15 +9289,9 @@ export function AppShell() {
       (findTrackById(currentTrackId) !== null || parseNeteaseTrackIdFromCacheKey(currentTrackId) !== null)
         ? currentTrackId
         : null;
-    const persistedPositionMs =
-      baseSettings.playback.rememberPlaybackPosition && persistedCurrentTrackId
-        ? Math.max(0, Math.round(currentTimeSecondsRef.current * 1000))
-        : 0;
     const nextPlaybackState = {
       resumeQueueTrackIds: baseSettings.playback.rememberQueue ? persistedQueueTrackIds : [],
       resumeTrackId: baseSettings.playback.rememberQueue ? persistedCurrentTrackId : null,
-      resumeTrackPositionMs: baseSettings.playback.rememberPlaybackPosition ? persistedPositionMs : 0,
-      resumeWasPlaying: baseSettings.playback.autoplayOnLaunch ? isPlayingRef.current : false,
     };
 
     return {
@@ -9340,8 +9309,6 @@ export function AppShell() {
     writePersistedPlaybackResumeState({
       queueIds: nextSettings.playback.resumeQueueTrackIds,
       trackId: nextSettings.playback.resumeTrackId,
-      positionMs: nextSettings.playback.resumeTrackPositionMs,
-      wasPlaying: nextSettings.playback.resumeWasPlaying,
     });
 
     settingsRef.current = nextSettings;
@@ -10883,7 +10850,8 @@ export function AppShell() {
     resetAudioElement(secondaryAudioRef.current);
 
     pendingAutoplayRef.current = false;
-    restoreAutoplayIntentRef.current = false;
+    setPendingPlaybackStartIntent(null);
+    setPlaybackRestoreSession(null);
     playbackCandidatesRef.current = [];
     playbackCandidateIndexRef.current = 0;
     songTransitionArmedTrackIdRef.current = null;
@@ -11288,7 +11256,7 @@ export function AppShell() {
       playbackCandidatesRef.current = preparedTransition.nextCandidates;
       playbackCandidateIndexRef.current = preparedTransition.candidateIndex;
       pendingAutoplayRef.current = false;
-      restoreAutoplayIntentRef.current = false;
+      setPendingPlaybackStartIntent(null);
 
       if (target.reshuffledIds) {
         setShuffledQueueIds(target.reshuffledIds);
@@ -16904,34 +16872,6 @@ function SettingsScreen({
                   playback: {
                     ...current.playback,
                     rememberQueue: checked,
-                  },
-                }))
-              }
-            />
-            <UICheckbox
-              label={copy.settings.sections.playback.rememberPositionLabel}
-              description={copy.settings.sections.playback.rememberPositionDescription}
-              checked={settings.playback.rememberPlaybackPosition}
-              onChange={(checked) =>
-                onUpdate((current) => ({
-                  ...current,
-                  playback: {
-                    ...current.playback,
-                    rememberPlaybackPosition: checked,
-                  },
-                }))
-              }
-            />
-            <UICheckbox
-              label={copy.settings.sections.playback.autoplayLabel}
-              description={copy.settings.sections.playback.autoplayDescription}
-              checked={settings.playback.autoplayOnLaunch}
-              onChange={(checked) =>
-                onUpdate((current) => ({
-                  ...current,
-                  playback: {
-                    ...current.playback,
-                    autoplayOnLaunch: checked,
                   },
                 }))
               }

@@ -73,7 +73,6 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       ...settings.playback,
       defaultVolume: clampInteger(settings.playback.defaultVolume, 0, 100),
       songTransitionStartMs: clampInteger(settings.playback.songTransitionStartMs, 1000, 12000),
-      resumeTrackPositionMs: clampInteger(settings.playback.resumeTrackPositionMs, 0, 86400000),
     },
     network: {
       ...settings.network,

@@ -69,8 +69,6 @@ export type PlaybackSettings = {
   playbackMode: PlaybackModeOption;
   cacheMode: PlaybackCacheMode;
   rememberQueue: boolean;
-  rememberPlaybackPosition: boolean;
-  autoplayOnLaunch: boolean;
   songTransitionEnabled: boolean;
   songTransitionMode: SongTransitionMode;
   songTransitionStartMs: number;
@@ -78,8 +76,6 @@ export type PlaybackSettings = {
   preferredQuality: string;
   resumeQueueTrackIds: string[];
   resumeTrackId: string | null;
-  resumeTrackPositionMs: number;
-  resumeWasPlaying: boolean;
 };
 
 export type LibrarySettings = {
@@ -195,8 +191,6 @@ export const createDefaultAppSettings = (): AppSettings => ({
     playbackMode: "ordered",
     cacheMode: "stream",
     rememberQueue: true,
-    rememberPlaybackPosition: true,
-    autoplayOnLaunch: false,
     songTransitionEnabled: false,
     songTransitionMode: "simple-mix",
     songTransitionStartMs: 4000,
@@ -204,8 +198,6 @@ export const createDefaultAppSettings = (): AppSettings => ({
     preferredQuality: "high",
     resumeQueueTrackIds: [],
     resumeTrackId: null,
-    resumeTrackPositionMs: 0,
-    resumeWasPlaying: false,
   },
   library: {
     scanDirectories: [],
