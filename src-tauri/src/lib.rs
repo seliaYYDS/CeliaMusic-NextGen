@@ -39,9 +39,13 @@ use tauri::{
 use windows::{
     core::PCWSTR,
     Win32::{
-        Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
+        Foundation::{CloseHandle, GetLastError, RECT, ERROR_ALREADY_EXISTS},
+        Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST},
         System::Threading::CreateMutexW,
-        UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW},
+        UI::WindowsAndMessaging::{
+            FindWindowW, GetForegroundWindow, GetWindowRect, IsWindowVisible, SetForegroundWindow,
+            ShowWindow, SW_RESTORE, SW_SHOW,
+        },
     },
 };
 
@@ -123,6 +127,63 @@ fn acquire_single_instance() -> bool {
 #[cfg(not(windows))]
 fn acquire_single_instance() -> bool {
     true
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn is_other_app_fullscreen(app: tauri::AppHandle) -> bool {
+    let island_hwnd = app
+        .get_webview_window(COMPONENT_DYNAMIC_ISLAND_WINDOW_LABEL)
+        .and_then(|window| window.hwnd().ok());
+    let main_hwnd = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .and_then(|window| window.hwnd().ok());
+
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground.0.is_null() {
+            return false;
+        }
+
+        if island_hwnd.is_some_and(|hwnd| hwnd == foreground)
+            || main_hwnd.is_some_and(|hwnd| hwnd == foreground)
+        {
+            return false;
+        }
+
+        if !IsWindowVisible(foreground).as_bool() {
+            return false;
+        }
+
+        let monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+        if monitor.0.is_null() {
+            return false;
+        }
+
+        let mut monitor_info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(monitor, &mut monitor_info as *mut MONITORINFO).as_bool() {
+            return false;
+        }
+
+        let mut window_rect = RECT::default();
+        if GetWindowRect(foreground, &mut window_rect).is_err() {
+            return false;
+        }
+
+        window_rect.left <= monitor_info.rcMonitor.left
+            && window_rect.top <= monitor_info.rcMonitor.top
+            && window_rect.right >= monitor_info.rcMonitor.right
+            && window_rect.bottom >= monitor_info.rcMonitor.bottom
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn is_other_app_fullscreen(_app: tauri::AppHandle) -> bool {
+    false
 }
 
 fn should_start_hidden_to_tray() -> bool {
@@ -482,6 +543,7 @@ pub fn run() {
             sync_local_netease_api_server,
             get_local_netease_api_server_status,
             get_media_proxy_server_status,
+            is_other_app_fullscreen,
             enable_wallpaper_mode,
             open_immersive_wallpaper_window,
             open_component_dynamic_island_window

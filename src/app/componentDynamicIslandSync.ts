@@ -9,15 +9,25 @@ const COMPONENT_DYNAMIC_ISLAND_SNAPSHOT_EVENT = "component-dynamic-island://snap
 
 export type ComponentDynamicIslandDesign = "separated" | "integrated";
 export type ComponentDynamicIslandColorMode = "follow-app" | "light" | "dark" | "follow-system";
+export type ComponentDynamicIslandDefaultContentMode =
+  | "time"
+  | "date"
+  | "custom-text"
+  | "custom-format";
 
 export type ComponentDynamicIslandSettings = {
   enabled: boolean;
   alwaysOnTop: boolean;
   hideOnMouseNearby: boolean;
   hideWhenMainWindowVisible: boolean;
+  hideWhenOtherAppsFullscreen: boolean;
+  hideWhenIdle: boolean;
   scale: number;
   design: ComponentDynamicIslandDesign;
   colorMode: ComponentDynamicIslandColorMode;
+  defaultContentMode: ComponentDynamicIslandDefaultContentMode;
+  defaultCustomText: string;
+  defaultCustomFormat: string;
 };
 
 export type ComponentDynamicIslandSnapshot = {
@@ -45,9 +55,14 @@ export const DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS: ComponentDynamicIslandSe
   alwaysOnTop: true,
   hideOnMouseNearby: false,
   hideWhenMainWindowVisible: false,
+  hideWhenOtherAppsFullscreen: false,
+  hideWhenIdle: false,
   scale: 100,
   design: "separated",
   colorMode: "follow-app",
+  defaultContentMode: "time",
+  defaultCustomText: "Celia Music",
+  defaultCustomFormat: "yyyy年mm月dd日",
 };
 
 export function readComponentDynamicIslandSettings(): ComponentDynamicIslandSettings {
@@ -79,6 +94,14 @@ export function readComponentDynamicIslandSettings(): ComponentDynamicIslandSett
         typeof parsed.hideWhenMainWindowVisible === "boolean"
           ? parsed.hideWhenMainWindowVisible
           : DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.hideWhenMainWindowVisible,
+      hideWhenOtherAppsFullscreen:
+        typeof parsed.hideWhenOtherAppsFullscreen === "boolean"
+          ? parsed.hideWhenOtherAppsFullscreen
+          : DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.hideWhenOtherAppsFullscreen,
+      hideWhenIdle:
+        typeof parsed.hideWhenIdle === "boolean"
+          ? parsed.hideWhenIdle
+          : DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.hideWhenIdle,
       scale:
         typeof parsed.scale === "number" && Number.isFinite(parsed.scale)
           ? Math.max(70, Math.min(160, Math.round(parsed.scale)))
@@ -94,6 +117,21 @@ export function readComponentDynamicIslandSettings(): ComponentDynamicIslandSett
         parsed.colorMode === "follow-app"
           ? parsed.colorMode
           : DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.colorMode,
+      defaultContentMode:
+        parsed.defaultContentMode === "date" ||
+        parsed.defaultContentMode === "custom-text" ||
+        parsed.defaultContentMode === "custom-format" ||
+        parsed.defaultContentMode === "time"
+          ? parsed.defaultContentMode
+          : DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.defaultContentMode,
+      defaultCustomText:
+        typeof parsed.defaultCustomText === "string"
+          ? parsed.defaultCustomText
+          : DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.defaultCustomText,
+      defaultCustomFormat:
+        typeof parsed.defaultCustomFormat === "string"
+          ? parsed.defaultCustomFormat
+          : DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.defaultCustomFormat,
     };
   } catch {
     return DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS;

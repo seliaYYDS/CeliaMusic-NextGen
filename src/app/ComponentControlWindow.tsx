@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { UISelect, UISlider, UISwitch, type UISelectOption } from "../ui/components";
+import {
+  UISelect,
+  UISlider,
+  UISwitch,
+  UITextField,
+  type UISelectOption,
+} from "../ui/components";
 import {
   COMPONENT_DYNAMIC_ISLAND_WINDOW_LABEL,
   openComponentDynamicIslandWindow,
@@ -9,6 +15,7 @@ import {
   writeComponentDynamicIslandSettings,
   emitComponentDynamicIslandSettings,
   type ComponentDynamicIslandColorMode,
+  type ComponentDynamicIslandDefaultContentMode,
   type ComponentDynamicIslandDesign,
   type ComponentDynamicIslandSettings,
 } from "./componentDynamicIslandSync";
@@ -22,14 +29,21 @@ const COMPONENT_HUB_COPY = {
   sectionTitle: "组件列表",
   backLabel: "返回",
   dynamicIslandTitle: "灵动岛",
-  dynamicIslandDescription: "开启一个在全局可见的灵动岛，显示歌曲信息等内容。",
+  dynamicIslandDescription: "开启一个独立的全局灵动岛组件，用于显示播放信息或待机内容。",
   dynamicIslandEnabled: "开启灵动岛",
   dynamicIslandAlwaysOnTop: "灵动岛置顶",
   dynamicIslandHideOnMouseNearby: "鼠标靠近隐藏",
   dynamicIslandHideWhenMainWindowVisible: "主窗口显示时隐藏",
+  dynamicIslandHideWhenOtherAppsFullscreen: "其他应用全屏时隐藏",
+  dynamicIslandHideWhenIdle: "无播放时隐藏",
   dynamicIslandScale: "灵动岛缩放",
   dynamicIslandDesign: "灵动岛设计",
   dynamicIslandColorMode: "灵动岛配色",
+  dynamicIslandDefaultContent: "默认显示内容",
+  dynamicIslandDefaultCustomText: "自定义文字",
+  dynamicIslandDefaultCustomFormat: "自定义格式",
+  dynamicIslandDefaultCustomFormatHelper:
+    "支持 yyyy mm dd hh MM ss，例如：今天是yyyy年mm月dd日",
   cards: [
     { id: "dynamic-island", title: "灵动岛" },
     { id: "playback-info", title: "播放信息卡片" },
@@ -44,6 +58,12 @@ const COMPONENT_HUB_COPY = {
     { value: "light", label: "亮色" },
     { value: "dark", label: "暗色" },
     { value: "follow-system", label: "跟随系统" },
+  ] satisfies UISelectOption[],
+  defaultContentOptions: [
+    { value: "time", label: "时间" },
+    { value: "date", label: "日期" },
+    { value: "custom-text", label: "自定义文字" },
+    { value: "custom-format", label: "自定义格式" },
   ] satisfies UISelectOption[],
 } as const;
 
@@ -67,9 +87,9 @@ export function ComponentControlWindow() {
   const persistDynamicIslandSettings = async (nextSettings: ComponentDynamicIslandSettings) => {
     setDynamicIslandSettings(nextSettings);
     writeComponentDynamicIslandSettings(nextSettings);
-    const islandWindow = await WebviewWindow.getByLabel(
-      COMPONENT_DYNAMIC_ISLAND_WINDOW_LABEL,
-    ).catch(() => null);
+    const islandWindow = await WebviewWindow.getByLabel(COMPONENT_DYNAMIC_ISLAND_WINDOW_LABEL).catch(
+      () => null,
+    );
 
     if (nextSettings.enabled) {
       if (!islandWindow) {
@@ -288,6 +308,20 @@ export function ComponentControlWindow() {
                       void updateDynamicIslandSettings({ hideWhenMainWindowVisible: checked });
                     }}
                   />
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.dynamicIslandHideWhenOtherAppsFullscreen}
+                    checked={dynamicIslandSettings.hideWhenOtherAppsFullscreen}
+                    onChange={(checked) => {
+                      void updateDynamicIslandSettings({ hideWhenOtherAppsFullscreen: checked });
+                    }}
+                  />
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.dynamicIslandHideWhenIdle}
+                    checked={dynamicIslandSettings.hideWhenIdle}
+                    onChange={(checked) => {
+                      void updateDynamicIslandSettings({ hideWhenIdle: checked });
+                    }}
+                  />
                   <UISlider
                     label={COMPONENT_HUB_COPY.dynamicIslandScale}
                     value={dynamicIslandSettings.scale}
@@ -319,6 +353,35 @@ export function ComponentControlWindow() {
                       });
                     }}
                   />
+                  <UISelect
+                    label={COMPONENT_HUB_COPY.dynamicIslandDefaultContent}
+                    options={COMPONENT_HUB_COPY.defaultContentOptions as UISelectOption[]}
+                    value={dynamicIslandSettings.defaultContentMode}
+                    onChange={(value) => {
+                      void updateDynamicIslandSettings({
+                        defaultContentMode: value as ComponentDynamicIslandDefaultContentMode,
+                      });
+                    }}
+                  />
+                  {dynamicIslandSettings.defaultContentMode === "custom-text" ? (
+                    <UITextField
+                      label={COMPONENT_HUB_COPY.dynamicIslandDefaultCustomText}
+                      value={dynamicIslandSettings.defaultCustomText}
+                      onChange={(value) => {
+                        void updateDynamicIslandSettings({ defaultCustomText: value });
+                      }}
+                    />
+                  ) : null}
+                  {dynamicIslandSettings.defaultContentMode === "custom-format" ? (
+                    <UITextField
+                      label={COMPONENT_HUB_COPY.dynamicIslandDefaultCustomFormat}
+                      helper={COMPONENT_HUB_COPY.dynamicIslandDefaultCustomFormatHelper}
+                      value={dynamicIslandSettings.defaultCustomFormat}
+                      onChange={(value) => {
+                        void updateDynamicIslandSettings({ defaultCustomFormat: value });
+                      }}
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>

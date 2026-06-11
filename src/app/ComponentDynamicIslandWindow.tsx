@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   LogicalPosition,
   LogicalSize,
@@ -8,6 +9,7 @@ import {
   getCurrentWindow,
 } from "@tauri-apps/api/window";
 import {
+  DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS,
   type ComponentDynamicIslandSettings,
   type ComponentDynamicIslandSnapshot,
   listenComponentDynamicIslandSettings,
@@ -46,6 +48,13 @@ const IDLE_BODY_HEIGHT = 36;
 const PLAYBACK_BODY_WIDTH = 416;
 const PLAYBACK_BODY_HEIGHT = 68;
 const HIDE_NEARBY_THRESHOLD_PX = 72;
+const MIN_IDLE_BODY_WIDTH = 56;
+const MAX_IDLE_BODY_WIDTH = 320;
+const MIN_PLAYBACK_BODY_WIDTH = 188;
+const MAX_PLAYBACK_BODY_WIDTH = 528;
+const IDLE_BODY_CONTENT_PADDING_X = 28;
+const PLAYBACK_BODY_CONTENT_PADDING_X = 24;
+const MODE_SWITCH_DELAY_MS = 120;
 
 type IslandVisualMode = "idle" | "playback";
 
@@ -182,15 +191,52 @@ function buildTimeLabel() {
   }).format(new Date());
 }
 
+function buildDateLabel(date = new Date()) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function formatIdleContent(settings: ComponentDynamicIslandSettings, date = new Date()) {
+  switch (settings.defaultContentMode) {
+    case "date":
+      return buildDateLabel(date);
+    case "custom-text":
+      return settings.defaultCustomText.trim() || DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.defaultCustomText;
+    case "custom-format": {
+      const format =
+        settings.defaultCustomFormat.trim() ||
+        DEFAULT_COMPONENT_DYNAMIC_ISLAND_SETTINGS.defaultCustomFormat;
+      return format
+        .replace(/yyyy/g, String(date.getFullYear()))
+        .replace(/mm/g, padDatePart(date.getMonth() + 1))
+        .replace(/dd/g, padDatePart(date.getDate()))
+        .replace(/hh/g, padDatePart(date.getHours()))
+        .replace(/MM/g, padDatePart(date.getMinutes()))
+        .replace(/ss/g, padDatePart(date.getSeconds()));
+    }
+    case "time":
+    default:
+      return buildTimeLabel();
+  }
+}
+
 export function ComponentDynamicIslandWindow() {
   const currentWindow = useMemo(() => getCurrentWindow(), []);
   const [settings, setSettings] = useState<ComponentDynamicIslandSettings>(() =>
     readComponentDynamicIslandSettings(),
   );
   const [snapshot, setSnapshot] = useState<ComponentDynamicIslandSnapshot>(EMPTY_SNAPSHOT);
-  const [timeLabel, setTimeLabel] = useState(buildTimeLabel);
+  const [timeLabel, setTimeLabel] = useState(() => formatIdleContent(readComponentDynamicIslandSettings()));
   const [isHiddenForCursor, setIsHiddenForCursor] = useState(false);
   const [isHiddenForMainWindow, setIsHiddenForMainWindow] = useState(false);
+  const [isHiddenForFullscreenApp, setIsHiddenForFullscreenApp] = useState(false);
+  const [bodyWidth, setBodyWidth] = useState(IDLE_BODY_WIDTH);
 
   useEffect(() => {
     document.documentElement.style.background = "transparent";
@@ -203,13 +249,13 @@ export function ComponentDynamicIslandWindow() {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setTimeLabel(buildTimeLabel());
+      setTimeLabel(formatIdleContent(settings));
     }, 1000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, []);
+  }, [settings]);
 
   useEffect(() => {
     let disposed = false;
@@ -258,16 +304,86 @@ export function ComponentDynamicIslandWindow() {
   const scale = settings.scale / 100;
   const isPlaybackVisible = snapshot.hasTrack && snapshot.isPlaying;
   const visualMode: IslandVisualMode = isPlaybackVisible ? "playback" : "idle";
+  const [layoutMode, setLayoutMode] = useState<IslandVisualMode>(visualMode);
+  const [contentMode, setContentMode] = useState<IslandVisualMode>(visualMode);
   const metaLabel = snapshot.artist?.trim() || snapshot.album?.trim() || "";
   const bodyClassName = [
     "component-dynamic-island__body",
     settings.design === "integrated" ? "component-dynamic-island__body--integrated" : "",
-    visualMode === "playback"
+    layoutMode === "playback"
       ? "component-dynamic-island__body--playback"
       : "component-dynamic-island__body--idle",
   ]
     .filter(Boolean)
     .join(" ");
+
+  useEffect(() => {
+    const timer =
+      visualMode === "playback"
+        ? window.setTimeout(() => {
+            setContentMode("playback");
+          }, MODE_SWITCH_DELAY_MS)
+        : window.setTimeout(() => {
+            setLayoutMode("idle");
+            setContentMode("idle");
+          }, MODE_SWITCH_DELAY_MS);
+
+    if (visualMode === "playback") {
+      setLayoutMode("playback");
+    } else {
+      setContentMode("playback");
+    }
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [visualMode]);
+
+  useEffect(() => {
+    const updateBodyWidth = () => {
+      const idleNode = document.querySelector(
+        ".component-dynamic-island__measure-idle",
+      ) as HTMLSpanElement | null;
+      const playbackNode = document.querySelector(
+        ".component-dynamic-island__measure-playback",
+      ) as HTMLDivElement | null;
+
+      const nextWidth =
+        layoutMode === "playback"
+          ? clampNumber(
+              Math.ceil((playbackNode?.scrollWidth ?? PLAYBACK_BODY_WIDTH) + PLAYBACK_BODY_CONTENT_PADDING_X),
+              MIN_PLAYBACK_BODY_WIDTH,
+              MAX_PLAYBACK_BODY_WIDTH,
+            )
+          : clampNumber(
+              Math.ceil((idleNode?.scrollWidth ?? IDLE_BODY_WIDTH) + IDLE_BODY_CONTENT_PADDING_X),
+              MIN_IDLE_BODY_WIDTH,
+              MAX_IDLE_BODY_WIDTH,
+            );
+
+      setBodyWidth((current) => (current === nextWidth ? current : nextWidth));
+    };
+
+    updateBodyWidth();
+    const frameId = window.requestAnimationFrame(updateBodyWidth);
+    const resizeTimer = window.setTimeout(updateBodyWidth, 120);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(resizeTimer);
+    };
+  }, [
+    metaLabel,
+    settings.defaultContentMode,
+    settings.defaultCustomFormat,
+    settings.defaultCustomText,
+    layoutMode,
+    snapshot.durationLabel,
+    snapshot.elapsedLabel,
+    snapshot.progress,
+    snapshot.title,
+    timeLabel,
+  ]);
 
   useEffect(() => {
     const syncWindowBounds = async () => {
@@ -279,7 +395,7 @@ export function ComponentDynamicIslandWindow() {
       const scaleFactor = await currentWindow.scaleFactor().catch(() => monitor.scaleFactor);
       const monitorPosition = monitor.position.toLogical(scaleFactor);
       const monitorSize = monitor.size.toLogical(scaleFactor);
-      const windowWidth = Math.ceil(PLAYBACK_BODY_WIDTH * scale) + (WINDOW_MEASURE_PADDING_X * 2);
+      const windowWidth = Math.ceil(MAX_PLAYBACK_BODY_WIDTH * scale) + (WINDOW_MEASURE_PADDING_X * 2);
       const windowHeight = Math.ceil(PLAYBACK_BODY_HEIGHT * scale) + WINDOW_MEASURE_PADDING_BOTTOM;
       const centeredX = monitorPosition.x + Math.max(0, (monitorSize.width - windowWidth) / 2);
       const topOffset =
@@ -321,13 +437,13 @@ export function ComponentDynamicIslandWindow() {
         return;
       }
 
-      const bodyWidth = Math.round((visualMode === "playback" ? PLAYBACK_BODY_WIDTH : IDLE_BODY_WIDTH) * scale);
+      const measuredBodyWidth = Math.round(bodyWidth * scale);
       const bodyHeight = Math.round(
-        (visualMode === "playback" ? PLAYBACK_BODY_HEIGHT : IDLE_BODY_HEIGHT) * scale,
+        (layoutMode === "playback" ? PLAYBACK_BODY_HEIGHT : IDLE_BODY_HEIGHT) * scale,
       );
-      const islandLeft = windowPosition.x + Math.max(0, Math.round((windowSize.width - bodyWidth) / 2));
+      const islandLeft = windowPosition.x + Math.max(0, Math.round((windowSize.width - measuredBodyWidth) / 2));
       const islandTop = windowPosition.y;
-      const islandRight = islandLeft + bodyWidth;
+      const islandRight = islandLeft + measuredBodyWidth;
       const islandBottom = islandTop + bodyHeight;
 
       const dx =
@@ -356,7 +472,7 @@ export function ComponentDynamicIslandWindow() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [currentWindow, scale, settings.hideOnMouseNearby, visualMode]);
+  }, [bodyWidth, currentWindow, layoutMode, scale, settings.hideOnMouseNearby]);
 
   useEffect(() => {
     if (!settings.hideWhenMainWindowVisible) {
@@ -400,7 +516,39 @@ export function ComponentDynamicIslandWindow() {
     };
   }, [settings.hideWhenMainWindowVisible]);
 
-  const isIslandHidden = isHiddenForCursor || isHiddenForMainWindow;
+  useEffect(() => {
+    if (!settings.hideWhenOtherAppsFullscreen) {
+      setIsHiddenForFullscreenApp(false);
+      return;
+    }
+
+    let disposed = false;
+
+    const updateFullscreenVisibility = async () => {
+      const isFullscreen = await invoke<boolean>("is_other_app_fullscreen").catch(() => false);
+      if (disposed) {
+        return;
+      }
+
+      setIsHiddenForFullscreenApp((previous) =>
+        previous === Boolean(isFullscreen) ? previous : Boolean(isFullscreen),
+      );
+    };
+
+    void updateFullscreenVisibility();
+    const timer = window.setInterval(() => {
+      void updateFullscreenVisibility();
+    }, 500);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [settings.hideWhenOtherAppsFullscreen]);
+
+  const shouldHideForIdle = settings.hideWhenIdle && !isPlaybackVisible;
+  const isIslandHidden =
+    isHiddenForCursor || isHiddenForMainWindow || isHiddenForFullscreenApp || shouldHideForIdle;
 
   return (
     <div className="component-dynamic-island-window">
@@ -415,6 +563,7 @@ export function ComponentDynamicIslandWindow() {
         style={
           {
             "--component-dynamic-island-scale": String(scale),
+            "--component-dynamic-island-width": `${bodyWidth}px`,
             "--component-dynamic-island-bg": palette.background,
             "--component-dynamic-island-text": palette.text,
             "--component-dynamic-island-subtext": palette.subtext,
@@ -424,12 +573,12 @@ export function ComponentDynamicIslandWindow() {
           } as CSSProperties
         }
       >
-        <div className={bodyClassName} data-mode={visualMode}>
+        <div className={bodyClassName} data-mode={contentMode}>
           <div
             className={[
               "component-dynamic-island__view",
               "component-dynamic-island__view--idle",
-              visualMode === "idle" ? "component-dynamic-island__view--active" : "",
+              contentMode === "idle" ? "component-dynamic-island__view--active" : "",
             ]
               .filter(Boolean)
               .join(" ")}
@@ -443,7 +592,7 @@ export function ComponentDynamicIslandWindow() {
             className={[
               "component-dynamic-island__view",
               "component-dynamic-island__view--playback",
-              visualMode === "playback" ? "component-dynamic-island__view--active" : "",
+              contentMode === "playback" ? "component-dynamic-island__view--active" : "",
             ]
               .filter(Boolean)
               .join(" ")}
@@ -475,6 +624,24 @@ export function ComponentDynamicIslandWindow() {
                     <span>{snapshot.durationLabel}</span>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="component-dynamic-island__measure" aria-hidden="true">
+          <span className="component-dynamic-island__measure-idle">{timeLabel}</span>
+          <div className="component-dynamic-island__measure-playback">
+            <span className="component-dynamic-island__measure-artwork" />
+            <div className="component-dynamic-island__measure-content">
+              <div className="component-dynamic-island__measure-headline">
+                <span className="component-dynamic-island__measure-title">{snapshot.title}</span>
+                {metaLabel ? (
+                  <span className="component-dynamic-island__measure-meta">{metaLabel}</span>
+                ) : null}
+              </div>
+              <div className="component-dynamic-island__measure-times">
+                <span>{snapshot.elapsedLabel}</span>
+                <span>{snapshot.durationLabel}</span>
               </div>
             </div>
           </div>
