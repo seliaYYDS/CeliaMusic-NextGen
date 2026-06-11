@@ -20,6 +20,8 @@ const MAX_LOG_LINES: usize = 240;
 const MAX_PORT_SCAN_STEPS: u16 = 32;
 const LOCAL_API_STARTUP_TIMEOUT_SECS: u64 = 20;
 const LOCAL_API_STARTUP_EXTENDED_TIMEOUT_SECS: u64 = 60;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct LocalNeteaseApiState {
     runtime: Arc<Mutex<LocalNeteaseApiRuntime>>,
@@ -120,11 +122,14 @@ fn stop_child_process(child: Option<Child>) {
     if let Some(child) = child {
         #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
+
             let _ = Command::new("taskkill")
                 .args(["/PID", &child.id().to_string(), "/T", "/F"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
                 .spawn();
         }
 
@@ -240,7 +245,7 @@ fn spawn_local_netease_api(
     let mut command = {
         let mut command = Command::new("npx.cmd");
         command.args(["-y", "NeteaseCloudMusicApi@latest"]);
-        command.creation_flags(0x08000000);
+        command.creation_flags(CREATE_NO_WINDOW);
         command
     };
 
@@ -291,14 +296,32 @@ fn spawn_local_netease_api(
 }
 
 fn run_command_success(command: &str, args: &[&str]) -> bool {
-    Command::new(command)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        Command::new(command)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new(command)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
 }
 
 fn detect_local_api_dependencies(
