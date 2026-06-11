@@ -4049,10 +4049,20 @@ export function AppShell() {
   const localeStrings = getLocaleStrings(copy.locale);
   const playlistEditorCopy = getPlaylistEditorCopy(copy.locale);
   const isOnlineFeaturesAvailable = isNeteaseSourceEnabled(settings);
+  const hasSavedNeteaseCookie = settings.network.neteaseCookie.trim().length > 0;
   const navItems = navItemIds
     .filter(
-      (id) =>
-        isOnlineFeaturesAvailable || (id !== "explore" && id !== "favorites" && id !== "playlist"),
+      (id) => {
+        if (!isOnlineFeaturesAvailable) {
+          return id !== "explore" && id !== "favorites" && id !== "playlist";
+        }
+
+        if (!hasSavedNeteaseCookie) {
+          return id !== "favorites" && id !== "playlist";
+        }
+
+        return true;
+      },
     )
     .map((id) => ({
       id,
@@ -6756,17 +6766,23 @@ export function AppShell() {
   ]);
 
   useEffect(() => {
-    if (isOnlineFeaturesAvailable) {
+    if (!isOnlineFeaturesAvailable) {
+      if (activeNav === "explore" || activeNav === "favorites" || activeNav === "playlist") {
+        setPlaylistReturnSnapshot(null);
+        setExploreReturnSnapshot(null);
+        setSelectedPlaylist(null);
+        setActiveNav("home");
+      }
       return;
     }
 
-    if (activeNav === "explore" || activeNav === "favorites" || activeNav === "playlist") {
+    if (!hasSavedNeteaseCookie && (activeNav === "favorites" || activeNav === "playlist")) {
       setPlaylistReturnSnapshot(null);
       setExploreReturnSnapshot(null);
       setSelectedPlaylist(null);
       setActiveNav("home");
     }
-  }, [activeNav, isOnlineFeaturesAvailable]);
+  }, [activeNav, hasSavedNeteaseCookie, isOnlineFeaturesAvailable]);
 
   useEffect(() => {
     schedulePlaybackResumePersistence();
