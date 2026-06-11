@@ -4021,6 +4021,7 @@ export function AppShell() {
   const playlistEditorReopenLockUntilRef = useRef(0);
   const windowSizeSaveTimerRef = useRef<number | null>(null);
   const playbackStateSaveTimerRef = useRef<number | null>(null);
+  const playbackLoadTimeoutRef = useRef<number | null>(null);
   const attemptedPlaybackRecoveryKeyRef = useRef<string | null>(null);
   const repairingArtworkTrackKeysRef = useRef<Set<string>>(new Set());
   const repairedArtworkTrackKeysRef = useRef<Set<string>>(new Set());
@@ -6709,6 +6710,15 @@ export function AppShell() {
             ? [restoredTrackId]
             : [];
 
+      if (!restoredTrackId && restoredQueueIds.length === 0) {
+        restoreAutoplayIntentRef.current = false;
+        resumeFromSavedPositionTrackIdRef.current = null;
+        pendingResumeTimeRef.current = 0;
+        setPendingPlaybackRestore(null);
+        pushDynamicIslandNotification(localeStrings.notifications.playbackRestoreFailed);
+        return;
+      }
+
       if (restoredTrackId) {
         const requestId = beginPlaybackRequest();
         if (settings.playback.rememberPlaybackPosition && restoredPositionMs > 0) {
@@ -6720,6 +6730,7 @@ export function AppShell() {
           autoplay: shouldAutoplay,
           requestId,
           announceNotice: false,
+          preserveRestoreState: true,
         }).catch((error) => {
           if (isDisposed) {
             return;
@@ -6745,6 +6756,7 @@ export function AppShell() {
     libraryTracks,
     isLibraryLoading,
     isSettingsLoading,
+    localeStrings.notifications.playbackRestoreFailed,
     pendingPlaybackRestore,
     transientRemoteTracks,
     settings.playback.rememberPlaybackPosition,
@@ -7017,7 +7029,135 @@ export function AppShell() {
     playbackRestoreSequenceRef.current += 1;
     hasRestoredPlaybackStateRef.current = true;
     restoreAutoplayIntentRef.current = false;
+    resumeFromSavedPositionTrackIdRef.current = null;
+    pendingResumeTimeRef.current = 0;
     setPendingPlaybackRestore(null);
+  };
+
+  const clearPlaybackLoadTimeout = () => {
+    if (playbackLoadTimeoutRef.current !== null) {
+      window.clearTimeout(playbackLoadTimeoutRef.current);
+      playbackLoadTimeoutRef.current = null;
+    }
+  };
+
+  const getPlaybackLoadTimeoutMs = () =>
+    Math.min(20000, Math.max(4000, settingsRef.current.network.requestTimeoutMs || 10000) + 2000);
+
+  const handlePlaybackLoadFailure = (audio: HTMLAudioElement) => {
+    clearPlaybackLoadTimeout();
+
+    const candidates = playbackCandidatesRef.current;
+    const nextCandidateIndex = playbackCandidateIndexRef.current + 1;
+
+    if (nextCandidateIndex < candidates.length) {
+      playbackCandidateIndexRef.current = nextCandidateIndex;
+      setIsPlaybackLoading(true);
+      audio.src = candidates[nextCandidateIndex];
+      audio.load();
+      return;
+    }
+
+    const activeTrack = currentTrackRef.current;
+    const recoveryTrackId = parseNeteaseTrackIdFromCacheKey(activeTrack?.playback.cacheKey);
+    const recoveryKey = activeTrack?.playback.cacheKey ?? null;
+
+    if (
+      activeTrack &&
+      recoveryTrackId &&
+      recoveryKey &&
+      attemptedPlaybackRecoveryKeyRef.current !== recoveryKey
+    ) {
+      attemptedPlaybackRecoveryKeyRef.current = recoveryKey;
+      const shouldResumeAfterRecovery = pendingAutoplayRef.current || isPlayingRef.current;
+      pendingAutoplayRef.current = shouldResumeAfterRecovery;
+
+      void resolveNeteaseTrack(settingsRef.current, recoveryTrackId)
+        .then((resolvedTrack) => {
+          const refreshedCandidates = [
+            resolvedTrack.stream.url,
+            ...resolvedTrack.fallbackStreams.map((stream) => stream.url),
+          ].filter((candidate, index, collection) => candidate && collection.indexOf(candidate) === index);
+
+          if (refreshedCandidates.length === 0) {
+            throw new Error("No refreshed playback candidates were returned.");
+          }
+
+          if (resolvedTrack.notice) {
+            pushDynamicIslandNotification(resolvedTrack.notice);
+          } else {
+            pushDynamicIslandNotification(localeStrings.notifications.playbackRecovered);
+          }
+
+          playbackCandidatesRef.current = refreshedCandidates;
+          playbackCandidateIndexRef.current = 0;
+          setIsPlaybackLoading(true);
+          audio.dataset.trackId = activeTrack.id;
+          audio.src = refreshedCandidates[0];
+          audio.load();
+
+          if (isPersistedLibraryTrack(activeTrack.id)) {
+            void registerResolvedNeteaseTrackToLibrary(resolvedTrack)
+              .then(async (updatedTrack) => {
+                const snapshot = await refreshMediaLibrarySnapshot();
+                const refreshedTrack =
+                  snapshot.tracks.find((item) => item.playback.cacheKey === updatedTrack.playback.cacheKey) ??
+                  snapshot.tracks.find((item) => item.id === updatedTrack.id) ??
+                  updatedTrack;
+                currentTrackRef.current = refreshedTrack;
+              })
+              .catch((refreshError) => {
+                console.error("[player] failed to persist refreshed track", refreshError);
+              });
+          } else {
+            const transientTrack = createTransientNeteaseTrack(resolvedTrack.detail, resolvedTrack);
+            upsertTransientRemoteEntries([
+              {
+                track: transientTrack,
+                artworkUrl: resolvedTrack.detail.artworkUrl ?? null,
+              },
+            ]);
+            currentTrackRef.current = transientTrack;
+          }
+        })
+        .catch((error) => {
+          console.error("[player] failed to recover audio source", error);
+          setIsPlaying(false);
+          setIsPlaybackLoading(false);
+          pushDynamicIslandNotification(localeStrings.notifications.trackUnavailable);
+        });
+      return;
+    }
+
+    console.error("[player] failed to load audio source", currentTrackRef.current);
+    setIsPlaying(false);
+    setIsPlaybackLoading(false);
+    pushDynamicIslandNotification(localeStrings.notifications.trackUnavailable);
+  };
+
+  const schedulePlaybackLoadTimeout = (audio: HTMLAudioElement, trackId: string) => {
+    clearPlaybackLoadTimeout();
+    const expectedCandidateIndex = playbackCandidateIndexRef.current;
+    const timeoutMs = getPlaybackLoadTimeoutMs();
+
+    playbackLoadTimeoutRef.current = window.setTimeout(() => {
+      playbackLoadTimeoutRef.current = null;
+
+      if (
+        currentTrackIdRef.current !== trackId ||
+        audio.dataset.trackId !== trackId ||
+        playbackCandidateIndexRef.current !== expectedCandidateIndex ||
+        !isPlaybackLoadingRef.current
+      ) {
+        return;
+      }
+
+      console.error("[player] playback load timed out", {
+        trackId,
+        candidateIndex: expectedCandidateIndex,
+      });
+      handlePlaybackLoadFailure(audio);
+    }, timeoutMs);
   };
 
   const shouldShowKugouImportProgressInIsland =
@@ -7516,6 +7656,17 @@ export function AppShell() {
     return deduplicatedQueueIds;
   };
 
+  const previewPlaybarTrackLoading = (track: TrackRecord) => {
+    syncPlaybarDisplayState({
+      trackId: track.id,
+      currentTimeSeconds: 0,
+      visualTimeSeconds: 0,
+      durationSeconds: (track.durationMs ?? 0) / 1000,
+      animateMeta: true,
+    });
+    syncTimelineOwnerMode("active");
+  };
+
   const appendTrackIdsToPlaybackQueue = (trackIds: string[]) => {
     const orderedQueueIds = playbackQueueIdsRef.current;
     const normalizedTrackIds = trackIds.filter(
@@ -7882,9 +8033,13 @@ export function AppShell() {
       autoplay?: boolean;
       requestId?: number;
       announceNotice?: boolean;
+      preserveRestoreState?: boolean;
     },
   ) => {
     const requestId = options?.requestId ?? beginPlaybackRequest();
+    if (!options?.preserveRestoreState) {
+      cancelPendingPlaybackRestore();
+    }
     const targetTrack = findTrackById(trackId);
 
     if (!targetTrack) {
@@ -7898,6 +8053,7 @@ export function AppShell() {
       if (currentTrackIdRef.current !== trackId) {
         pauseActiveTrackForTransition();
       }
+      previewPlaybarTrackLoading(targetTrack);
       setIsPlaybackLoading(true);
     }
 
@@ -8679,6 +8835,9 @@ export function AppShell() {
           return;
         }
 
+        if (audio.dataset.trackId) {
+          schedulePlaybackLoadTimeout(audio, audio.dataset.trackId);
+        }
         setIsPlaybackLoading(true);
       };
 
@@ -8687,6 +8846,7 @@ export function AppShell() {
           return;
         }
 
+        clearPlaybackLoadTimeout();
         setIsPlaybackLoading(false);
       };
 
@@ -8695,6 +8855,7 @@ export function AppShell() {
           return;
         }
 
+        clearPlaybackLoadTimeout();
         const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
         syncPlaybackVisualState({
           durationSeconds: duration,
@@ -8750,6 +8911,7 @@ export function AppShell() {
           return;
         }
 
+        clearPlaybackLoadTimeout();
         setIsPlaying(true);
         setIsPlaybackLoading(false);
         schedulePlaybackResumePersistence(80);
@@ -8785,93 +8947,7 @@ export function AppShell() {
         if (!isActiveAudio()) {
           return;
         }
-
-        const candidates = playbackCandidatesRef.current;
-        const nextCandidateIndex = playbackCandidateIndexRef.current + 1;
-
-        if (nextCandidateIndex < candidates.length) {
-          playbackCandidateIndexRef.current = nextCandidateIndex;
-          setIsPlaybackLoading(true);
-          audio.src = candidates[nextCandidateIndex];
-          audio.load();
-          return;
-        }
-
-        const activeTrack = currentTrackRef.current;
-        const recoveryTrackId = parseNeteaseTrackIdFromCacheKey(activeTrack?.playback.cacheKey);
-        const recoveryKey = activeTrack?.playback.cacheKey ?? null;
-
-        if (
-          activeTrack &&
-          recoveryTrackId &&
-          recoveryKey &&
-          attemptedPlaybackRecoveryKeyRef.current !== recoveryKey
-        ) {
-          attemptedPlaybackRecoveryKeyRef.current = recoveryKey;
-          const shouldResumeAfterRecovery = pendingAutoplayRef.current || isPlayingRef.current;
-          pendingAutoplayRef.current = shouldResumeAfterRecovery;
-
-          void resolveNeteaseTrack(settingsRef.current, recoveryTrackId)
-            .then((resolvedTrack) => {
-              const refreshedCandidates = [
-                resolvedTrack.stream.url,
-                ...resolvedTrack.fallbackStreams.map((stream) => stream.url),
-              ].filter((candidate, index, collection) => candidate && collection.indexOf(candidate) === index);
-
-              if (refreshedCandidates.length === 0) {
-                throw new Error("No refreshed playback candidates were returned.");
-              }
-
-              if (resolvedTrack.notice) {
-                pushDynamicIslandNotification(resolvedTrack.notice);
-              } else {
-                pushDynamicIslandNotification(localeStrings.notifications.playbackRecovered);
-              }
-
-              playbackCandidatesRef.current = refreshedCandidates;
-              playbackCandidateIndexRef.current = 0;
-              setIsPlaybackLoading(true);
-              audio.dataset.trackId = activeTrack.id;
-              audio.src = refreshedCandidates[0];
-              audio.load();
-
-              if (isPersistedLibraryTrack(activeTrack.id)) {
-                void registerResolvedNeteaseTrackToLibrary(resolvedTrack)
-                  .then(async (updatedTrack) => {
-                    const snapshot = await refreshMediaLibrarySnapshot();
-                    const refreshedTrack =
-                      snapshot.tracks.find((item) => item.playback.cacheKey === updatedTrack.playback.cacheKey) ??
-                      snapshot.tracks.find((item) => item.id === updatedTrack.id) ??
-                      updatedTrack;
-                    currentTrackRef.current = refreshedTrack;
-                  })
-                  .catch((refreshError) => {
-                    console.error("[player] failed to persist refreshed track", refreshError);
-                  });
-              } else {
-                const transientTrack = createTransientNeteaseTrack(resolvedTrack.detail, resolvedTrack);
-                upsertTransientRemoteEntries([
-                  {
-                    track: transientTrack,
-                    artworkUrl: resolvedTrack.detail.artworkUrl ?? null,
-                  },
-                ]);
-                currentTrackRef.current = transientTrack;
-              }
-            })
-            .catch((error) => {
-              console.error("[player] failed to recover audio source", error);
-              setIsPlaying(false);
-              setIsPlaybackLoading(false);
-              pushDynamicIslandNotification(localeStrings.notifications.trackUnavailable);
-            });
-          return;
-        }
-
-        console.error("[player] failed to load audio source", currentTrackRef.current);
-        setIsPlaying(false);
-        setIsPlaybackLoading(false);
-        pushDynamicIslandNotification(localeStrings.notifications.trackUnavailable);
+        handlePlaybackLoadFailure(audio);
       };
 
       audio.addEventListener("loadstart", handleLoadStart);
@@ -8902,6 +8978,7 @@ export function AppShell() {
     }
 
     return () => {
+      clearPlaybackLoadTimeout();
       cleanupTasks.forEach((cleanup) => cleanup());
     };
   }, [currentTrackId, playbackQueueIds, localeStrings.notifications.playbackFailed, localeStrings.notifications.playbackRecovered, localeStrings.notifications.trackUnavailable]);
@@ -8994,6 +9071,7 @@ export function AppShell() {
     setIsPlaybackLoading(true);
     activeAudio.src = nextCandidates[0];
     activeAudio.load();
+    schedulePlaybackLoadTimeout(activeAudio, currentTrack.id);
     syncPlaybackVisualState({
       currentTimeSeconds: pendingResumeTimeRef.current,
       visualCurrentTimeSeconds: pendingResumeTimeRef.current,
@@ -10796,6 +10874,7 @@ export function AppShell() {
   const clearPlaybackState = (options?: { clearQueue?: boolean }) => {
     const shouldClearQueue = options?.clearQueue ?? true;
     syncTimelineOwnerMode("active");
+    clearPlaybackLoadTimeout();
     cancelSongTransition();
     cancelPauseFade();
     activeAudioSlotRef.current = "primary";
@@ -10916,6 +10995,17 @@ export function AppShell() {
 
       const normalizedQueue = dedupeNeteaseSongDetailsById(queueSongs);
       const targetSeedDetail = normalizedQueue.find((song) => song.id === trackId) ?? null;
+      if (targetSeedDetail) {
+        const previewTrack = createTransientNeteaseTrack(targetSeedDetail);
+        upsertTransientRemoteEntries([
+          {
+            track: previewTrack,
+            artworkUrl: targetSeedDetail.artworkUrl ?? null,
+          },
+        ]);
+        previewPlaybarTrackLoading(previewTrack);
+        syncPlaybarArtworkOverrideUrl(targetSeedDetail.artworkUrl ?? null);
+      }
       const targetResolution = await resolveNeteaseTrack(
         settingsRef.current,
         trackId,
@@ -11558,6 +11648,10 @@ export function AppShell() {
   };
 
   const handleTogglePlayback = async () => {
+    if (isPlaybackLoadingRef.current) {
+      return;
+    }
+
     const audio = getActiveAudioElement();
 
     if (!audio) {
@@ -13792,7 +13886,7 @@ export function AppShell() {
                 >
                   {isRestoringPlaybackState ? (
                     localeStrings.player.restoringPlayback
-                  ) : isPlaybackLoading && playbarDisplayTrack?.id === currentTrack?.id ? (
+                  ) : isPlaybackLoading && playbarDisplayTrack ? (
                     localeStrings.player.loadingTrack
                   ) : playbarDisplayTrack ? (
                     <>
@@ -13843,6 +13937,7 @@ export function AppShell() {
                   type="button"
                   aria-label={isPlaying ? copy.player.pause : copy.player.play}
                   onClick={() => void handleTogglePlayback()}
+                  disabled={isPlaybackLoading}
                 >
                   <PlayPauseAnimatedIcon isPlaying={isPlaying} />
                 </button>
