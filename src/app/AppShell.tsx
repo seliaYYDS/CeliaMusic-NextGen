@@ -6762,7 +6762,6 @@ export function AppShell() {
     isSettingsLoading,
     localeStrings.notifications.playbackRestoreFailed,
     playbackRestoreSession,
-    transientRemoteTracks,
   ]);
 
   useEffect(() => {
@@ -6822,9 +6821,20 @@ export function AppShell() {
       null
     );
   };
-  const currentTrack = currentTrackId ? (trackLookup.get(currentTrackId) ?? null) : null;
-  const playbarDisplayTrack =
-    playbarDisplayTrackId ? (trackLookup.get(playbarDisplayTrackId) ?? null) : null;
+  const resolveRenderableTrackById = (trackId: string | null) => {
+    if (!trackId) {
+      return null;
+    }
+
+    return (
+      trackLookup.get(trackId) ??
+      transientRemoteTracksRef.current[trackId] ??
+      mediaLibraryRef.current?.tracks.find((track) => track.id === trackId) ??
+      null
+    );
+  };
+  const currentTrack = resolveRenderableTrackById(currentTrackId);
+  const playbarDisplayTrack = resolveRenderableTrackById(playbarDisplayTrackId);
   const playbarTrackTitle = playbarDisplayTrack?.title ?? localeStrings.player.idleTitle;
   const playbarTrackArtist = playbarDisplayTrack?.artist?.trim() || localeStrings.player.idleArtist;
   const playbarTrackArtists = playbarDisplayTrack
@@ -6840,20 +6850,29 @@ export function AppShell() {
       peekPendingPlaybackStartIntent(currentTrack.id)?.source === "restore");
   const immersivePlayerCopy = getImmersivePlayerCopy(copy.locale);
   const orderedQueueIds = useMemo(
-    () => (playbackQueueIds.length > 0 ? playbackQueueIds.filter((id) => trackLookup.has(id)) : []),
-    [playbackQueueIds, trackLookup],
+    () => (playbackQueueIds.length > 0 ? playbackQueueIds : []),
+    [playbackQueueIds],
   );
+  const orderedQueueIdSet = useMemo(() => new Set(orderedQueueIds), [orderedQueueIds]);
   const currentQueueIds = useMemo(
     () =>
       playbackMode === "shuffle"
-        ? shuffledQueueIds.filter((id) => orderedQueueIds.includes(id))
+        ? shuffledQueueIds.filter((id) => orderedQueueIdSet.has(id))
         : orderedQueueIds,
-    [orderedQueueIds, playbackMode, shuffledQueueIds],
+    [orderedQueueIdSet, orderedQueueIds, playbackMode, shuffledQueueIds],
   );
-  const currentQueueIndex = currentTrackId ? currentQueueIds.indexOf(currentTrackId) : -1;
-  const currentQueueTracks = currentQueueIds
-    .map((trackId) => trackLookup.get(trackId) ?? null)
-    .filter((track): track is TrackRecord => track !== null);
+  const currentQueueIndexMap = useMemo(
+    () => new Map(currentQueueIds.map((trackId, index) => [trackId, index])),
+    [currentQueueIds],
+  );
+  const currentQueueIndex = currentTrackId ? (currentQueueIndexMap.get(currentTrackId) ?? -1) : -1;
+  const currentQueueTracks = useMemo(
+    () =>
+      currentQueueIds
+        .map((trackId) => resolveRenderableTrackById(trackId))
+        .filter((track): track is TrackRecord => track !== null),
+    [currentQueueIds],
+  );
   const collectPlaybackCacheProtectedTrackIds = () => {
     const protectedTrackIds = new Set<string>();
     const currentWindowStart = currentQueueIndex >= 0 ? Math.max(0, currentQueueIndex - 4) : 0;
@@ -6951,7 +6970,9 @@ export function AppShell() {
         : "顺序播放（心动模式）"
     : playbackModeLabel(playbackMode, copy.locale);
   const queueDraggingTrackId = queueDragState?.trackId ?? draggingQueueTrackId ?? null;
-  const queueDraggedSourceIndex = queueDraggingTrackId ? currentQueueIds.indexOf(queueDraggingTrackId) : -1;
+  const queueDraggedSourceIndex = queueDraggingTrackId
+    ? (currentQueueIndexMap.get(queueDraggingTrackId) ?? -1)
+    : -1;
   const resolvedQueueDropIndex = queueDraggingTrackId
     ? Math.max(
         0,
@@ -6961,6 +6982,13 @@ export function AppShell() {
         ),
       )
     : null;
+  const queueDragOrderIndexMap = useMemo(
+    () =>
+      new Map(
+        (queueDragState?.queueIds ?? []).map((trackId, index) => [trackId, index]),
+      ),
+    [queueDragState],
+  );
   const buildQueueItemDragStyle = (trackId: string): CSSProperties | undefined => {
     if (!queueDragState || !queueDraggingTrackId || resolvedQueueDropIndex === null) {
       return undefined;
@@ -6968,7 +6996,7 @@ export function AppShell() {
 
     const queueOrder = queueDragState.queueIds;
     const sourceIndex = queueDraggedSourceIndex;
-    const itemIndex = queueOrder.indexOf(trackId);
+    const itemIndex = queueDragOrderIndexMap.get(trackId) ?? -1;
     if (sourceIndex === -1 || itemIndex === -1) {
       return undefined;
     }
@@ -7553,11 +7581,22 @@ export function AppShell() {
 
   const upsertTransientRemoteEntries = (
     entries: Array<{ track: TrackRecord; artworkUrl: string | null }>,
+    options?: {
+      protectedTrackIds?: Iterable<string>;
+    },
   ) => {
     if (entries.length === 0) {
       return;
     }
 
+    const protectedTrackIds = new Set([
+      ...collectPlaybackCacheProtectedTrackIds(),
+      ...Array.from(options?.protectedTrackIds ?? []).filter(Boolean),
+    ]);
+    const dynamicTrackCacheLimit = Math.max(
+      TRANSIENT_REMOTE_TRACK_CACHE_LIMIT,
+      protectedTrackIds.size,
+    );
     const nextTracks = { ...transientRemoteTracksRef.current };
     entries.forEach(({ track }) => {
       const existing = nextTracks[track.id];
@@ -7590,19 +7629,17 @@ export function AppShell() {
         : track;
     });
     transientRemoteTracksRef.current = nextTracks;
-    pruneTransientRemoteCaches(collectPlaybackCacheProtectedTrackIds());
+    pruneTransientRemoteCaches(protectedTrackIds);
     setTransientRemoteTracks({ ...transientRemoteTracksRef.current });
 
     const nextArtworkUrls = { ...transientRemoteArtworkUrlsRef.current };
     entries.forEach(({ track, artworkUrl }) => {
-      setBoundedRecordValue(
-        nextArtworkUrls,
-        track.id,
-        artworkUrl,
-        TRANSIENT_REMOTE_TRACK_CACHE_LIMIT,
-        collectPlaybackCacheProtectedTrackIds(),
-      );
+      if (Object.prototype.hasOwnProperty.call(nextArtworkUrls, track.id)) {
+        delete nextArtworkUrls[track.id];
+      }
+      nextArtworkUrls[track.id] = artworkUrl;
     });
+    pruneBoundedRecord(nextArtworkUrls, dynamicTrackCacheLimit, protectedTrackIds);
     transientRemoteArtworkUrlsRef.current = nextArtworkUrls;
     setTransientRemoteArtworkUrls({ ...transientRemoteArtworkUrlsRef.current });
   };
@@ -8990,7 +9027,6 @@ export function AppShell() {
 
   useEffect(() => {
     const activeAudio = getActiveAudioElement();
-
     if (!activeAudio) {
       return;
     }
@@ -9053,7 +9089,6 @@ export function AppShell() {
       settings,
       playbackCachedAudioPathsRef.current[currentTrack.id] ?? null,
     );
-
     if (nextCandidates.length === 0) {
       syncPlaybackVisualState({
         isPlaying: false,
@@ -9080,6 +9115,7 @@ export function AppShell() {
       durationSeconds: (currentTrack.durationMs ?? 0) / 1000,
     });
   }, [
+    currentTrack,
     currentTrackId,
     settings.playback.preferRemoteStreaming,
     localeStrings.notifications.playbackFailed,
@@ -10995,7 +11031,6 @@ export function AppShell() {
         trackId,
         targetSeedDetail ? { detail: targetSeedDetail } : undefined,
       );
-
       if (!isPlaybackRequestCurrent(requestId)) {
         return;
       }
@@ -11016,7 +11051,14 @@ export function AppShell() {
           (song.id === targetResolution.detail.id ? targetResolution.detail : song).artworkUrl ??
           null,
       }));
-      upsertTransientRemoteEntries(transientQueue);
+      const shouldProtectFullQueueForPlayback =
+        options?.sourcePlaylist?.id !== null &&
+        options?.sourcePlaylist?.id === likedPlaylistId;
+      upsertTransientRemoteEntries(transientQueue, {
+        protectedTrackIds: shouldProtectFullQueueForPlayback
+          ? transientQueue.map((entry) => entry.track.id)
+          : undefined,
+      });
 
       const targetTrackId = buildNeteaseTrackCacheKey(targetResolution.detail.id);
       commitPlaybackSelection(
@@ -12815,6 +12857,7 @@ export function AppShell() {
             : null;
         })()
       : null;
+  const likedPlaylistId = likedSongsContextPlaylist?.id ?? null;
   const contextMenuItems: ContextMenuItemDefinition[] = (() => {
     if (!contextMenuState) {
       return [];
@@ -14001,7 +14044,7 @@ export function AppShell() {
                       <div className="playbar__queue-list" ref={queueListRef}>
                         {currentQueueTracks.map((track, index) => {
                           const isCurrentTrack = track.id === currentTrackId;
-                          const queuePosition = currentQueueIds.indexOf(track.id);
+                          const queuePosition = currentQueueIndexMap.get(track.id) ?? -1;
                           const displaySequence =
                             queueDraggingTrackId === track.id && resolvedQueueDropIndex !== null
                               ? resolvedQueueDropIndex + 1
