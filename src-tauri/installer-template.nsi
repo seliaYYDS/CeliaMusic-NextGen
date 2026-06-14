@@ -30,8 +30,8 @@ ${StrLoc}
 
 !define MANUFACTURER "xchzq"
 !define PRODUCTNAME "Celia Music Next Gen"
-!define VERSION "0.1.0"
-!define VERSIONWITHBUILD "0.1.0.0"
+!define VERSION "0.1.1"
+!define VERSIONWITHBUILD "0.1.1.0"
 !define HOMEPAGE ""
 !define INSTALLMODE "currentUser"
 !define LICENSE ""
