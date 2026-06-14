@@ -8911,6 +8911,10 @@ export function AppShell() {
           durationSeconds: duration,
           isPlaybackLoading: false,
         });
+        syncPlaybarProgressFromAudio(audio, {
+          trackId: playbarDisplayTrackIdRef.current,
+          fallbackDurationSeconds: duration,
+        });
 
         const activeTrackId = audio.dataset.trackId ?? currentTrackIdRef.current ?? "";
         const pendingStartIntent = consumePendingPlaybackStartIntent(activeTrackId);
@@ -8938,6 +8942,19 @@ export function AppShell() {
           currentTimeSeconds: nextTime,
         });
         schedulePlaybackResumePersistence(320);
+
+        if (
+          timelineOwnerModeRef.current === "active" ||
+          playbarDisplayTrackIdRef.current === (audio.dataset.trackId || null)
+        ) {
+          syncPlaybarProgressFromAudio(audio, {
+            trackId: playbarDisplayTrackIdRef.current,
+            fallbackDurationSeconds:
+              Number.isFinite(audio.duration) && audio.duration > 0
+                ? audio.duration
+                : playbarDisplayDurationSecondsRef.current,
+          });
+        }
 
         if (!isTimelineSeekingRef.current && !audio.paused) {
           return;
