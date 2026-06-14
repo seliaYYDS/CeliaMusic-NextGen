@@ -2638,7 +2638,7 @@ function parseNeteaseDynamicLyricLines(rawDynamicLyric: string | null) {
     const startTimeMs = Number(lineMatch[1] ?? 0);
     const durationMs = Number(lineMatch[2] ?? 0);
     const payload = lineMatch[3] ?? "";
-    const words: NeteaseParsedLyricWord[] = [];
+    const rawWords: NeteaseParsedLyricWord[] = [];
     const wordPattern = /\((\d+),(\d+),\d+\)([^()]*)/g;
     let wordMatch: RegExpExecArray | null;
 
@@ -2647,13 +2647,18 @@ function parseNeteaseDynamicLyricLines(rawDynamicLyric: string | null) {
       const wordDurationMs = Number(wordMatch[2] ?? 0);
       const text = (wordMatch[3] ?? "").replace(/\r?\n/g, "");
 
-      words.push({
+      rawWords.push({
         text,
         startTimeMs: wordStartTimeMs,
         durationMs: wordDurationMs,
         endTimeMs: wordStartTimeMs + wordDurationMs,
       });
     }
+
+    const words = normalizeNeteaseDynamicLyricWords(rawWords, {
+      lineStartTimeMs: startTimeMs,
+      lineDurationMs: durationMs,
+    });
 
     const text =
       words.length > 0
@@ -2676,6 +2681,89 @@ function parseNeteaseDynamicLyricLines(rawDynamicLyric: string | null) {
   });
 
   return lines.sort((left, right) => left.startTimeMs - right.startTimeMs);
+}
+
+function isNeteaseLyricPunctuationText(text: string) {
+  const compact = text.replace(/\s+/g, "");
+  return compact.length > 0 && /^[,.;:!?，。；：！？、…~"'“”‘’()[\]{}<>《》【】\-]+$/u.test(compact);
+}
+
+function normalizeNeteaseDynamicLyricWords(
+  words: NeteaseParsedLyricWord[],
+  line: {
+    lineStartTimeMs: number;
+    lineDurationMs: number;
+  },
+) {
+  if (words.length <= 1) {
+    return words;
+  }
+
+  const lineEndTimeMs = line.lineStartTimeMs + Math.max(0, line.lineDurationMs);
+  const normalizedWords = words
+    .map((word) => ({
+      ...word,
+      text: word.text.replace(/\r?\n/g, ""),
+    }))
+    .sort((left, right) => left.startTimeMs - right.startTimeMs);
+
+  const speakingDurations = normalizedWords
+    .filter((word) => !isNeteaseLyricPunctuationText(word.text) && word.durationMs > 0)
+    .map((word) => word.durationMs);
+  const fallbackDurationMs =
+    speakingDurations.length > 0
+      ? Math.max(36, Math.min(120, Math.round(speakingDurations.reduce((sum, value) => sum + value, 0) / speakingDurations.length * 0.42)))
+      : 72;
+
+  for (let index = 0; index < normalizedWords.length; index += 1) {
+    const currentWord = normalizedWords[index];
+    const nextWord = normalizedWords[index + 1] ?? null;
+    const previousWord = normalizedWords[index - 1] ?? null;
+    let resolvedStartTimeMs = currentWord.startTimeMs;
+    const nextBoundaryMs = nextWord?.startTimeMs ?? lineEndTimeMs;
+    let resolvedDurationMs = Math.max(1, currentWord.durationMs);
+
+    if (isNeteaseLyricPunctuationText(currentWord.text)) {
+      const followingGapMs = Math.max(0, nextBoundaryMs - currentWord.startTimeMs);
+      const previousDurationMs = previousWord ? Math.max(1, previousWord.durationMs) : fallbackDurationMs;
+      const punctuationCapMs = Math.max(
+        24,
+        Math.min(
+          132,
+          Math.round(Math.min(previousDurationMs * 0.55, followingGapMs > 0 ? followingGapMs * 0.6 : previousDurationMs * 0.55)),
+        ),
+      );
+
+      if (
+        previousWord &&
+        (currentWord.startTimeMs < previousWord.endTimeMs || currentWord.durationMs > punctuationCapMs)
+      ) {
+        resolvedStartTimeMs = Math.min(
+          Math.max(previousWord.endTimeMs, currentWord.startTimeMs),
+          Math.max(currentWord.startTimeMs, nextBoundaryMs - punctuationCapMs),
+        );
+      }
+
+      if (
+        currentWord.durationMs <= 0 ||
+        currentWord.durationMs >= Math.max(180, punctuationCapMs * 2) ||
+        currentWord.endTimeMs > nextBoundaryMs
+      ) {
+        resolvedDurationMs = punctuationCapMs;
+      }
+    }
+
+    const maxAllowedDurationMs = Math.max(1, nextBoundaryMs - resolvedStartTimeMs);
+    resolvedDurationMs = Math.min(maxAllowedDurationMs, Math.max(1, resolvedDurationMs));
+    normalizedWords[index] = {
+      ...currentWord,
+      startTimeMs: resolvedStartTimeMs,
+      durationMs: resolvedDurationMs,
+      endTimeMs: resolvedStartTimeMs + resolvedDurationMs,
+    };
+  }
+
+  return normalizedWords;
 }
 
 function findBestTimedLyricMatch(

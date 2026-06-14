@@ -22338,7 +22338,11 @@ function WorkspaceNotification({
 }) {
   const isVisible = phase !== "idle" && message.trim().length > 0;
 
-  return (
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <div
       className={[
         "workspace-notification",
@@ -22357,7 +22361,8 @@ function WorkspaceNotification({
       <div className="workspace-notification__body">
         <span className="workspace-notification__text">{message}</span>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -23684,11 +23689,13 @@ function ImmersiveLyricsPanel({
     : highlightedVisualItemIndex;
   const [isJumpingLyrics, setIsJumpingLyrics] = useState(false);
   const [jumpViewportOffsetY, setJumpViewportOffsetY] = useState(0);
+  const [isLyricScrollBarVisible, setIsLyricScrollBarVisible] = useState(false);
   const previousAnchorIndexRef = useRef(anchorIndex);
   const previousLyricsTimeRef = useRef(lineScrollTimeMs);
   const jumpResetTimerRef = useRef<number | null>(null);
   const previewResetTimerRef = useRef<number | null>(null);
   const pendingSeekResetTimerRef = useRef<number | null>(null);
+  const lyricScrollBarHideTimerRef = useRef<number | null>(null);
   const viewportShiftAnimationFrameRef = useRef<number | null>(null);
   const suppressNextViewportJumpRef = useRef(false);
   const pendingSeekReleaseAtRef = useRef<number | null>(null);
@@ -23741,6 +23748,24 @@ function ImmersiveLyricsPanel({
   const showRomanizedLyrics = secondaryLyricsMode === "romanized" || secondaryLyricsMode === "both";
   const isPreviewingLyrics = previewAnchorIndex !== null;
   const isSeekingLyrics = pendingSeekAnchorIndex !== null;
+  const lyricScrollBarProgress =
+    visualItems.length > 1 ? anchorIndex / Math.max(visualItems.length - 1, 1) : 0;
+
+  const clearLyricScrollBarHideTimer = () => {
+    if (lyricScrollBarHideTimerRef.current !== null) {
+      window.clearTimeout(lyricScrollBarHideTimerRef.current);
+      lyricScrollBarHideTimerRef.current = null;
+    }
+  };
+
+  const revealLyricScrollBar = () => {
+    setIsLyricScrollBarVisible(true);
+    clearLyricScrollBarHideTimer();
+    lyricScrollBarHideTimerRef.current = window.setTimeout(() => {
+      setIsLyricScrollBarVisible(false);
+      lyricScrollBarHideTimerRef.current = null;
+    }, 900);
+  };
 
   const updateWordNodes = (playheadTimeMs: number) => {
     for (const node of wordNodesRef.current) {
@@ -23915,6 +23940,7 @@ function ImmersiveLyricsPanel({
       if (pendingSeekResetTimerRef.current !== null) {
         window.clearTimeout(pendingSeekResetTimerRef.current);
       }
+      clearLyricScrollBarHideTimer();
       if (viewportShiftAnimationFrameRef.current !== null) {
         window.cancelAnimationFrame(viewportShiftAnimationFrameRef.current);
       }
@@ -24103,6 +24129,7 @@ function ImmersiveLyricsPanel({
       return;
     }
 
+    revealLyricScrollBar();
     previewWheelCarryRef.current += normalizedDeltaY;
     const stepThreshold = 42;
     const stepCount =
@@ -24265,7 +24292,8 @@ function ImmersiveLyricsPanel({
             <p>{copy.lyricsLoading}</p>
           </div>
         ) : hasRenderableLyrics && visualItems.length > 0 ? (
-          <div
+          <>
+            <div
             className={[
               "immersive-player__lyrics-viewport",
               isJumpingLyrics ? "immersive-player__lyrics-viewport--jumping" : "",
@@ -24446,8 +24474,8 @@ function ImmersiveLyricsPanel({
                         | "--immersive-lyric-line-position-curve",
                         string
                       >
-                  }
-                >
+              }
+            >
                   <div
                     className="immersive-player__lyric-line-shape"
                     style={
@@ -24544,7 +24572,24 @@ function ImmersiveLyricsPanel({
                 </div>
               );
             })}
-          </div>
+            </div>
+            <div
+            className={[
+              "immersive-player__lyrics-scrollbar",
+              isLyricScrollBarVisible ? "immersive-player__lyrics-scrollbar--visible" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            aria-hidden="true"
+          >
+            <span className="immersive-player__lyrics-scrollbar-track">
+              <span
+                className="immersive-player__lyrics-scrollbar-thumb"
+                style={{ top: `${Math.max(0, Math.min(100, lyricScrollBarProgress * 100))}%` }}
+              />
+            </span>
+            </div>
+          </>
         ) : (
           <div
             className={[
@@ -26102,8 +26147,8 @@ function OpenImmersiveHintIcon() {
       <path d="M16 4.75h3.25V8" />
       <path d="M19.25 16V19.25H16" />
       <path d="M8 19.25H4.75V16" />
-      <path d="M9.2 9.2l5.6 5.6" />
-      <path d="M10.2 14.8h4.6v-4.6" />
+      <path d="M12 16.2V8" />
+      <path d="M8.4 11.6L12 8l3.6 3.6" />
     </svg>
   );
 }

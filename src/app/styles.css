@@ -714,13 +714,18 @@ select {
 }
 
 .workspace-notification {
-  position: sticky;
-  top: 6px;
-  z-index: 16;
+  position: fixed;
+  top: 18px;
+  left: 0;
+  right: 0;
+  z-index: 40;
   display: flex;
+  align-items: flex-start;
   justify-content: center;
   width: 100%;
-  padding: 0 0 8px;
+  height: 0;
+  padding: 0;
+  overflow: visible;
   pointer-events: none;
   opacity: 0;
   transform: translateY(-10px) scale(0.98);
@@ -6594,6 +6599,10 @@ select {
   transform: scale(1.035);
 }
 
+.playbar__thumb-button:active {
+  transform: scale(0.98) translateY(1px);
+}
+
 .immersive-player {
   --immersive-color-base: rgba(17, 28, 43, 0.96);
   --immersive-color-secondary: rgba(41, 74, 114, 0.9);
@@ -8319,6 +8328,51 @@ select {
   will-change: transform;
 }
 
+.immersive-player__lyrics-scrollbar {
+  position: absolute;
+  top: 0;
+  left: -22px;
+  width: 10px;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+  z-index: 5;
+}
+
+.immersive-player__lyrics-scrollbar--visible {
+  opacity: 1;
+}
+
+.immersive-player__lyrics-scrollbar-track {
+  position: absolute;
+  top: 8%;
+  bottom: 8%;
+  left: 2px;
+  width: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.immersive-player__lyrics-scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 18%;
+  min-height: 34px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 14px rgba(7, 12, 20, 0.22);
+  transform: translateY(-50%);
+  transition:
+    top 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
 .immersive-player__lyric-line {
   position: absolute;
   top: var(--immersive-lyric-anchor-y, 50%);
@@ -8664,6 +8718,7 @@ select {
   text-align: left;
   color: rgba(255, 255, 255, var(--immersive-lyric-word-base-alpha, 0.34));
   vertical-align: baseline;
+  overflow: visible;
 }
 
 .immersive-player__lyric-word-spacing {
@@ -8677,6 +8732,8 @@ select {
   display: block;
   white-space: inherit;
   text-align: left;
+  line-height: inherit;
+  overflow: visible;
 }
 
 .immersive-player__lyric-word-base {
@@ -8721,6 +8778,8 @@ select {
   display: block;
   white-space: inherit;
   text-align: inherit;
+  line-height: inherit;
+  overflow: visible;
 }
 
 .immersive-player__lyric-word-fill-glow {
@@ -9490,6 +9549,18 @@ select {
 .playbar__thumb-button:hover .playbar__thumb-overlay {
   opacity: 1;
   transform: scale(1);
+}
+
+.playbar__thumb-button:active .playbar__thumb {
+  transform: scale(0.985);
+  box-shadow:
+    0 6px 16px rgba(11, 19, 33, 0.16),
+    0 2px 6px rgba(11, 19, 33, 0.12);
+}
+
+.playbar__thumb-button:active .playbar__thumb-overlay {
+  opacity: 0.88;
+  transform: scale(0.94);
 }
 
 .playbar__thumb-overlay svg {
