@@ -113,6 +113,7 @@ import {
   SHORTCUT_ACTION_IDS,
   type AppSettings,
   type AppSettingsSnapshot,
+  type GlobalParticleEffectType,
   type ImmersiveBackgroundMode,
   type PlaybackCacheMode,
   type PlaybackModeOption,
@@ -1651,6 +1652,22 @@ function getThemeEditorCopy(locale: string) {
       customImageOpacityLabel: "Media Opacity",
       customBlurLabel: "Background Blur",
       customDimLabel: "Background Darken",
+      globalParticleTitle: "Global Particle Effects",
+      globalParticleEnabledLabel: "Enable Global Particle Effects",
+      globalParticleEnabledDescription: "May cause frame drops and increased memory usage.",
+      globalParticleTypeLabel: "Particle Effect",
+      globalParticleLayerLabel: "Display Layer",
+      globalParticleLayerTop: "Top Layer",
+      globalParticleLayerBackground: "Background Layer",
+      globalParticleOpacityLabel: "Particle Opacity",
+      globalParticleWindSpeedLabel: "Wind Speed",
+      globalParticleFallSpeedLabel: "Fall Speed",
+      globalParticleCountLabel: "Particle Count",
+      globalParticleSizeLabel: "Particle Size",
+      globalParticleTypeLines: "Lines",
+      globalParticleTypeDots: "Dots",
+      globalParticleTypeSnow: "Snow",
+      globalParticleTypeSakura: "Sakura",
       immersiveBackgroundTitle: "Immersive Background",
       immersiveBackgroundDescription: "Choose the background style for the immersive player.",
       immersiveBackgroundModeLabel: "Immersive Background",
@@ -1714,6 +1731,22 @@ function getThemeEditorCopy(locale: string) {
     customImageOpacityLabel: "媒体透明度",
     customBlurLabel: "背景模糊",
     customDimLabel: "背景暗化",
+    globalParticleTitle: "全局粒子效果",
+    globalParticleEnabledLabel: "启用全局粒子效果",
+    globalParticleEnabledDescription: "可能会导致应用卡顿和内存占用增加。",
+    globalParticleTypeLabel: "粒子效果",
+    globalParticleLayerLabel: "显示层级",
+    globalParticleLayerTop: "最顶层",
+    globalParticleLayerBackground: "背景层",
+    globalParticleOpacityLabel: "粒子透明度",
+    globalParticleWindSpeedLabel: "风速",
+    globalParticleFallSpeedLabel: "下落速度",
+    globalParticleCountLabel: "粒子数量",
+    globalParticleSizeLabel: "粒子大小",
+    globalParticleTypeLines: "连线",
+    globalParticleTypeDots: "散点",
+    globalParticleTypeSnow: "雪花",
+    globalParticleTypeSakura: "樱花",
     immersiveBackgroundTitle: "沉浸式背景",
     immersiveBackgroundDescription: "选择沉浸式播放页的背景样式。",
     immersiveBackgroundModeLabel: "沉浸式背景",
@@ -13532,7 +13565,35 @@ export function AppShell() {
           </div>
         </div>
       ) : null}
+      {settings.appearance.globalParticleEffectEnabled &&
+      settings.appearance.globalParticleEffectLayer === "top" ? (
+        <GlobalParticleCanvas
+          enabled={true}
+          effectType={settings.appearance.globalParticleEffectType}
+          layer="top"
+          opacity={settings.appearance.globalParticleEffectOpacity}
+          windSpeed={settings.appearance.globalParticleEffectWindSpeed}
+          fallSpeed={settings.appearance.globalParticleEffectFallSpeed}
+          count={settings.appearance.globalParticleEffectCount}
+          size={settings.appearance.globalParticleEffectSize}
+          colorScheme={settings.appearance.colorScheme}
+        />
+      ) : null}
       <div className="app-shell__surface">
+        {settings.appearance.globalParticleEffectEnabled &&
+        settings.appearance.globalParticleEffectLayer === "background" ? (
+          <GlobalParticleCanvas
+            enabled={true}
+            effectType={settings.appearance.globalParticleEffectType}
+            layer="background"
+            opacity={settings.appearance.globalParticleEffectOpacity}
+            windSpeed={settings.appearance.globalParticleEffectWindSpeed}
+            fallSpeed={settings.appearance.globalParticleEffectFallSpeed}
+            count={settings.appearance.globalParticleEffectCount}
+            size={settings.appearance.globalParticleEffectSize}
+            colorScheme={settings.appearance.colorScheme}
+          />
+        ) : null}
         {effectiveBackgroundVideoSrc ? (
           <video
             ref={backgroundVideoRef}
@@ -15329,6 +15390,34 @@ function SettingsScreen({
       value: "custom",
     },
   ];
+  const globalParticleEffectOptions: UISelectOption[] = [
+    {
+      label: themeEditorCopy.globalParticleTypeLines,
+      value: "lines",
+    },
+    {
+      label: themeEditorCopy.globalParticleTypeDots,
+      value: "dots",
+    },
+    {
+      label: themeEditorCopy.globalParticleTypeSnow,
+      value: "snow",
+    },
+    {
+      label: themeEditorCopy.globalParticleTypeSakura,
+      value: "sakura",
+    },
+  ];
+  const globalParticleLayerOptions: UISelectOption[] = [
+    {
+      label: themeEditorCopy.globalParticleLayerTop,
+      value: "top",
+    },
+    {
+      label: themeEditorCopy.globalParticleLayerBackground,
+      value: "background",
+    },
+  ];
   const immersiveBackgroundModeOptions: UISelectOption[] = [
     {
       label: themeEditorCopy.immersiveBackgroundModePaletteSolid,
@@ -16095,6 +16184,150 @@ function SettingsScreen({
                 </div>
               </div>
             ) : null}
+
+            <div className="theme-background-panel">
+              <div className="theme-background-panel__header">
+                <div>
+                  <h4 className="theme-background-panel__title">
+                    {themeEditorCopy.globalParticleTitle}
+                  </h4>
+                </div>
+              </div>
+              <UISwitch
+                label={themeEditorCopy.globalParticleEnabledLabel}
+                description={themeEditorCopy.globalParticleEnabledDescription}
+                checked={settings.appearance.globalParticleEffectEnabled}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    appearance: {
+                      ...current.appearance,
+                      globalParticleEffectEnabled: checked,
+                    },
+                  }))
+                }
+              />
+              {settings.appearance.globalParticleEffectEnabled ? (
+                <div className="theme-background-grid">
+                  <div className="theme-background-select theme-background-select--standalone-label">
+                    <UISelect
+                      label={themeEditorCopy.globalParticleTypeLabel}
+                      value={settings.appearance.globalParticleEffectType}
+                      options={globalParticleEffectOptions}
+                      onChange={(value) =>
+                        onUpdate((current) => ({
+                          ...current,
+                          appearance: {
+                            ...current.appearance,
+                            globalParticleEffectType: value as GlobalParticleEffectType,
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="theme-background-select theme-background-select--standalone-label">
+                    <UISelect
+                      label={themeEditorCopy.globalParticleLayerLabel}
+                      value={settings.appearance.globalParticleEffectLayer}
+                      options={globalParticleLayerOptions}
+                      onChange={(value) =>
+                        onUpdate((current) => ({
+                          ...current,
+                          appearance: {
+                            ...current.appearance,
+                            globalParticleEffectLayer: value as AppSettings["appearance"]["globalParticleEffectLayer"],
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <UISlider
+                    label={themeEditorCopy.globalParticleOpacityLabel}
+                    value={settings.appearance.globalParticleEffectOpacity}
+                    min={0}
+                    max={100}
+                    step={1}
+                    valueSuffix="%"
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        appearance: {
+                          ...current.appearance,
+                          globalParticleEffectOpacity: value,
+                        },
+                      }))
+                    }
+                  />
+                  <UISlider
+                    label={themeEditorCopy.globalParticleWindSpeedLabel}
+                    value={settings.appearance.globalParticleEffectWindSpeed}
+                    min={0}
+                    max={100}
+                    step={1}
+                    valueSuffix="%"
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        appearance: {
+                          ...current.appearance,
+                          globalParticleEffectWindSpeed: value,
+                        },
+                      }))
+                    }
+                  />
+                  <UISlider
+                    label={themeEditorCopy.globalParticleFallSpeedLabel}
+                    value={settings.appearance.globalParticleEffectFallSpeed}
+                    min={0}
+                    max={100}
+                    step={1}
+                    valueSuffix="%"
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        appearance: {
+                          ...current.appearance,
+                          globalParticleEffectFallSpeed: value,
+                        },
+                      }))
+                    }
+                  />
+                  <UISlider
+                    label={themeEditorCopy.globalParticleCountLabel}
+                    value={settings.appearance.globalParticleEffectCount}
+                    min={8}
+                    max={160}
+                    step={1}
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        appearance: {
+                          ...current.appearance,
+                          globalParticleEffectCount: value,
+                        },
+                      }))
+                    }
+                  />
+                  <UISlider
+                    label={themeEditorCopy.globalParticleSizeLabel}
+                    value={settings.appearance.globalParticleEffectSize ?? 100}
+                    min={40}
+                    max={220}
+                    step={1}
+                    valueSuffix="%"
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        appearance: {
+                          ...current.appearance,
+                          globalParticleEffectSize: value,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              ) : null}
+            </div>
 
             <div className="theme-background-panel">
               <div className="theme-background-panel__header">
@@ -22534,6 +22767,7 @@ export function ImmersivePlayerOverlay({
   const [isVolumeSliderOpen, setIsVolumeSliderOpen] = useState(false);
   const [collapsingLyricsPanelTrackId, setCollapsingLyricsPanelTrackId] = useState<string | null>(null);
   const [hiddenLyricsPanelTrackId, setHiddenLyricsPanelTrackId] = useState<string | null>(null);
+  const [fadingInstrumentalTrackId, setFadingInstrumentalTrackId] = useState<string | null>(null);
   const [outgoingTrackSnapshot, setOutgoingTrackSnapshot] = useState<{
     transitionKey: number;
     trackId: string | null;
@@ -22638,6 +22872,10 @@ export function ImmersivePlayerOverlay({
 
   const immersiveBackgroundModeClass = `immersive-player__fluid--${appearanceSettings.immersiveBackgroundMode}`;
   const showFluidBackground = appearanceSettings.immersiveBackgroundMode === "flow";
+  const showGlobalParticleBackgroundLayer =
+    appearanceSettings.globalParticleEffectEnabled && appearanceSettings.globalParticleEffectLayer === "background";
+  const showGlobalParticleTopLayer =
+    appearanceSettings.globalParticleEffectEnabled && appearanceSettings.globalParticleEffectLayer === "top";
   const showAppBackground = appearanceSettings.immersiveBackgroundMode === "app-background";
   const showBackgroundMvMode = appearanceSettings.immersiveBackgroundMode === "background-mv";
   const showBackgroundMvVideo = showBackgroundMvMode && Boolean(immersiveBackgroundVideoSrc);
@@ -22675,6 +22913,7 @@ export function ImmersivePlayerOverlay({
     collapsingLyricsPanelTrackId === trackId &&
     hiddenLyricsPanelTrackId !== trackId;
   const shouldHideLyricsPanel = hiddenLyricsPanelTrackId !== null && hiddenLyricsPanelTrackId === trackId;
+  const isFadingInstrumentalPanel = fadingInstrumentalTrackId !== null && fadingInstrumentalTrackId === trackId;
   const shouldCenterPanel = (isCollapsingLyricsPanel || shouldHideLyricsPanel) && !isLyricsLoading;
 
   const syncImmersiveBackgroundMvPosition = (force = false) => {
@@ -22709,27 +22948,36 @@ export function ImmersivePlayerOverlay({
 
   useEffect(() => {
     if (!isOverlayActive || !trackId || isLyricsLoading || hasDisplayableLyrics) {
+      setFadingInstrumentalTrackId(null);
       setCollapsingLyricsPanelTrackId(null);
       setHiddenLyricsPanelTrackId(null);
       return;
     }
 
     if (isInstrumentalTrack) {
+      setFadingInstrumentalTrackId(null);
       setCollapsingLyricsPanelTrackId(null);
       setHiddenLyricsPanelTrackId(null);
+      const fadeTimer = window.setTimeout(() => {
+        setFadingInstrumentalTrackId(trackId);
+      }, Math.max(0, IMMERSIVE_INSTRUMENTAL_HIDE_DELAY_MS - 260));
       const collapseTimer = window.setTimeout(() => {
+        setFadingInstrumentalTrackId(trackId);
         setCollapsingLyricsPanelTrackId(trackId);
       }, IMMERSIVE_INSTRUMENTAL_HIDE_DELAY_MS);
       const hideTimer = window.setTimeout(() => {
+        setFadingInstrumentalTrackId(trackId);
         setCollapsingLyricsPanelTrackId(trackId);
         setHiddenLyricsPanelTrackId(trackId);
       }, IMMERSIVE_INSTRUMENTAL_HIDE_DELAY_MS + IMMERSIVE_INSTRUMENTAL_PANEL_COLLAPSE_DURATION_MS);
       return () => {
+        window.clearTimeout(fadeTimer);
         window.clearTimeout(collapseTimer);
         window.clearTimeout(hideTimer);
       };
     }
 
+    setFadingInstrumentalTrackId(null);
     setCollapsingLyricsPanelTrackId(null);
     setHiddenLyricsPanelTrackId(trackId);
     return;
@@ -22955,7 +23203,35 @@ export function ImmersivePlayerOverlay({
             appearanceSettings={appearanceSettings}
           />
         ) : null}
+        {showGlobalParticleBackgroundLayer ? (
+          <GlobalParticleCanvas
+            enabled={true}
+          effectType={appearanceSettings.globalParticleEffectType}
+          layer="background"
+          opacity={appearanceSettings.globalParticleEffectOpacity}
+          windSpeed={appearanceSettings.globalParticleEffectWindSpeed}
+          fallSpeed={appearanceSettings.globalParticleEffectFallSpeed}
+          count={appearanceSettings.globalParticleEffectCount}
+          size={appearanceSettings.globalParticleEffectSize}
+          colorScheme={appearanceSettings.colorScheme}
+          className="immersive-player__global-particles"
+        />
+        ) : null}
       </div>
+      {showGlobalParticleTopLayer ? (
+        <GlobalParticleCanvas
+          enabled={true}
+          effectType={appearanceSettings.globalParticleEffectType}
+          layer="top"
+          opacity={appearanceSettings.globalParticleEffectOpacity}
+          windSpeed={appearanceSettings.globalParticleEffectWindSpeed}
+          fallSpeed={appearanceSettings.globalParticleEffectFallSpeed}
+          count={appearanceSettings.globalParticleEffectCount}
+          size={appearanceSettings.globalParticleEffectSize}
+          colorScheme={appearanceSettings.colorScheme}
+          className="immersive-player__global-particles"
+        />
+      ) : null}
       <div className="immersive-player__veil" aria-hidden="true" />
       {!isWallpaperDisplayMode ? (
         <header
@@ -23314,6 +23590,7 @@ export function ImmersivePlayerOverlay({
             className={[
               "immersive-player__panel",
               "immersive-player__panel--right",
+              isFadingInstrumentalPanel ? "immersive-player__panel--right-instrumental-fading" : "",
               isCollapsingLyricsPanel ? "immersive-player__panel--right-collapsing" : "",
               shouldCenterPanel ? "immersive-player__panel--right-hidden" : "",
             ]
@@ -25271,6 +25548,300 @@ function ImmersiveFluidCanvas({
   ]);
 
   return <canvas ref={canvasRef} className="immersive-player__fluid-canvas" />;
+}
+
+function GlobalParticleCanvas({
+  enabled,
+  effectType,
+  layer,
+  opacity,
+  windSpeed,
+  fallSpeed,
+  count,
+  size,
+  colorScheme,
+  className,
+}: {
+  enabled: boolean;
+  effectType: GlobalParticleEffectType;
+  layer: AppSettings["appearance"]["globalParticleEffectLayer"];
+  opacity: number;
+  windSpeed: number;
+  fallSpeed: number;
+  count: number;
+  size: number;
+  colorScheme: AppSettings["appearance"]["colorScheme"];
+  className?: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !enabled) {
+      return;
+    }
+
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) {
+      return;
+    }
+
+    type Particle = {
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      size: number;
+      alpha: number;
+      rotation: number;
+      spin: number;
+      drift: number;
+    };
+
+    const particles: Particle[] = [];
+    let width = 0;
+    let height = 0;
+    let frameId = 0;
+    let lastTime = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const isDark = colorScheme === "dark";
+    const baseParticleCount =
+      effectType === "lines" ? 42 : effectType === "dots" ? 64 : effectType === "snow" ? 52 : 34;
+    const particleCount = Math.max(8, Math.round(baseParticleCount * clampNumber(count / 52, 0.25, 3.2)));
+    const opacityScale = clampNumber(opacity / 100, 0, 1);
+    const sizeScale = clampNumber(size / 100, 0.4, 2.2);
+    const windScale = clampNumber(windSpeed / 100, 0, 2.5);
+    const fallScale = clampNumber(fallSpeed / 100, 0, 2.5);
+
+    const resetParticle = (particle: Particle, respawnAtTop = false) => {
+      particle.x = Math.random() * Math.max(width, 1);
+      particle.y = respawnAtTop ? (-24 - (Math.random() * 48)) : (Math.random() * Math.max(height, 1));
+      particle.vx =
+        effectType === "lines"
+          ? ((Math.random() - 0.5) * 0.48)
+          : effectType === "dots"
+            ? ((Math.random() - 0.5) * 0.38)
+            : effectType === "snow"
+              ? ((Math.random() - 0.5) * 0.58)
+              : ((Math.random() - 0.5) * 0.76);
+      particle.vy =
+        effectType === "lines"
+          ? (0.09 + (Math.random() * 0.18))
+          : effectType === "dots"
+            ? (0.07 + (Math.random() * 0.16))
+            : effectType === "snow"
+              ? (0.28 + (Math.random() * 0.58))
+              : (0.38 + (Math.random() * 0.68));
+      particle.size =
+        effectType === "lines"
+          ? (1.2 + (Math.random() * 1.8)) * sizeScale
+          : effectType === "dots"
+            ? (1.2 + (Math.random() * 2.6)) * sizeScale
+            : effectType === "snow"
+              ? (1.6 + (Math.random() * 4.2)) * sizeScale
+              : (6 + (Math.random() * 8.5)) * sizeScale;
+      particle.alpha = opacityScale;
+      particle.rotation = Math.random() * Math.PI * 2;
+      particle.spin = (Math.random() - 0.5) * 0.012;
+      particle.drift = Math.random() * Math.PI * 2;
+    };
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      width = rect.width;
+      height = rect.height;
+      canvas.width = Math.max(1, Math.round(width * dpr));
+      canvas.height = Math.max(1, Math.round(height * dpr));
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      particles.length = 0;
+      for (let index = 0; index < particleCount; index += 1) {
+        const particle = {
+          x: 0,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          size: 0,
+          alpha: 0,
+          rotation: 0,
+          spin: 0,
+          drift: 0,
+        };
+        resetParticle(particle, false);
+        particles.push(particle);
+      }
+    };
+
+    const strokeColor = isDark ? "rgba(232, 240, 252, 0.22)" : "rgba(52, 76, 120, 0.14)";
+    const fillColor = isDark ? "rgba(240, 246, 255, 0.78)" : "rgba(72, 102, 146, 0.48)";
+    const petalColor = isDark ? "rgba(255, 216, 232, 0.72)" : "rgba(245, 173, 202, 0.62)";
+    const snowStrokeColor = isDark ? "rgba(255, 255, 255, 0.88)" : "rgba(236, 244, 255, 0.92)";
+
+    const drawSnowflake = (particle: Particle) => {
+      context.save();
+      context.translate(particle.x, particle.y);
+      context.rotate(particle.rotation);
+      context.strokeStyle = snowStrokeColor;
+      context.lineWidth = Math.max(0.8, particle.size * 0.16);
+      context.lineCap = "round";
+      context.shadowColor = isDark ? "rgba(255,255,255,0.18)" : "rgba(120,140,180,0.12)";
+      context.shadowBlur = 6;
+
+      for (let branch = 0; branch < 6; branch += 1) {
+        const angle = (Math.PI / 3) * branch;
+        const armLength = particle.size;
+        const armX = Math.cos(angle) * armLength;
+        const armY = Math.sin(angle) * armLength;
+        context.beginPath();
+        context.moveTo(0, 0);
+        context.lineTo(armX, armY);
+        context.stroke();
+
+        const branchBaseX = Math.cos(angle) * armLength * 0.54;
+        const branchBaseY = Math.sin(angle) * armLength * 0.54;
+        const leftAngle = angle - 0.62;
+        const rightAngle = angle + 0.62;
+        const branchLength = armLength * 0.28;
+
+        context.beginPath();
+        context.moveTo(branchBaseX, branchBaseY);
+        context.lineTo(
+          branchBaseX + (Math.cos(leftAngle) * branchLength),
+          branchBaseY + (Math.sin(leftAngle) * branchLength),
+        );
+        context.moveTo(branchBaseX, branchBaseY);
+        context.lineTo(
+          branchBaseX + (Math.cos(rightAngle) * branchLength),
+          branchBaseY + (Math.sin(rightAngle) * branchLength),
+        );
+        context.stroke();
+      }
+
+      context.restore();
+    };
+
+    const drawParticle = (particle: Particle) => {
+      context.save();
+      context.globalAlpha = particle.alpha;
+
+      if (effectType === "lines") {
+        context.fillStyle = fillColor;
+        context.beginPath();
+        context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+        context.fill();
+      } else if (effectType === "dots") {
+        context.fillStyle = fillColor;
+        context.beginPath();
+        context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+        context.fill();
+      } else if (effectType === "snow") {
+        drawSnowflake(particle);
+      } else {
+        context.translate(particle.x, particle.y);
+        context.rotate(particle.rotation);
+        context.fillStyle = petalColor;
+        context.beginPath();
+        context.moveTo(0, -particle.size * 0.72);
+        context.bezierCurveTo(
+          particle.size * 0.68,
+          -particle.size * 0.96,
+          particle.size * 0.96,
+          particle.size * 0.18,
+          0,
+          particle.size,
+        );
+        context.bezierCurveTo(
+          -particle.size * 0.94,
+          particle.size * 0.12,
+          -particle.size * 0.62,
+          -particle.size * 0.94,
+          0,
+          -particle.size * 0.72,
+        );
+        context.fill();
+      }
+
+      context.restore();
+    };
+
+    const drawConnections = () => {
+      if (effectType !== "lines") {
+        return;
+      }
+
+      for (let index = 0; index < particles.length; index += 1) {
+        for (let nextIndex = index + 1; nextIndex < particles.length; nextIndex += 1) {
+          const from = particles[index];
+          const to = particles[nextIndex];
+          const dx = from.x - to.x;
+          const dy = from.y - to.y;
+          const distance = Math.sqrt((dx * dx) + (dy * dy));
+          if (distance > 160) {
+            continue;
+          }
+
+          context.save();
+          context.globalAlpha = (1 - (distance / 160)) * 0.22 * opacityScale;
+          context.strokeStyle = strokeColor;
+          context.lineWidth = 0.8;
+          context.beginPath();
+          context.moveTo(from.x, from.y);
+          context.lineTo(to.x, to.y);
+          context.stroke();
+          context.restore();
+        }
+      }
+    };
+
+    const render = (time: number) => {
+      const delta = Math.min(32, lastTime ? time - lastTime : 16.67);
+      lastTime = time;
+      context.clearRect(0, 0, width, height);
+      const windVelocity = 0.08 + (windScale * 1.18);
+      const fallVelocity = 0.06 + (fallScale * 1.12);
+      const rotationVelocity = 0.24 + ((windScale + fallScale) * 0.48);
+
+      particles.forEach((particle) => {
+        particle.x += particle.vx * delta * windVelocity;
+        particle.y += particle.vy * delta * fallVelocity;
+        particle.rotation += particle.spin * delta * rotationVelocity;
+        if (effectType === "snow" || effectType === "sakura") {
+          const swayVelocity = effectType === "snow" ? (0.38 + (windScale * 0.56)) : (0.56 + (windScale * 0.74));
+          const swayDistance = effectType === "snow" ? (0.28 + (windScale * 0.52)) : (0.54 + (windScale * 0.84));
+          particle.x += Math.sin((time * 0.0018 * swayVelocity) + particle.drift) * swayDistance;
+        }
+        if (particle.y > height + 28 || particle.x < -48 || particle.x > width + 48) {
+          resetParticle(particle, true);
+        }
+      });
+
+      drawConnections();
+      particles.forEach(drawParticle);
+      frameId = window.requestAnimationFrame(render);
+    };
+
+    resize();
+    frameId = window.requestAnimationFrame(render);
+    window.addEventListener("resize", resize);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", resize);
+    };
+  }, [colorScheme, count, effectType, enabled, fallSpeed, opacity, size, windSpeed]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className={[
+        className ?? "app-shell__global-particles",
+        layer === "background" ? "app-shell__global-particles--background" : "app-shell__global-particles--top",
+        enabled ? "app-shell__global-particles--active" : "",
+      ].filter(Boolean).join(" ")}
+      aria-hidden="true"
+    />
+  );
 }
 
 function ImmersivePillSlider({

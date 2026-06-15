@@ -81,6 +81,14 @@ const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   dynamicIslandDefaultContent: "time",
   dynamicIslandPosition: "right",
   dynamicIslandShowLyrics: false,
+  globalParticleEffectEnabled: false,
+  globalParticleEffectType: "lines",
+  globalParticleEffectLayer: "top",
+  globalParticleEffectOpacity: 72,
+  globalParticleEffectWindSpeed: 58,
+  globalParticleEffectFallSpeed: 66,
+  globalParticleEffectCount: 52,
+  globalParticleEffectSize: 100,
   immersiveBackgroundMode: "flow",
   immersiveBackgroundAnimated: true,
   immersiveBackgroundResolution: 72,
@@ -247,6 +255,39 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
     dynamicIslandShowLyrics: normalizeBoolean(
       value.dynamicIslandShowLyrics,
       DEFAULT_APPEARANCE_SETTINGS.dynamicIslandShowLyrics,
+    ),
+    globalParticleEffectEnabled: normalizeBoolean(
+      value.globalParticleEffectEnabled,
+      DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectEnabled,
+    ),
+    globalParticleEffectType:
+      value.globalParticleEffectType === "dots" ||
+      value.globalParticleEffectType === "snow" ||
+      value.globalParticleEffectType === "sakura" ||
+      value.globalParticleEffectType === "lines"
+        ? value.globalParticleEffectType
+        : DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectType,
+    globalParticleEffectLayer:
+      value.globalParticleEffectLayer === "background" ? "background" : DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectLayer,
+    globalParticleEffectOpacity: normalizeNumber(
+      value.globalParticleEffectOpacity,
+      DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectOpacity,
+    ),
+    globalParticleEffectWindSpeed: normalizeNumber(
+      value.globalParticleEffectWindSpeed,
+      DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectWindSpeed,
+    ),
+    globalParticleEffectFallSpeed: normalizeNumber(
+      value.globalParticleEffectFallSpeed,
+      DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectFallSpeed,
+    ),
+    globalParticleEffectCount: normalizeNumber(
+      value.globalParticleEffectCount,
+      DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectCount,
+    ),
+    globalParticleEffectSize: normalizeNumber(
+      value.globalParticleEffectSize,
+      DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectSize,
     ),
     immersiveBackgroundMode:
       value.immersiveBackgroundMode === "palette-solid" ||

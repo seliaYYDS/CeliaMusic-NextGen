@@ -4,6 +4,8 @@ export type DynamicIslandStyle = "default" | "soft" | "solid";
 export type DynamicIslandColorMode = "follow-theme" | "primary" | "secondary";
 export type DynamicIslandDefaultContent = "time" | "date" | "datetime";
 export type DynamicIslandPosition = "center" | "left" | "right";
+export type GlobalParticleEffectType = "lines" | "dots" | "snow" | "sakura";
+export type GlobalParticleLayer = "top" | "background";
 export type ImmersiveBackgroundMode =
   | "palette-solid"
   | "palette-gradient"
@@ -55,6 +57,14 @@ export type AppearanceSettings = {
   dynamicIslandDefaultContent: DynamicIslandDefaultContent;
   dynamicIslandPosition: DynamicIslandPosition;
   dynamicIslandShowLyrics: boolean;
+  globalParticleEffectEnabled: boolean;
+  globalParticleEffectType: GlobalParticleEffectType;
+  globalParticleEffectLayer: GlobalParticleLayer;
+  globalParticleEffectOpacity: number;
+  globalParticleEffectWindSpeed: number;
+  globalParticleEffectFallSpeed: number;
+  globalParticleEffectCount: number;
+  globalParticleEffectSize: number;
   immersiveBackgroundMode: ImmersiveBackgroundMode;
   immersiveBackgroundAnimated: boolean;
   immersiveBackgroundResolution: number;
@@ -179,6 +189,14 @@ export const createDefaultAppSettings = (): AppSettings => ({
     dynamicIslandDefaultContent: "time",
     dynamicIslandPosition: "right",
     dynamicIslandShowLyrics: false,
+    globalParticleEffectEnabled: false,
+    globalParticleEffectType: "lines",
+    globalParticleEffectLayer: "top",
+    globalParticleEffectOpacity: 72,
+    globalParticleEffectWindSpeed: 58,
+    globalParticleEffectFallSpeed: 66,
+    globalParticleEffectCount: 52,
+    globalParticleEffectSize: 100,
     immersiveBackgroundMode: "flow",
     immersiveBackgroundAnimated: true,
     immersiveBackgroundResolution: 72,

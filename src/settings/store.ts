@@ -55,6 +55,20 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       componentBackdropBlur: clampInteger(settings.appearance.componentBackdropBlur, 0, 32),
       backgroundDim: clampInteger(settings.appearance.backgroundDim, 0, 100),
       backgroundImageOpacity: clampInteger(settings.appearance.backgroundImageOpacity, 0, 100),
+      globalParticleEffectEnabled: Boolean(settings.appearance.globalParticleEffectEnabled),
+      globalParticleEffectType:
+        settings.appearance.globalParticleEffectType === "dots" ||
+        settings.appearance.globalParticleEffectType === "snow" ||
+        settings.appearance.globalParticleEffectType === "sakura"
+          ? settings.appearance.globalParticleEffectType
+          : "lines",
+      globalParticleEffectLayer:
+        settings.appearance.globalParticleEffectLayer === "background" ? "background" : "top",
+      globalParticleEffectOpacity: clampInteger(settings.appearance.globalParticleEffectOpacity, 0, 100),
+      globalParticleEffectWindSpeed: clampInteger(settings.appearance.globalParticleEffectWindSpeed, 0, 100),
+      globalParticleEffectFallSpeed: clampInteger(settings.appearance.globalParticleEffectFallSpeed, 0, 100),
+      globalParticleEffectCount: clampInteger(settings.appearance.globalParticleEffectCount, 8, 160),
+      globalParticleEffectSize: clampInteger(settings.appearance.globalParticleEffectSize, 40, 220),
       immersiveBackgroundMode:
         settings.appearance.immersiveBackgroundMode === "palette-solid" ||
         settings.appearance.immersiveBackgroundMode === "app-background" ||

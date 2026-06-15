@@ -108,6 +108,14 @@ pub struct AppearanceSettings {
     pub dynamic_island_default_content: String,
     pub dynamic_island_position: String,
     pub dynamic_island_show_lyrics: bool,
+    pub global_particle_effect_enabled: bool,
+    pub global_particle_effect_type: String,
+    pub global_particle_effect_layer: String,
+    pub global_particle_effect_opacity: u8,
+    pub global_particle_effect_wind_speed: u8,
+    pub global_particle_effect_fall_speed: u8,
+    pub global_particle_effect_count: u8,
+    pub global_particle_effect_size: u8,
     pub immersive_background_mode: String,
     pub immersive_background_animated: bool,
     pub immersive_background_resolution: u8,
@@ -145,6 +153,14 @@ impl Default for AppearanceSettings {
             dynamic_island_default_content: "time".to_string(),
             dynamic_island_position: "right".to_string(),
             dynamic_island_show_lyrics: false,
+            global_particle_effect_enabled: false,
+            global_particle_effect_type: "lines".to_string(),
+            global_particle_effect_layer: "top".to_string(),
+            global_particle_effect_opacity: 72,
+            global_particle_effect_wind_speed: 58,
+            global_particle_effect_fall_speed: 66,
+            global_particle_effect_count: 52,
+            global_particle_effect_size: 100,
             immersive_background_mode: "flow".to_string(),
             immersive_background_animated: true,
             immersive_background_resolution: 72,
@@ -592,6 +608,26 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         &["center", "left", "right"],
         "center",
     );
+    settings.appearance.global_particle_effect_type = sanitize_limited_value(
+        settings.appearance.global_particle_effect_type,
+        &["lines", "dots", "snow", "sakura"],
+        "lines",
+    );
+    settings.appearance.global_particle_effect_layer = sanitize_limited_value(
+        settings.appearance.global_particle_effect_layer,
+        &["top", "background"],
+        "top",
+    );
+    settings.appearance.global_particle_effect_opacity =
+        settings.appearance.global_particle_effect_opacity.clamp(0, 100);
+    settings.appearance.global_particle_effect_wind_speed =
+        settings.appearance.global_particle_effect_wind_speed.clamp(0, 100);
+    settings.appearance.global_particle_effect_fall_speed =
+        settings.appearance.global_particle_effect_fall_speed.clamp(0, 100);
+    settings.appearance.global_particle_effect_count =
+        settings.appearance.global_particle_effect_count.clamp(8, 160);
+    settings.appearance.global_particle_effect_size =
+        settings.appearance.global_particle_effect_size.clamp(40, 220);
     settings.appearance.immersive_background_mode = sanitize_limited_value(
         settings.appearance.immersive_background_mode,
         &[

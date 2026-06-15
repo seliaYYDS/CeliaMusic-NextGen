@@ -7217,6 +7217,12 @@ select {
   filter: blur(6px);
 }
 
+.immersive-player__panel--right-instrumental-fading .immersive-player__lyrics-empty--instrumental {
+  opacity: 0;
+  transform: translate3d(0, -10px, 0) scale(0.985);
+  filter: blur(8px);
+}
+
 .immersive-player__panel--right-hidden {
   opacity: 0;
   visibility: hidden;
@@ -8360,6 +8366,49 @@ select {
   overflow: hidden;
 }
 
+.app-shell__global-particles {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 12;
+  transition: opacity 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-shell__global-particles--active {
+  opacity: 1;
+}
+
+.app-shell__global-particles--background {
+  z-index: 1;
+}
+
+.app-shell__global-particles--top {
+  z-index: 12;
+}
+
+.immersive-player__global-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.immersive-player__global-particles--active {
+  opacity: 1;
+}
+
+.immersive-player__global-particles--background {
+  z-index: 1;
+}
+
+.immersive-player__global-particles--top {
+  z-index: 3;
+}
+
 .immersive-player__lyrics-scrollbar-thumb {
   position: absolute;
   left: 0;
@@ -9030,6 +9079,10 @@ select {
   text-align: var(--immersive-lyric-text-align, left);
   color: rgba(232, 239, 248, 0.72);
   padding: 16vh 0 20vh;
+  transition:
+    opacity 240ms cubic-bezier(0.24, 0.78, 0.22, 1),
+    transform 280ms cubic-bezier(0.22, 0.82, 0.22, 1),
+    filter 240ms cubic-bezier(0.24, 0.78, 0.22, 1);
 }
 
 .immersive-player__lyrics-empty p,
