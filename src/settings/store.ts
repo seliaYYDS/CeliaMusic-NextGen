@@ -67,6 +67,8 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       immersiveBackgroundResolution: clampInteger(settings.appearance.immersiveBackgroundResolution, 45, 100),
       immersiveBackgroundSpeed: clampInteger(settings.appearance.immersiveBackgroundSpeed, 40, 250),
       immersiveBackgroundSoftness: clampInteger(settings.appearance.immersiveBackgroundSoftness, 0, 100),
+      immersiveBackgroundMvBlur: clampInteger(settings.appearance.immersiveBackgroundMvBlur, 0, 48),
+      immersiveBackgroundMvDim: clampInteger(settings.appearance.immersiveBackgroundMvDim, 0, 100),
     },
     playback: {
       ...settings.playback,

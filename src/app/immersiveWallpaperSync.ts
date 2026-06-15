@@ -86,6 +86,8 @@ const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   immersiveBackgroundResolution: 72,
   immersiveBackgroundSpeed: 112,
   immersiveBackgroundSoftness: 58,
+  immersiveBackgroundMvBlur: 18,
+  immersiveBackgroundMvDim: 28,
 };
 
 const DEFAULT_LYRICS_SETTINGS: LyricsSettings = {
@@ -269,6 +271,14 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
     immersiveBackgroundSoftness: normalizeNumber(
       value.immersiveBackgroundSoftness,
       DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundSoftness,
+    ),
+    immersiveBackgroundMvBlur: normalizeNumber(
+      value.immersiveBackgroundMvBlur,
+      DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundMvBlur,
+    ),
+    immersiveBackgroundMvDim: normalizeNumber(
+      value.immersiveBackgroundMvDim,
+      DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundMvDim,
     ),
   };
 }

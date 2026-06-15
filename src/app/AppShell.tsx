@@ -1670,6 +1670,10 @@ function getThemeEditorCopy(locale: string) {
       immersiveBackgroundSoftnessLabel: "Fluid Softness",
       immersiveBackgroundSoftnessHelper:
         "Lower values keep color boundaries firmer, while higher values make the fluid blend more softly.",
+      immersiveBackgroundMvBlurLabel: "Background MV Blur",
+      immersiveBackgroundMvBlurHelper: "Controls how much the MV background is blurred in the immersive player.",
+      immersiveBackgroundMvDimLabel: "Background MV Darken",
+      immersiveBackgroundMvDimHelper: "Controls how much dark overlay is applied over the MV background.",
       activateCustom: "Use Custom Theme",
       activePreset: "Active",
       customTag: "Custom",
@@ -1727,6 +1731,10 @@ function getThemeEditorCopy(locale: string) {
     immersiveBackgroundSpeedHelper: "控制流体背景流动与循环推进的速度，100% 为默认节奏。",
     immersiveBackgroundSoftnessLabel: "流体柔和度",
     immersiveBackgroundSoftnessHelper: "数值越低，流体中不同颜色的边界越硬；数值越高，混合越柔和。",
+    immersiveBackgroundMvBlurLabel: "背景 MV 模糊",
+    immersiveBackgroundMvBlurHelper: "控制沉浸式播放页中背景 MV 的模糊强度。",
+    immersiveBackgroundMvDimLabel: "背景 MV 暗化",
+    immersiveBackgroundMvDimHelper: "控制沉浸式播放页中覆盖在背景 MV 上的暗化强度。",
     activateCustom: "使用自定义主题",
     activePreset: "当前使用",
     customTag: "自定义",
@@ -16200,6 +16208,53 @@ function SettingsScreen({
                   </div>
                 </div>
                 </>
+              ) : settings.appearance.immersiveBackgroundMode === "background-mv" ? (
+                <div className="theme-background-grid">
+                  <div>
+                    <UISlider
+                      label={themeEditorCopy.immersiveBackgroundMvBlurLabel}
+                      value={settings.appearance.immersiveBackgroundMvBlur}
+                      min={0}
+                      max={48}
+                      step={1}
+                      valueSuffix="px"
+                      onChange={(value) =>
+                        onUpdate((current) => ({
+                          ...current,
+                          appearance: {
+                            ...current.appearance,
+                            immersiveBackgroundMvBlur: value,
+                          },
+                        }))
+                      }
+                    />
+                    <span className="ui-field__helper">
+                      {themeEditorCopy.immersiveBackgroundMvBlurHelper}
+                    </span>
+                  </div>
+                  <div>
+                    <UISlider
+                      label={themeEditorCopy.immersiveBackgroundMvDimLabel}
+                      value={settings.appearance.immersiveBackgroundMvDim}
+                      min={0}
+                      max={100}
+                      step={1}
+                      valueSuffix="%"
+                      onChange={(value) =>
+                        onUpdate((current) => ({
+                          ...current,
+                          appearance: {
+                            ...current.appearance,
+                            immersiveBackgroundMvDim: value,
+                          },
+                        }))
+                      }
+                    />
+                    <span className="ui-field__helper">
+                      {themeEditorCopy.immersiveBackgroundMvDimHelper}
+                    </span>
+                  </div>
+                </div>
               ) : null}
             </div>
           </div>
@@ -22507,6 +22562,7 @@ export function ImmersivePlayerOverlay({
   } | null>(null);
   const immersiveTrackTransitionKeyRef = useRef(0);
   const immersiveTrackTransitionTimerRef = useRef<number | null>(null);
+  const immersivePreviousPlaybackTimeRef = useRef(currentTimeSeconds);
   const interactiveArtistNames = trackArtist
     .split(" / ")
     .map((name) => name.trim())
@@ -22594,6 +22650,24 @@ export function ImmersivePlayerOverlay({
     showAppBackground && !showAppBackgroundVideo && appBackgroundImageStyle !== "none";
   const shouldSyncAppBackgroundMv = showAppBackgroundVideo && !appBackgroundVideoLoop;
   const shouldSyncImmersiveBackgroundMv = showBackgroundMvVideo;
+  const backgroundMvBlurPx = clampNumber(appearanceSettings.immersiveBackgroundMvBlur ?? 18, 0, 48);
+  const backgroundMvDimOpacity = clamp01((appearanceSettings.immersiveBackgroundMvDim ?? 28) / 100);
+  const immersiveVeilBlurPx = showAppBackground
+    ? clampNumber(appBackgroundBlurPx * 0.18, 0, 8)
+    : showBackgroundMvMode
+      ? clampNumber(backgroundMvBlurPx * 0.18, 0, 8)
+    : clampNumber(24 + (appearanceSettings.immersiveBackgroundSoftness * 0.22), 18, 48);
+  const immersiveVeilSaturate = showAppBackground
+    ? clampNumber(100 + ((appearanceSettings.immersiveBackgroundResolution - 45) * 0.16), 100, 110)
+    : showBackgroundMvMode
+      ? clampNumber(100 + ((appearanceSettings.immersiveBackgroundResolution - 45) * 0.18), 100, 112)
+    : clampNumber(108 + ((appearanceSettings.immersiveBackgroundResolution - 45) * 0.5), 108, 136);
+  const immersiveVeilOverlayAlpha = showAppBackground
+    ? clampNumber(appBackgroundDimOpacity * 0.32, 0.02, 0.18)
+    : showBackgroundMvMode
+      ? clampNumber(backgroundMvDimOpacity * 0.32, 0.02, 0.22)
+    : 0.34;
+  const immersiveVeilHighlightAlpha = showAppBackground || showBackgroundMvMode ? 0.015 : 0.04;
   const hasDisplayableLyrics = hasDisplayableImmersiveLyrics(lyrics);
   const isInstrumentalTrack = resolveInstrumentalLyricState(lyrics) && !hasDisplayableLyrics;
   const isCollapsingLyricsPanel =
@@ -22626,6 +22700,10 @@ export function ImmersivePlayerOverlay({
       } catch (error) {
         console.error("[immersive-player] failed to sync background mv position", error);
       }
+    }
+
+    if (video.paused && isPlaying) {
+      void video.play().catch(() => undefined);
     }
   };
 
@@ -22748,13 +22826,39 @@ export function ImmersivePlayerOverlay({
       void video.play().catch(() => undefined);
     }
   }, [
-    currentTimeSeconds,
     isOverlayActive,
     isPlaying,
     shouldSyncAppBackgroundMv,
     shouldSyncImmersiveBackgroundMv,
     showAppBackgroundVideo,
     showBackgroundMvVideo,
+  ]);
+
+  useEffect(() => {
+    const previousTime = immersivePreviousPlaybackTimeRef.current;
+    immersivePreviousPlaybackTimeRef.current = currentTimeSeconds;
+
+    if (!isOverlayActive || (!shouldSyncAppBackgroundMv && !shouldSyncImmersiveBackgroundMv)) {
+      return;
+    }
+
+    if (!Number.isFinite(previousTime) || !Number.isFinite(currentTimeSeconds)) {
+      return;
+    }
+
+    const delta = Math.abs(currentTimeSeconds - previousTime);
+    const isLikelySeek = isPlaying ? delta > 0.75 : delta > 0.12;
+    if (!isLikelySeek) {
+      return;
+    }
+
+    syncImmersiveBackgroundMvPosition(true);
+  }, [
+    currentTimeSeconds,
+    isOverlayActive,
+    isPlaying,
+    shouldSyncAppBackgroundMv,
+    shouldSyncImmersiveBackgroundMv,
   ]);
 
   if (!trackId) {
@@ -22778,12 +22882,14 @@ export function ImmersivePlayerOverlay({
           "--immersive-color-glow": withHexAlpha(palette.glow, 0.86),
           "--immersive-color-edge": withHexAlpha(palette.edge, 0.98),
           "--immersive-color-highlight": withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.1), 0.34),
-          "--immersive-backdrop-blur": `${clampNumber(24 + (appearanceSettings.immersiveBackgroundSoftness * 0.22), 18, 48).toFixed(1)}px`,
-          "--immersive-backdrop-saturate": `${clampNumber(108 + ((appearanceSettings.immersiveBackgroundResolution - 45) * 0.5), 108, 136).toFixed(0)}%`,
+          "--immersive-backdrop-blur": `${immersiveVeilBlurPx.toFixed(1)}px`,
+          "--immersive-backdrop-saturate": `${immersiveVeilSaturate.toFixed(0)}%`,
+          "--immersive-veil-overlay-alpha": `${immersiveVeilOverlayAlpha.toFixed(3)}`,
+          "--immersive-veil-highlight-alpha": `${immersiveVeilHighlightAlpha.toFixed(3)}`,
           "--immersive-artwork-backdrop-blur": `${clampNumber((appearanceSettings.backgroundBlur * 1.15) + 20, 18, 64).toFixed(1)}px`,
           "--immersive-app-background-opacity": `${clamp01(appBackgroundOpacity)}`,
-          "--immersive-app-background-blur": `${Math.max(0, appBackgroundBlurPx).toFixed(1)}px`,
-          "--immersive-app-background-dim": `${clamp01(appBackgroundDimOpacity)}`,
+          "--immersive-app-background-blur": `${Math.max(0, showBackgroundMvMode ? backgroundMvBlurPx : appBackgroundBlurPx).toFixed(1)}px`,
+          "--immersive-app-background-dim": `${clamp01(showBackgroundMvMode ? backgroundMvDimOpacity : appBackgroundDimOpacity)}`,
         } as CSSProperties)
       }
     >

@@ -6793,8 +6793,13 @@ select {
   opacity: 0;
   transform: scale(1.02);
   background:
-    linear-gradient(115deg, rgba(5, 10, 16, 0.5), rgba(5, 10, 16, 0.34) 38%, rgba(5, 10, 16, 0.52)),
-    radial-gradient(circle at center, rgba(255, 255, 255, 0.04), transparent 58%);
+    linear-gradient(
+      115deg,
+      rgba(5, 10, 16, calc(var(--immersive-veil-overlay-alpha, 0.34) * 1.18)),
+      rgba(5, 10, 16, var(--immersive-veil-overlay-alpha, 0.34)) 38%,
+      rgba(5, 10, 16, calc(var(--immersive-veil-overlay-alpha, 0.34) * 1.22))
+    ),
+    radial-gradient(circle at center, rgba(255, 255, 255, var(--immersive-veil-highlight-alpha, 0.04)), transparent 58%);
   backdrop-filter: blur(var(--immersive-backdrop-blur, 42px)) saturate(var(--immersive-backdrop-saturate, 126%));
   -webkit-backdrop-filter: blur(var(--immersive-backdrop-blur, 42px)) saturate(var(--immersive-backdrop-saturate, 126%));
   transition:

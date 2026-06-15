@@ -113,6 +113,8 @@ pub struct AppearanceSettings {
     pub immersive_background_resolution: u8,
     pub immersive_background_speed: u8,
     pub immersive_background_softness: u8,
+    pub immersive_background_mv_blur: u8,
+    pub immersive_background_mv_dim: u8,
 }
 
 impl Default for AppearanceSettings {
@@ -148,6 +150,8 @@ impl Default for AppearanceSettings {
             immersive_background_resolution: 72,
             immersive_background_speed: 112,
             immersive_background_softness: 58,
+            immersive_background_mv_blur: 18,
+            immersive_background_mv_dim: 28,
         }
     }
 }
@@ -610,6 +614,10 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         settings.appearance.immersive_background_speed.clamp(40, 250);
     settings.appearance.immersive_background_softness =
         settings.appearance.immersive_background_softness.clamp(0, 100);
+    settings.appearance.immersive_background_mv_blur =
+        settings.appearance.immersive_background_mv_blur.clamp(0, 48);
+    settings.appearance.immersive_background_mv_dim =
+        settings.appearance.immersive_background_mv_dim.clamp(0, 100);
     settings.appearance.font_weight = settings.appearance.font_weight.clamp(100, 900);
     settings.network.request_timeout_ms = settings.network.request_timeout_ms.max(1000);
     settings.library.scan_directories = dedupe_strings(settings.library.scan_directories);
