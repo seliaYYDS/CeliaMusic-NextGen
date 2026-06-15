@@ -112,7 +112,6 @@ pub struct AppearanceSettings {
     pub immersive_background_animated: bool,
     pub immersive_background_resolution: u8,
     pub immersive_background_speed: u8,
-    pub immersive_background_blur: u8,
     pub immersive_background_softness: u8,
 }
 
@@ -148,7 +147,6 @@ impl Default for AppearanceSettings {
             immersive_background_animated: true,
             immersive_background_resolution: 72,
             immersive_background_speed: 112,
-            immersive_background_blur: 24,
             immersive_background_softness: 58,
         }
     }
@@ -609,9 +607,7 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     settings.appearance.immersive_background_resolution =
         settings.appearance.immersive_background_resolution.clamp(45, 100);
     settings.appearance.immersive_background_speed =
-        settings.appearance.immersive_background_speed.clamp(40, 180);
-    settings.appearance.immersive_background_blur =
-        settings.appearance.immersive_background_blur.clamp(0, 36);
+        settings.appearance.immersive_background_speed.clamp(40, 250);
     settings.appearance.immersive_background_softness =
         settings.appearance.immersive_background_softness.clamp(0, 100);
     settings.appearance.font_weight = settings.appearance.font_weight.clamp(100, 900);

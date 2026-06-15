@@ -59,7 +59,6 @@ export type AppearanceSettings = {
   immersiveBackgroundAnimated: boolean;
   immersiveBackgroundResolution: number;
   immersiveBackgroundSpeed: number;
-  immersiveBackgroundBlur: number;
   immersiveBackgroundSoftness: number;
 };
 
@@ -182,7 +181,6 @@ export const createDefaultAppSettings = (): AppSettings => ({
     immersiveBackgroundAnimated: true,
     immersiveBackgroundResolution: 72,
     immersiveBackgroundSpeed: 112,
-    immersiveBackgroundBlur: 24,
     immersiveBackgroundSoftness: 58,
   },
   playback: {

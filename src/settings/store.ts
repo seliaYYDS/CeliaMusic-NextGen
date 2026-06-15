@@ -65,8 +65,7 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
           : "palette-gradient",
       immersiveBackgroundAnimated: Boolean(settings.appearance.immersiveBackgroundAnimated),
       immersiveBackgroundResolution: clampInteger(settings.appearance.immersiveBackgroundResolution, 45, 100),
-      immersiveBackgroundSpeed: clampInteger(settings.appearance.immersiveBackgroundSpeed, 40, 180),
-      immersiveBackgroundBlur: clampInteger(settings.appearance.immersiveBackgroundBlur, 0, 36),
+      immersiveBackgroundSpeed: clampInteger(settings.appearance.immersiveBackgroundSpeed, 40, 250),
       immersiveBackgroundSoftness: clampInteger(settings.appearance.immersiveBackgroundSoftness, 0, 100),
     },
     playback: {

@@ -85,7 +85,6 @@ const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   immersiveBackgroundAnimated: true,
   immersiveBackgroundResolution: 72,
   immersiveBackgroundSpeed: 112,
-  immersiveBackgroundBlur: 24,
   immersiveBackgroundSoftness: 58,
 };
 
@@ -266,10 +265,6 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
     immersiveBackgroundSpeed: normalizeNumber(
       value.immersiveBackgroundSpeed,
       DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundSpeed,
-    ),
-    immersiveBackgroundBlur: normalizeNumber(
-      value.immersiveBackgroundBlur,
-      DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundBlur,
     ),
     immersiveBackgroundSoftness: normalizeNumber(
       value.immersiveBackgroundSoftness,

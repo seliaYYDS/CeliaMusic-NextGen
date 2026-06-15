@@ -1666,9 +1666,7 @@ function getThemeEditorCopy(locale: string) {
       immersiveBackgroundResolutionLabel: "Render Precision",
       immersiveBackgroundResolutionHelper: "Higher precision improves detail but costs more performance.",
       immersiveBackgroundSpeedLabel: "Animation Speed",
-      immersiveBackgroundSpeedHelper: "Controls how quickly the fluid background flows and cycles through its motion.",
-      immersiveBackgroundBlurLabel: "Fluid Blur",
-      immersiveBackgroundBlurHelper: "Increase this to make the fluid background softer and more diffused.",
+      immersiveBackgroundSpeedHelper: "Controls how quickly the fluid background flows and cycles through its motion. 100% is the default pace.",
       immersiveBackgroundSoftnessLabel: "Fluid Softness",
       immersiveBackgroundSoftnessHelper:
         "Lower values keep color boundaries firmer, while higher values make the fluid blend more softly.",
@@ -1726,9 +1724,7 @@ function getThemeEditorCopy(locale: string) {
     immersiveBackgroundResolutionLabel: "渲染精度",
     immersiveBackgroundResolutionHelper: "精度越高细节越完整，但性能开销也会更高。",
     immersiveBackgroundSpeedLabel: "动画速度",
-    immersiveBackgroundSpeedHelper: "控制流体背景流动与循环推进的速度。",
-    immersiveBackgroundBlurLabel: "流体模糊",
-    immersiveBackgroundBlurHelper: "提高数值可以让流体背景过渡更柔和、更接近雾化效果。",
+    immersiveBackgroundSpeedHelper: "控制流体背景流动与循环推进的速度，100% 为默认节奏。",
     immersiveBackgroundSoftnessLabel: "流体柔和度",
     immersiveBackgroundSoftnessHelper: "数值越低，流体中不同颜色的边界越硬；数值越高，混合越柔和。",
     activateCustom: "使用自定义主题",
@@ -16160,32 +16156,10 @@ function SettingsScreen({
                   </div>
                   <div>
                     <UISlider
-                      label={themeEditorCopy.immersiveBackgroundBlurLabel}
-                      value={settings.appearance.immersiveBackgroundBlur}
-                      min={0}
-                      max={36}
-                      step={1}
-                      valueSuffix="px"
-                      onChange={(value) =>
-                        onUpdate((current) => ({
-                          ...current,
-                          appearance: {
-                            ...current.appearance,
-                            immersiveBackgroundBlur: value,
-                          },
-                        }))
-                      }
-                    />
-                    <span className="ui-field__helper">
-                      {themeEditorCopy.immersiveBackgroundBlurHelper}
-                    </span>
-                  </div>
-                  <div>
-                    <UISlider
                       label={themeEditorCopy.immersiveBackgroundSpeedLabel}
                       value={settings.appearance.immersiveBackgroundSpeed}
                       min={40}
-                      max={180}
+                      max={250}
                       step={1}
                       valueSuffix="%"
                       onChange={(value) =>
@@ -22803,9 +22777,9 @@ export function ImmersivePlayerOverlay({
           "--immersive-color-secondary": withHexAlpha(palette.secondary, 0.9),
           "--immersive-color-glow": withHexAlpha(palette.glow, 0.86),
           "--immersive-color-edge": withHexAlpha(palette.edge, 0.98),
-          "--immersive-color-highlight": withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.22), 0.5),
-          "--immersive-backdrop-blur": `${clampNumber(appearanceSettings.immersiveBackgroundBlur * 1.4, 0, 72).toFixed(1)}px`,
-          "--immersive-backdrop-saturate": `${clampNumber(114 + ((appearanceSettings.immersiveBackgroundResolution - 45) * 0.75), 114, 160).toFixed(0)}%`,
+          "--immersive-color-highlight": withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.1), 0.34),
+          "--immersive-backdrop-blur": `${clampNumber(24 + (appearanceSettings.immersiveBackgroundSoftness * 0.22), 18, 48).toFixed(1)}px`,
+          "--immersive-backdrop-saturate": `${clampNumber(108 + ((appearanceSettings.immersiveBackgroundResolution - 45) * 0.5), 108, 136).toFixed(0)}%`,
           "--immersive-artwork-backdrop-blur": `${clampNumber((appearanceSettings.backgroundBlur * 1.15) + 20, 18, 64).toFixed(1)}px`,
           "--immersive-app-background-opacity": `${clamp01(appBackgroundOpacity)}`,
           "--immersive-app-background-blur": `${Math.max(0, appBackgroundBlurPx).toFixed(1)}px`,
@@ -24659,8 +24633,7 @@ function ImmersiveFluidCanvas({
     };
 
     const precisionScale = clampNumber(appearanceSettings.immersiveBackgroundResolution / 100, 0.45, 1);
-    const speedScale = clampNumber(appearanceSettings.immersiveBackgroundSpeed / 100, 0.55, 2.4);
-    const blurAmount = clampNumber(appearanceSettings.immersiveBackgroundBlur, 0, 36);
+    const speedScale = clampNumber((appearanceSettings.immersiveBackgroundSpeed / 100) * 2, 0.8, 5);
     const softnessScale = clampNumber(appearanceSettings.immersiveBackgroundSoftness / 100, 0, 1);
     const isAnimated = appearanceSettings.immersiveBackgroundAnimated;
     const targetFrameIntervalMs = precisionScale >= 0.76 ? 20 : 16;
@@ -24836,18 +24809,18 @@ function ImmersiveFluidCanvas({
           renderHeight * sample.y,
           radius,
         );
-        glow.addColorStop(0, withHexAlpha(mixHexColors(sample.color, "#ffffff", 0.08), 0.22 + (sample.weight * 0.1)));
-        glow.addColorStop(0.42, withHexAlpha(sample.color, 0.12 + (sample.weight * 0.04)));
+        glow.addColorStop(0, withHexAlpha(mixHexColors(sample.color, "#ffffff", 0.04), 0.14 + (sample.weight * 0.06)));
+        glow.addColorStop(0.42, withHexAlpha(sample.color, 0.08 + (sample.weight * 0.03)));
         glow.addColorStop(1, "rgba(0, 0, 0, 0)");
-        backdropContext.globalCompositeOperation = index % 2 === 0 ? "screen" : "soft-light";
+        backdropContext.globalCompositeOperation = index % 2 === 0 ? "soft-light" : "source-over";
         backdropContext.fillStyle = glow;
         backdropContext.fillRect(0, 0, renderWidth, renderHeight);
       });
 
       const diagonalWash = backdropContext.createLinearGradient(renderWidth * 0.12, 0, renderWidth, renderHeight);
-      diagonalWash.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.12), 0.1));
+      diagonalWash.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.08), 0.06));
       diagonalWash.addColorStop(0.48, "rgba(255, 255, 255, 0)");
-      diagonalWash.addColorStop(1, withHexAlpha(palette.base, 0.14));
+      diagonalWash.addColorStop(1, withHexAlpha(palette.base, 0.1));
       backdropContext.globalCompositeOperation = "soft-light";
       backdropContext.fillStyle = diagonalWash;
       backdropContext.fillRect(0, 0, renderWidth, renderHeight);
@@ -24952,16 +24925,14 @@ function ImmersiveFluidCanvas({
 
     const drawFieldMask = (nodes: ReturnType<typeof resolveAnimatedNodes>) => {
       const fieldBlur =
-        blurAmount <= 0
-          ? 0
-          : (blurAmount * (0.3 + (softnessScale * 0.52)) * precisionScale) + 1.2;
+        (2.4 + (softnessScale * 8.6)) * (0.88 + (precisionScale * 0.26));
       fieldContext.clearRect(0, 0, renderWidth, renderHeight);
       fieldContext.save();
       fieldContext.filter = fieldBlur > 0 ? `blur(${fieldBlur.toFixed(1)}px)` : "none";
       fieldContext.globalCompositeOperation = "source-over";
 
       nodes.forEach((node) => {
-        drawSoftBlob(fieldContext, node, "#ffffff", 1.08 + (node.weight * 0.12), 0);
+        drawSoftBlob(fieldContext, node, "#ffffff", 0.84 + (node.weight * 0.08), 0);
       });
 
       fieldContext.restore();
@@ -24987,11 +24958,11 @@ function ImmersiveFluidCanvas({
       nodes.forEach((node, index) => {
         const radius = Math.max(node.radiusX, node.radiusY) * (1.82 + (node.weight * 0.26));
         const glow = meshContext.createRadialGradient(node.x, node.y, 0, node.x, node.y, radius);
-        glow.addColorStop(0, withHexAlpha(mixHexColors(node.color, "#ffffff", 0.08), 0.42 + (node.weight * 0.08)));
-        glow.addColorStop(0.3, withHexAlpha(node.color, 0.34 + (node.weight * 0.08)));
-        glow.addColorStop(0.68, withHexAlpha(mixHexColors(node.color, palette.secondary, 0.3), 0.18));
+        glow.addColorStop(0, withHexAlpha(mixHexColors(node.color, "#ffffff", 0.03), 0.26 + (node.weight * 0.05)));
+        glow.addColorStop(0.3, withHexAlpha(node.color, 0.26 + (node.weight * 0.06)));
+        glow.addColorStop(0.68, withHexAlpha(mixHexColors(node.color, palette.secondary, 0.3), 0.12));
         glow.addColorStop(1, "rgba(0, 0, 0, 0)");
-        meshContext.globalCompositeOperation = index % 2 === 0 ? "screen" : "lighten";
+        meshContext.globalCompositeOperation = index % 2 === 0 ? "soft-light" : "lighten";
         meshContext.fillStyle = glow;
         meshContext.fillRect(0, 0, renderWidth, renderHeight);
       });
@@ -25003,9 +24974,9 @@ function ImmersiveFluidCanvas({
         renderWidth,
         renderHeight * 0.84,
       );
-      lightSheet.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.2), 0.2));
+      lightSheet.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.1), 0.12));
       lightSheet.addColorStop(0.52, "rgba(255, 255, 255, 0)");
-      lightSheet.addColorStop(1, withHexAlpha(mixHexColors(palette.edge, palette.base, 0.42), 0.18));
+      lightSheet.addColorStop(1, withHexAlpha(mixHexColors(palette.edge, palette.base, 0.42), 0.12));
       meshContext.fillStyle = lightSheet;
       meshContext.fillRect(0, 0, renderWidth, renderHeight);
 
@@ -25014,9 +24985,7 @@ function ImmersiveFluidCanvas({
 
     const drawFluidLayers = (nodes: ReturnType<typeof resolveAnimatedNodes>) => {
       const baseBlur =
-        blurAmount <= 0
-          ? 0
-          : (blurAmount * (0.5 + (softnessScale * 0.72)) * precisionScale) + 1.8;
+        (4.2 + (softnessScale * 12.4)) * (0.86 + (precisionScale * 0.24));
 
       drawFieldMask(nodes);
       drawColorMesh(nodes);
@@ -25029,20 +24998,20 @@ function ImmersiveFluidCanvas({
       context.save();
       context.filter =
         baseBlur > 0
-          ? `blur(${baseBlur.toFixed(1)}px) saturate(${(132 + (softnessScale * 22)).toFixed(0)}%)`
-          : `saturate(${(132 + (softnessScale * 22)).toFixed(0)}%)`;
-      context.globalCompositeOperation = "screen";
-      context.globalAlpha = 0.96;
+          ? `blur(${baseBlur.toFixed(1)}px) saturate(${(118 + (softnessScale * 14)).toFixed(0)}%) brightness(92%)`
+          : `saturate(${(118 + (softnessScale * 14)).toFixed(0)}%) brightness(92%)`;
+      context.globalCompositeOperation = "source-over";
+      context.globalAlpha = 0.88;
       context.drawImage(fieldCanvas, 0, 0, renderWidth, renderHeight);
       context.restore();
 
       context.save();
       context.filter =
         baseBlur > 0
-          ? `blur(${(baseBlur * 0.52).toFixed(1)}px) saturate(${(148 + (softnessScale * 20)).toFixed(0)}%)`
-          : `saturate(${(148 + (softnessScale * 20)).toFixed(0)}%)`;
-      context.globalCompositeOperation = "lighter";
-      context.globalAlpha = 0.3 + (softnessScale * 0.08);
+          ? `blur(${(baseBlur * 0.4).toFixed(1)}px) saturate(${(122 + (softnessScale * 14)).toFixed(0)}%) brightness(88%)`
+          : `saturate(${(122 + (softnessScale * 14)).toFixed(0)}%) brightness(88%)`;
+      context.globalCompositeOperation = "soft-light";
+      context.globalAlpha = 0.14 + (softnessScale * 0.05);
       context.drawImage(fieldCanvas, 0, 0, renderWidth, renderHeight);
       context.restore();
     };
@@ -25051,7 +25020,7 @@ function ImmersiveFluidCanvas({
       context.save();
 
       context.globalCompositeOperation = "overlay";
-      context.globalAlpha = 0.12;
+      context.globalAlpha = 0.08;
       const balanceGradient = context.createLinearGradient(0, 0, renderWidth, renderHeight);
       colorPool.forEach((color, index) => {
         const stop = colorPool.length === 1 ? 0 : index / (colorPool.length - 1);
@@ -25061,7 +25030,7 @@ function ImmersiveFluidCanvas({
       context.fillRect(0, 0, renderWidth, renderHeight);
 
       context.globalCompositeOperation = "soft-light";
-      context.globalAlpha = 0.16;
+      context.globalAlpha = 0.1;
       const softGradient = context.createRadialGradient(
         renderWidth * 0.5,
         renderHeight * 0.5,
@@ -25077,25 +25046,21 @@ function ImmersiveFluidCanvas({
       context.fillRect(0, 0, renderWidth, renderHeight);
 
       const finalGlowBlur =
-        blurAmount <= 0
-          ? 0
-          : ((blurAmount * (0.18 + (softnessScale * 0.2)) * precisionScale) + 2.4);
+        (1.8 + (softnessScale * 4.8)) * (0.9 + (precisionScale * 0.16));
       context.filter = finalGlowBlur > 0 ? `blur(${finalGlowBlur.toFixed(1)}px)` : "none";
-      context.globalCompositeOperation = "screen";
-      context.globalAlpha = 0.08;
+      context.globalCompositeOperation = "soft-light";
+      context.globalAlpha = 0.04;
       const finalGradient = context.createLinearGradient(renderWidth, 0, 0, renderHeight);
       finalGradient.addColorStop(0, withHexAlpha(palette.glow, 0.18));
-      finalGradient.addColorStop(1, withHexAlpha(palette.base, 0.18));
+      finalGradient.addColorStop(1, withHexAlpha(palette.base, 0.12));
       context.fillStyle = finalGradient;
       context.fillRect(0, 0, renderWidth, renderHeight);
 
       const causticBlur =
-        blurAmount <= 0
-          ? 0
-          : ((blurAmount * (0.22 + (softnessScale * 0.18)) * precisionScale) + 2.8);
+        (2.2 + (softnessScale * 5.4)) * (0.88 + (precisionScale * 0.18));
       context.filter = causticBlur > 0 ? `blur(${causticBlur.toFixed(1)}px)` : "none";
       context.globalCompositeOperation = "soft-light";
-      context.globalAlpha = 0.12;
+      context.globalAlpha = 0.07;
       const causticGradient = context.createRadialGradient(
         renderWidth * 0.5,
         renderHeight * 0.24,
@@ -25104,8 +25069,8 @@ function ImmersiveFluidCanvas({
         renderHeight * 0.24,
         Math.max(renderWidth, renderHeight) * 0.76,
       );
-      causticGradient.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.14), 0.16));
-      causticGradient.addColorStop(0.42, withHexAlpha(palette.secondary, 0.1));
+      causticGradient.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.08), 0.1));
+      causticGradient.addColorStop(0.42, withHexAlpha(palette.secondary, 0.06));
       causticGradient.addColorStop(1, "rgba(0, 0, 0, 0)");
       context.fillStyle = causticGradient;
       context.fillRect(0, 0, renderWidth, renderHeight);
@@ -25187,7 +25152,6 @@ function ImmersiveFluidCanvas({
       resizeObserver.disconnect();
     };
   }, [
-    appearanceSettings.immersiveBackgroundBlur,
     appearanceSettings.immersiveBackgroundAnimated,
     appearanceSettings.immersiveBackgroundResolution,
     appearanceSettings.immersiveBackgroundSpeed,
