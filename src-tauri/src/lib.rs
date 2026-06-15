@@ -6,7 +6,6 @@ mod wallpaper;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    OnceLock,
 };
 
 use local_api::{
@@ -37,14 +36,11 @@ use tauri::{
 
 #[cfg(windows)]
 use windows::{
-    core::PCWSTR,
     Win32::{
-        Foundation::{CloseHandle, GetLastError, RECT, ERROR_ALREADY_EXISTS},
+        Foundation::RECT,
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST},
-        System::Threading::CreateMutexW,
         UI::WindowsAndMessaging::{
-            FindWindowW, GetForegroundWindow, GetWindowRect, IsWindowVisible, SetForegroundWindow,
-            ShowWindow, SW_RESTORE, SW_SHOW,
+            GetForegroundWindow, GetWindowRect, IsWindowVisible,
         },
     },
 };
@@ -73,60 +69,10 @@ const COMPONENT_CONTROL_INIT_SCRIPT: &str = "window.__CELIA_WINDOW_KIND__ = 'com
 const COMPONENT_DYNAMIC_ISLAND_INIT_SCRIPT: &str =
     "window.__CELIA_WINDOW_KIND__ = 'component-dynamic-island';";
 const MAIN_WINDOW_VISIBILITY_EVENT: &str = "app-window-visibility";
-#[cfg(windows)]
-const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\CeliaMusicNextGen.SingleInstance";
-#[cfg(windows)]
-const MAIN_WINDOW_TITLE: &str = "Celia Music Next Gen";
-
-#[cfg(windows)]
-static SINGLE_INSTANCE_MUTEX: OnceLock<isize> = OnceLock::new();
 
 #[derive(Default)]
 struct AppRuntimeState {
     exit_requested: AtomicBool,
-}
-
-#[cfg(windows)]
-fn to_wide_null(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-#[cfg(windows)]
-fn activate_existing_instance_window() {
-    let window_title = to_wide_null(MAIN_WINDOW_TITLE);
-
-    unsafe {
-        if let Ok(hwnd) = FindWindowW(PCWSTR::null(), PCWSTR(window_title.as_ptr())) {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-            let _ = SetForegroundWindow(hwnd);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn acquire_single_instance() -> bool {
-    let mutex_name = to_wide_null(SINGLE_INSTANCE_MUTEX_NAME);
-
-    unsafe {
-        let mutex = match CreateMutexW(None, true, PCWSTR(mutex_name.as_ptr())) {
-            Ok(handle) => handle,
-            Err(_) => return true,
-        };
-
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            let _ = CloseHandle(mutex);
-            return false;
-        }
-
-        let _ = SINGLE_INSTANCE_MUTEX.set(mutex.0 as isize);
-        true
-    }
-}
-
-#[cfg(not(windows))]
-fn acquire_single_instance() -> bool {
-    true
 }
 
 #[cfg(windows)]
@@ -438,12 +384,6 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if !acquire_single_instance() {
-        #[cfg(windows)]
-        activate_existing_instance_window();
-        return;
-    }
-
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
