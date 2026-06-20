@@ -6995,16 +6995,11 @@ export function AppShell() {
     setTransientRemoteArtworkUrls({ ...transientRemoteArtworkUrlsRef.current });
     return true;
   };
-  const isOrderedPlaybackLockedQueue =
-    playbackQueueKind === "personal-fm" || playbackQueueKind === "intelligence";
+  const isOrderedPlaybackLockedQueue = playbackQueueKind === "personal-fm";
   const playbackModeDisplayText = isOrderedPlaybackLockedQueue
-    ? playbackQueueKind === "personal-fm"
-      ? copy.locale === "en-US"
-        ? "Ordered Playback (Private FM)"
-        : "顺序播放（私人 FM）"
-      : copy.locale === "en-US"
-        ? "Ordered Playback (Heart Mode)"
-        : "顺序播放（心动模式）"
+    ? copy.locale === "en-US"
+      ? "Ordered Playback (Private FM)"
+      : "顺序播放（私人 FM）"
     : playbackModeLabel(playbackMode, copy.locale);
   const queueDraggingTrackId = queueDragState?.trackId ?? draggingQueueTrackId ?? null;
   const queueDraggedSourceIndex = queueDraggingTrackId
@@ -8747,10 +8742,7 @@ export function AppShell() {
   }, [playbackQueueIds]);
 
   useEffect(() => {
-    if (
-      (playbackQueueKind === "personal-fm" || playbackQueueKind === "intelligence") &&
-      playbackMode !== "ordered"
-    ) {
+    if (playbackQueueKind === "personal-fm" && playbackMode !== "ordered") {
       applyPlaybackModeLocally("ordered");
     }
   }, [playbackMode, playbackQueueKind]);
@@ -9270,6 +9262,11 @@ export function AppShell() {
   };
 
   const enableLockedQueuePlaybackMode = (queueKind: Extract<PlaybackQueueKind, "personal-fm" | "intelligence">) => {
+    if (queueKind !== "personal-fm") {
+      syncPlaybackQueueKind(queueKind);
+      return;
+    }
+
     if (lockedQueuePreviousPlaybackModeRef.current === null) {
       lockedQueuePreviousPlaybackModeRef.current = playbackModeRef.current;
     }
@@ -11106,8 +11103,8 @@ export function AppShell() {
           null,
       }));
       const shouldProtectFullQueueForPlayback =
-        options?.sourcePlaylist?.id !== null &&
-        options?.sourcePlaylist?.id === likedPlaylistId;
+        options?.queueKind !== "personal-fm" &&
+        options?.sourcePlaylist?.id !== null;
       upsertTransientRemoteEntries(transientQueue, {
         protectedTrackIds: shouldProtectFullQueueForPlayback
           ? transientQueue.map((entry) => entry.track.id)
@@ -12088,15 +12085,11 @@ export function AppShell() {
   ]);
 
   const handleCyclePlaybackMode = () => {
-    if (playbackQueueKindRef.current === "personal-fm" || playbackQueueKindRef.current === "intelligence") {
+    if (playbackQueueKindRef.current === "personal-fm") {
       pushDynamicIslandNotification(
-        playbackQueueKindRef.current === "personal-fm"
-          ? copy.locale === "en-US"
-            ? "Private FM stays in ordered playback."
-            : "私人 FM 会暂时保持顺序播放。"
-          : copy.locale === "en-US"
-            ? "Heart Mode stays in ordered playback."
-            : "心动模式会暂时保持顺序播放。",
+        copy.locale === "en-US"
+          ? "Private FM stays in ordered playback."
+          : "私人 FM 会暂时保持顺序播放。",
       );
       return;
     }
@@ -12911,7 +12904,6 @@ export function AppShell() {
             : null;
         })()
       : null;
-  const likedPlaylistId = likedSongsContextPlaylist?.id ?? null;
   const contextMenuItems: ContextMenuItemDefinition[] = (() => {
     if (!contextMenuState) {
       return [];
