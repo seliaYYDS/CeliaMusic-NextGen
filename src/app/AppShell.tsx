@@ -3193,6 +3193,10 @@ export function getLocaleStrings(locale: string) {
         neteaseLoginClearFailed: "Failed to clear Netease login",
         contextSongQueued: "Added to queue",
         contextSongPlayNext: "Will play next",
+        loadingArtistView: "Loading artist view...",
+        loadingAlbumView: "Loading album view...",
+        loadingHeartMode: "Starting Heart Mode...",
+        loadingPage: "Loading page...",
         intelligenceModeStarted: "Heart Mode started",
         intelligenceModeFailed: "Failed to start Heart Mode",
         contextSongLiked: "Song saved to favorites",
@@ -3290,6 +3294,10 @@ export function getLocaleStrings(locale: string) {
       neteaseLoginClearFailed: "退出网易云登录失败",
       contextSongQueued: "已添加到播放列表",
       contextSongPlayNext: "已设为下一首播放",
+      loadingArtistView: "正在加载歌手页面...",
+      loadingAlbumView: "正在加载专辑页面...",
+      loadingHeartMode: "正在开启心动模式...",
+      loadingPage: "正在加载页面...",
       intelligenceModeStarted: "已开启心动模式",
       intelligenceModeFailed: "开启心动模式失败",
       contextSongLiked: "歌曲已收藏",
@@ -3858,6 +3866,8 @@ export function AppShell() {
   const [isPlaybackLoading, setIsPlaybackLoading] = useState(false);
   const [isAutoMixTransitionActive, setIsAutoMixTransitionActive] = useState(false);
   const [autoMixBadgePhase, setAutoMixBadgePhase] = useState<"hidden" | "entering" | "visible" | "leaving">("hidden");
+  const [workspaceLoadingMessage, setWorkspaceLoadingMessage] = useState<string | null>(null);
+  const [isStartingIntelligenceMode, setIsStartingIntelligenceMode] = useState(false);
   const [playbarDisplayTrackId, setPlaybarDisplayTrackId] = useState<string | null>(null);
   const [playbarDisplayTimeSeconds, setPlaybarDisplayTimeSeconds] = useState(0);
   const [playbarDisplayVisualTimeSeconds, setPlaybarDisplayVisualTimeSeconds] = useState(0);
@@ -11211,6 +11221,8 @@ export function AppShell() {
       return;
     }
 
+    setIsStartingIntelligenceMode(true);
+    setWorkspaceLoadingMessage(localeStrings.notifications.loadingHeartMode);
     try {
       const intelligenceSongs = dedupeNeteaseSongDetailsById(
         await getNeteaseIntelligenceSongs(
@@ -11241,6 +11253,9 @@ export function AppShell() {
     } catch (error) {
       console.error("[player] failed to start intelligence mode", error);
       pushDynamicIslandNotification(localeStrings.notifications.intelligenceModeFailed);
+    } finally {
+      setIsStartingIntelligenceMode(false);
+      setWorkspaceLoadingMessage(null);
     }
   };
 
@@ -12841,16 +12856,21 @@ export function AppShell() {
       return;
     }
 
-    const detail = await getNeteaseSongDetail(settingsRef.current, neteaseTrackId).catch(() => null);
-    const targetArtistId = detail?.artistIds[artistIndex] ?? detail?.artistIds[0] ?? null;
-    const targetArtistName = detail?.artists[artistIndex] ?? detail?.artists[0] ?? artistName;
+    setWorkspaceLoadingMessage(localeStrings.notifications.loadingArtistView);
+    try {
+      const detail = await getNeteaseSongDetail(settingsRef.current, neteaseTrackId).catch(() => null);
+      const targetArtistId = detail?.artistIds[artistIndex] ?? detail?.artistIds[0] ?? null;
+      const targetArtistName = detail?.artists[artistIndex] ?? detail?.artists[0] ?? artistName;
 
-    if (targetArtistId) {
-      openExploreArtistView(targetArtistId, targetArtistName);
-      return;
+      if (targetArtistId) {
+        openExploreArtistView(targetArtistId, targetArtistName);
+        return;
+      }
+
+      openLibraryArtistView(targetArtistName);
+    } finally {
+      setWorkspaceLoadingMessage(null);
     }
-
-    openLibraryArtistView(targetArtistName);
   };
 
   const handleOpenTrackAlbum = async (track: TrackRecord) => {
@@ -12870,16 +12890,21 @@ export function AppShell() {
       return;
     }
 
-    const detail = await getNeteaseSongDetail(settingsRef.current, neteaseTrackId).catch(() => null);
-    const targetAlbumId = detail?.albumId ?? null;
-    const targetAlbumName = detail?.album ?? albumName;
+    setWorkspaceLoadingMessage(localeStrings.notifications.loadingAlbumView);
+    try {
+      const detail = await getNeteaseSongDetail(settingsRef.current, neteaseTrackId).catch(() => null);
+      const targetAlbumId = detail?.albumId ?? null;
+      const targetAlbumName = detail?.album ?? albumName;
 
-    if (targetAlbumId) {
-      openExploreAlbumView(targetAlbumId, targetAlbumName);
-      return;
+      if (targetAlbumId) {
+        openExploreAlbumView(targetAlbumId, targetAlbumName);
+        return;
+      }
+
+      openLibraryAlbumView(targetAlbumName);
+    } finally {
+      setWorkspaceLoadingMessage(null);
     }
-
-    openLibraryAlbumView(targetAlbumName);
   };
 
   const contextMenuCopy = getContextMenuCopy(copy.locale);
@@ -13370,6 +13395,7 @@ export function AppShell() {
         onStartIntelligenceMode={(sourcePlaylist, seedSong, queueSongs) => {
           void handleStartNeteaseIntelligenceMode(sourcePlaylist, seedSong, queueSongs);
         }}
+        isStartingIntelligenceMode={isStartingIntelligenceMode}
         onOpenSongArtist={(artistId, artistName) => openExploreArtistView(artistId, artistName)}
         onOpenSongAlbum={(albumId, albumName) => openExploreAlbumView(albumId, albumName)}
         onSongContextMenu={handleNeteaseSongContextMenu}
@@ -13390,6 +13416,7 @@ export function AppShell() {
         onStartIntelligenceMode={(sourcePlaylist, seedSong, queueSongs) => {
           void handleStartNeteaseIntelligenceMode(sourcePlaylist, seedSong, queueSongs);
         }}
+        isStartingIntelligenceMode={isStartingIntelligenceMode}
         onOpenSongArtist={(artistId, artistName) => openExploreArtistView(artistId, artistName)}
         onOpenSongAlbum={(albumId, albumName) => openExploreAlbumView(albumId, albumName)}
         onSongContextMenu={handleNeteaseSongContextMenu}
@@ -13458,6 +13485,7 @@ export function AppShell() {
         onPlayTrack={playTrackSelection}
         onOpenTrackArtist={(track) => void handleOpenTrackArtist(track)}
         onOpenTrackAlbum={(track) => void handleOpenTrackAlbum(track)}
+        isNavigatingToRemoteDetail={workspaceLoadingMessage !== null}
         onTrackContextMenu={handleTrackContextMenu}
       />
     ) : activeNav === "explore" ? (
@@ -13813,6 +13841,13 @@ export function AppShell() {
             <div key={workspaceTransitionKey} className="workspace__page">
               {workspaceScreen}
             </div>
+            {workspaceLoadingMessage ? (
+              <div className="workspace__loading-overlay" aria-live="polite" aria-busy="true">
+                <div className="workspace__loading-panel">
+                  <UILoadingBlock label={workspaceLoadingMessage} variant="inline" />
+                </div>
+              </div>
+            ) : null}
           </div>
         </main>
 
@@ -18961,6 +18996,7 @@ function PlaylistScreen({
   onCreatePlaylist,
   onEditPlaylist,
   onStartIntelligenceMode,
+  isStartingIntelligenceMode,
 }: {
   copy: UiCopy;
   settings: AppSettings;
@@ -18992,10 +19028,12 @@ function PlaylistScreen({
     seedSong: NeteaseSongDetail,
     queueSongs: NeteaseSongDetail[],
   ) => void;
+  isStartingIntelligenceMode: boolean;
 }) {
   const homeCopy = getHomeCopy(copy.locale);
   const playlistCopy = getPlaylistCopy(copy.locale);
   const playlistEditorCopy = getPlaylistEditorCopy(copy.locale);
+  const localeStrings = getLocaleStrings(copy.locale);
   const isNeteaseEnabled = isNeteaseSourceEnabled(settings);
   const hasSavedNeteaseCookie = settings.network.neteaseCookie.trim().length > 0;
   const [neteaseAccount, setNeteaseAccount] = useState<NeteaseAccountProfile | null>(null);
@@ -19007,6 +19045,7 @@ function PlaylistScreen({
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
   const [trackError, setTrackError] = useState<string | null>(null);
   const [playlistPage, setPlaylistPage] = useState(1);
+  const [isPageTransitioning, setIsPageTransitioning] = useState(false);
   const applyPlaylistLibraryCache = (entry: NeteasePlaylistLibraryCacheEntry) => {
     setNeteaseAccount(entry.account);
     setUserPlaylists(entry.userPlaylists);
@@ -19319,6 +19358,36 @@ function PlaylistScreen({
     }
   }, [playlistPage, totalTrackPages]);
 
+  useEffect(() => {
+    if (isLoadingTracks || playlistTracks.length === 0) {
+      setIsPageTransitioning(false);
+      return;
+    }
+
+    setIsPageTransitioning(true);
+    const timer = window.setTimeout(() => {
+      setIsPageTransitioning(false);
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [playlistPage, isLoadingTracks, playlistTracks.length]);
+
+  useEffect(() => {
+    if (isLoadingTracks || playlistTracks.length === 0) {
+      setIsPageTransitioning(false);
+      return;
+    }
+
+    setIsPageTransitioning(true);
+    const timer = window.setTimeout(() => {
+      setIsPageTransitioning(false);
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [playlistPage, isLoadingTracks, playlistTracks.length]);
+
   return (
     <section className="playlist-screen">
       {!isNeteaseEnabled ? (
@@ -19409,9 +19478,11 @@ function PlaylistScreen({
                     <div className="playlist-detail-card__toolbar">
                       {!isLoadingTracks && playlistTracks.length > 0 ? (
                         <IntelligenceModeButton
-                          label={playlistCopy.startIntelligenceMode}
+                          label={isStartingIntelligenceMode ? localeStrings.notifications.loadingHeartMode : playlistCopy.startIntelligenceMode}
                           onClick={() =>
                             onStartIntelligenceMode(initialSelection, playlistTracks[0], playlistTracks)}
+                          disabled={isStartingIntelligenceMode}
+                          loading={isStartingIntelligenceMode}
                         />
                       ) : null}
                     {canEditSelectedPlaylist ? (
@@ -19437,6 +19508,8 @@ function PlaylistScreen({
                   <UILoadingBlock label={playlistCopy.loadingTracks} variant="list" items={5} />
                 ) : playlistTracks.length === 0 ? (
                   <p className="library-empty">{playlistCopy.emptyTracks}</p>
+                ) : isPageTransitioning ? (
+                  <UILoadingBlock label={localeStrings.notifications.loadingPage} variant="list" items={5} />
                 ) : (
                   <>
                     <div className="home-song-list">
@@ -19538,6 +19611,7 @@ function LikedSongsScreen({
   dataVersion,
   onPlayNeteaseTrack,
   onStartIntelligenceMode,
+  isStartingIntelligenceMode,
   onOpenSongArtist,
   onOpenSongAlbum,
   onSongContextMenu,
@@ -19556,6 +19630,7 @@ function LikedSongsScreen({
     seedSong: NeteaseSongDetail,
     queueSongs: NeteaseSongDetail[],
   ) => void;
+  isStartingIntelligenceMode: boolean;
   onOpenSongArtist: (artistId: number, artistName: string) => void;
   onOpenSongAlbum: (albumId: number, albumName: string) => void;
   onSongContextMenu: (
@@ -19570,6 +19645,7 @@ function LikedSongsScreen({
 }) {
   const homeCopy = getHomeCopy(copy.locale);
   const likedSongsCopy = getLikedSongsCopy(copy.locale);
+  const localeStrings = getLocaleStrings(copy.locale);
   const isNeteaseEnabled = isNeteaseSourceEnabled(settings);
   const hasSavedNeteaseCookie = settings.network.neteaseCookie.trim().length > 0;
   const [neteaseAccount, setNeteaseAccount] = useState<NeteaseAccountProfile | null>(null);
@@ -19581,6 +19657,7 @@ function LikedSongsScreen({
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
   const [trackError, setTrackError] = useState<string | null>(null);
   const [playlistPage, setPlaylistPage] = useState(1);
+  const [isPageTransitioning, setIsPageTransitioning] = useState(false);
 
   useEffect(() => {
     let isDisposed = false;
@@ -19836,6 +19913,21 @@ function LikedSongsScreen({
     }
   }, [playlistPage, totalTrackPages]);
 
+  useEffect(() => {
+    if (isLoadingTracks || playlistTracks.length === 0) {
+      setIsPageTransitioning(false);
+      return;
+    }
+
+    setIsPageTransitioning(true);
+    const timer = window.setTimeout(() => {
+      setIsPageTransitioning(false);
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [playlistPage, isLoadingTracks, playlistTracks.length]);
+
   return (
     <section className="playlist-screen">
       {!isNeteaseEnabled ? (
@@ -19904,7 +19996,7 @@ function LikedSongsScreen({
               <div className="playlist-detail-card__toolbar">
                 {!isLoadingTracks && playlistTracks.length > 0 && selectedPlaylist ? (
                   <IntelligenceModeButton
-                    label={likedSongsCopy.startIntelligenceMode}
+                    label={isStartingIntelligenceMode ? localeStrings.notifications.loadingHeartMode : likedSongsCopy.startIntelligenceMode}
                     onClick={() =>
                       onStartIntelligenceMode(
                         {
@@ -19914,6 +20006,8 @@ function LikedSongsScreen({
                         playlistTracks[0],
                         playlistTracks,
                       )}
+                    disabled={isStartingIntelligenceMode}
+                    loading={isStartingIntelligenceMode}
                   />
                 ) : null}
                 {isLoadingTracks ? (
@@ -19933,6 +20027,8 @@ function LikedSongsScreen({
               <UILoadingBlock label={likedSongsCopy.loadingTracks} variant="list" items={5} />
             ) : playlistTracks.length === 0 ? (
               <p className="library-empty">{likedSongsCopy.emptyTracks}</p>
+            ) : isPageTransitioning ? (
+              <UILoadingBlock label={localeStrings.notifications.loadingPage} variant="list" items={5} />
             ) : (
               <>
                 <div className="home-song-list">
@@ -20543,6 +20639,7 @@ function LibraryScreen({
   onPlayTrack,
   onOpenTrackArtist,
   onOpenTrackAlbum,
+  isNavigatingToRemoteDetail,
   onTrackContextMenu,
 }: {
   copy: UiCopy;
@@ -20594,6 +20691,7 @@ function LibraryScreen({
   onPlayTrack: (trackId: string, queueTracks: TrackRecord[]) => void;
   onOpenTrackArtist: (track: TrackRecord) => void;
   onOpenTrackAlbum: (track: TrackRecord) => void;
+  isNavigatingToRemoteDetail: boolean;
   onTrackContextMenu: (
     event: ReactMouseEvent<HTMLElement>,
     track: TrackRecord,
@@ -20624,6 +20722,7 @@ function LibraryScreen({
     "recent",
   );
   const [songPage, setSongPage] = useState(1);
+  const [isSongPageTransitioning, setIsSongPageTransitioning] = useState(false);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const localeStrings = getLocaleStrings(copy.locale);
   const songBrowserCopy = getLibrarySongBrowserCopy(copy.locale);
@@ -20833,6 +20932,21 @@ function LibraryScreen({
       setSongPage(totalSongPages);
     }
   }, [songPage, totalSongPages]);
+
+  useEffect(() => {
+    if (isLoading || pagedSongTracks.length === 0) {
+      setIsSongPageTransitioning(false);
+      return;
+    }
+
+    setIsSongPageTransitioning(true);
+    const timer = window.setTimeout(() => {
+      setIsSongPageTransitioning(false);
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [songPage, isLoading, pagedSongTracks.length]);
 
   useEffect(() => {
     if (view === "hub") {
@@ -21408,7 +21522,7 @@ function LibraryScreen({
             artworksById={artworksById}
             showAlbumArtwork={showAlbumArtwork}
             activeTrackId={activeTrackId}
-            isLoading={isLoading}
+            isLoading={isLoading || isSongPageTransitioning}
             copy={copy}
             emptyMessage={copy.library.empty.noTracks}
             enableSelection
@@ -21418,6 +21532,7 @@ function LibraryScreen({
             onPlayTrack={onPlayTrack}
             onOpenArtist={onOpenTrackArtist}
             onOpenAlbum={onOpenTrackAlbum}
+            disableMetaNavigation={isNavigatingToRemoteDetail}
             onTrackContextMenu={onTrackContextMenu}
           />
           <UIPagination
@@ -21727,6 +21842,7 @@ function LibrarySongList({
   onPlayTrack,
   onOpenArtist,
   onOpenAlbum,
+  disableMetaNavigation = false,
   onTrackContextMenu,
 }: {
   copy: UiCopy;
@@ -21743,6 +21859,7 @@ function LibrarySongList({
   onPlayTrack: (trackId: string, queueTracks: TrackRecord[]) => void;
   onOpenArtist: (track: TrackRecord) => void;
   onOpenAlbum: (track: TrackRecord) => void;
+  disableMetaNavigation?: boolean;
   onTrackContextMenu?: (
     event: ReactMouseEvent<HTMLElement>,
     track: TrackRecord,
@@ -21832,7 +21949,7 @@ function LibrarySongList({
                   className="library-song-item__field-button"
                   label={track.artist?.trim() || copy.library.songFields.unknownArtist}
                   onClick={() => onOpenArtist(track)}
-                  disabled={!track.artist?.trim()}
+                  disabled={!track.artist?.trim() || disableMetaNavigation}
                 />
               </div>
             </div>
@@ -21843,7 +21960,7 @@ function LibrarySongList({
                   className="library-song-item__field-button"
                   label={track.album?.trim() || copy.library.songFields.unknownAlbum}
                   onClick={() => onOpenAlbum(track)}
-                  disabled={!track.album?.trim()}
+                  disabled={!track.album?.trim() || disableMetaNavigation}
                 />
               </div>
             </div>
@@ -26838,19 +26955,25 @@ function IntelligenceModeButton({
   label,
   onClick,
   disabled,
+  loading = false,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  loading?: boolean;
 }) {
   return (
     <button
-      className="playlist-intelligence-button"
+      className={[
+        "playlist-intelligence-button",
+        loading ? "playlist-intelligence-button--loading" : "",
+      ].filter(Boolean).join(" ")}
       type="button"
       onClick={onClick}
       disabled={disabled}
     >
       <span className="playlist-intelligence-button__label">{label}</span>
+      {loading ? <span className="playlist-intelligence-button__loading" aria-hidden="true" /> : null}
       <span className="playlist-intelligence-button__star playlist-intelligence-button__star--1">
         <IntelligenceModeHeart />
       </span>

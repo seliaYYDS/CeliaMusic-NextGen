@@ -803,10 +803,35 @@ select {
 }
 
 .workspace__canvas {
+  position: relative;
   min-height: 0;
   min-width: 0;
   padding-top: var(--dynamic-island-clearance);
   padding-bottom: 28px;
+}
+
+.workspace__loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: start center;
+  padding-top: calc(var(--dynamic-island-clearance) + 24px);
+  pointer-events: none;
+}
+
+.workspace__loading-panel {
+  min-width: min(360px, calc(100% - 32px));
+  max-width: min(420px, calc(100% - 32px));
+  padding: 14px 16px;
+  border: 1px solid rgba(124, 144, 178, 0.16);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel-bg-strong, #ffffff) 90%, transparent 10%);
+  box-shadow:
+    0 18px 36px rgba(15, 23, 42, 0.08),
+    0 8px 18px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
 }
 
 .workspace__page {
@@ -4823,6 +4848,22 @@ select {
   position: relative;
   z-index: 1;
   white-space: nowrap;
+}
+
+.playlist-intelligence-button--loading {
+  pointer-events: none;
+}
+
+.playlist-intelligence-button__loading {
+  position: absolute;
+  right: 14px;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  animation: playbar-loading-spin 900ms linear infinite;
+  z-index: 1;
 }
 
 .playlist-intelligence-button__star {

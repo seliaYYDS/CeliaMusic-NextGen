@@ -146,6 +146,7 @@ const SEARCH_CACHE_LIMIT = 24;
 const ARTIST_CACHE_LIMIT = 24;
 const ALBUM_CACHE_LIMIT = 24;
 const SEARCH_SUGGESTION_CACHE_LIMIT = 40;
+const SEARCH_SUGGESTION_DEBOUNCE_MS = 1000;
 const discoveryCache = new Map<string, ExploreDiscoveryCache>();
 const searchCache = new Map<string, ExploreSearchCache>();
 const artistCache = new Map<string, ExploreArtistCache>();
@@ -1605,7 +1606,7 @@ export function ExploreScreen({
             setIsSearchSuggestionsLoading(false);
           }
         });
-    }, 180);
+    }, SEARCH_SUGGESTION_DEBOUNCE_MS);
 
     return () => {
       isCancelled = true;
@@ -1766,7 +1767,10 @@ export function ExploreScreen({
   const shouldShowExploreHeader = !isDetailMode && !isSearchMode;
   const shouldShowSearchForm = !isDetailMode && !isSearchMode;
   const shouldRenderSearchSuggestions =
-    shouldShowSearchForm && isSearchSuggestionsOpen && searchInput.trim().length > 0;
+    shouldShowSearchForm &&
+    isSearchSuggestionsOpen &&
+    searchInput.trim().length > 0 &&
+    (isSearchSuggestionsLoading || hasSearchSuggestions);
   const artistSummary = detailView?.kind === "artist" ? detailView.summary ?? null : null;
   const albumSummary = detailView?.kind === "album" ? detailView.summary ?? null : null;
   const artistHero = isArtistMode
@@ -2093,11 +2097,7 @@ export function ExploreScreen({
                               </div>
                             ) : null}
                           </div>
-                        ) : (
-                          <div className="explore-search-suggestions__state">
-                            <span>{copy.searchSuggestionsEmpty}</span>
-                          </div>
-                        )}
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
