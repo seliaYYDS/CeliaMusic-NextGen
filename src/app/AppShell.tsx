@@ -127,6 +127,13 @@ import {
   type ComponentDynamicIslandSnapshot,
 } from "./componentDynamicIslandSync";
 import {
+  emitComponentSongInfoCardSettings,
+  emitComponentSongInfoCardSnapshot,
+  openComponentSongInfoCardWindow,
+  readComponentSongInfoCardSettings,
+  type ComponentSongInfoCardSnapshot,
+} from "./componentSongInfoCardSync";
+import {
   findBestKugouTrackMatch,
   parseKugouPlaylistJson,
   readKugouPlaylistFile,
@@ -7399,6 +7406,17 @@ export function AppShell() {
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    const componentSongInfoCardSettings = readComponentSongInfoCardSettings();
+    if (!componentSongInfoCardSettings.enabled) {
+      return;
+    }
+
+    void openComponentSongInfoCardWindow()
+      .then(() => emitComponentSongInfoCardSettings(componentSongInfoCardSettings))
+      .catch(() => undefined);
+  }, []);
+
   const buildComponentDynamicIslandSnapshot = (): ComponentDynamicIslandSnapshot => {
     const componentIslandThemeStyle = themeStyle as CSSProperties & Record<string, string | undefined>;
     const displayTrackId = playbarDisplayTrackIdRef.current;
@@ -7473,6 +7491,80 @@ export function AppShell() {
         };
   };
 
+  const buildComponentSongInfoCardSnapshot = (): ComponentSongInfoCardSnapshot => {
+    const componentCardThemeStyle = themeStyle as CSSProperties & Record<string, string | undefined>;
+    const displayTrackId = playbarDisplayTrackIdRef.current;
+    const displayTrack = displayTrackId ? (trackLookup.get(displayTrackId) ?? null) : null;
+    const artworkUrl =
+      displayTrack === null
+        ? null
+        : resolveDisplayTrackArtworkUrl(displayTrack) ??
+          (displayTrack.id === currentTrackIdRef.current ? playbarArtworkOverrideUrlRef.current : null);
+    const displayAudio = getPlaybarDisplayAudioElement();
+    const elapsedSeconds =
+      displayAudio && Number.isFinite(displayAudio.currentTime) ? Math.max(0, displayAudio.currentTime) : 0;
+    const durationSeconds =
+      displayAudio && Number.isFinite(displayAudio.duration) && displayAudio.duration > 0
+        ? displayAudio.duration
+        : displayTrack?.durationMs
+          ? displayTrack.durationMs / 1000
+          : 0;
+    const progressValue =
+      durationSeconds > 0 ? Math.min(100, Math.max(0, (elapsedSeconds / durationSeconds) * 100)) : 0;
+
+    return displayTrack
+      ? {
+          hasTrack: true,
+          title: displayTrack.title,
+          artist: displayTrack.artist?.trim() || null,
+          album: displayTrack.album?.trim() || null,
+          artworkUrl,
+          isPlaying: isPlayingRef.current,
+          progress: progressValue,
+          elapsedLabel: formatTimeLabel(Math.round(elapsedSeconds)),
+          durationLabel: formatDurationLabelForComponentIsland(displayTrack.durationMs),
+          colorScheme: settings.appearance.colorScheme,
+          resolvedDynamicIslandBackground: String(
+            componentCardThemeStyle["--dynamic-island-bg"] ?? "",
+          ),
+          resolvedDynamicIslandBackgroundHover: String(
+            componentCardThemeStyle["--dynamic-island-bg-hover"] ?? "",
+          ),
+          resolvedDynamicIslandAccent: String(
+            componentCardThemeStyle["--dynamic-island-dot"] ?? "",
+          ),
+          primaryColor: settings.appearance.customThemePrimary,
+          secondaryColor: settings.appearance.customThemeSecondary,
+          surfaceColor: settings.appearance.customThemeSurface,
+          updatedAtMs: Date.now(),
+        }
+      : {
+          hasTrack: false,
+          title: "Celia Music",
+          artist: null,
+          album: null,
+          artworkUrl: null,
+          isPlaying: false,
+          progress: 0,
+          elapsedLabel: "0:00",
+          durationLabel: "--:--",
+          colorScheme: settings.appearance.colorScheme,
+          resolvedDynamicIslandBackground: String(
+            componentCardThemeStyle["--dynamic-island-bg"] ?? "",
+          ),
+          resolvedDynamicIslandBackgroundHover: String(
+            componentCardThemeStyle["--dynamic-island-bg-hover"] ?? "",
+          ),
+          resolvedDynamicIslandAccent: String(
+            componentCardThemeStyle["--dynamic-island-dot"] ?? "",
+          ),
+          primaryColor: settings.appearance.customThemePrimary,
+          secondaryColor: settings.appearance.customThemeSecondary,
+          surfaceColor: settings.appearance.customThemeSurface,
+          updatedAtMs: Date.now(),
+        };
+  };
+
   useEffect(() => {
     const componentDynamicIslandSettings = readComponentDynamicIslandSettings();
     if (!componentDynamicIslandSettings.enabled) {
@@ -7480,6 +7572,26 @@ export function AppShell() {
     }
 
     void emitComponentDynamicIslandSnapshot(buildComponentDynamicIslandSnapshot()).catch(() => undefined);
+  }, [
+    activeTrackArtworkUrl,
+    elapsedTrackSeconds,
+    isPlaying,
+    playbarDisplayTrack,
+    progress,
+    settings.appearance.colorScheme,
+    settings.appearance.customThemePrimary,
+    settings.appearance.customThemeSecondary,
+    settings.appearance.customThemeSurface,
+    themeStyle,
+  ]);
+
+  useEffect(() => {
+    const componentSongInfoCardSettings = readComponentSongInfoCardSettings();
+    if (!componentSongInfoCardSettings.enabled) {
+      return;
+    }
+
+    void emitComponentSongInfoCardSnapshot(buildComponentSongInfoCardSnapshot()).catch(() => undefined);
   }, [
     activeTrackArtworkUrl,
     elapsedTrackSeconds,
@@ -7505,6 +7617,34 @@ export function AppShell() {
       }
 
       void emitComponentDynamicIslandSnapshot(buildComponentDynamicIslandSnapshot()).catch(() => undefined);
+    }, 400);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    currentTrackId,
+    playbarDisplayTrackId,
+    settings.appearance.colorScheme,
+    settings.appearance.customThemePrimary,
+    settings.appearance.customThemeSecondary,
+    settings.appearance.customThemeSurface,
+    themeStyle,
+    trackLookup,
+  ]);
+
+  useEffect(() => {
+    if (!readComponentSongInfoCardSettings().enabled) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const latestSettings = readComponentSongInfoCardSettings();
+      if (!latestSettings.enabled) {
+        return;
+      }
+
+      void emitComponentSongInfoCardSnapshot(buildComponentSongInfoCardSnapshot()).catch(() => undefined);
     }, 400);
 
     return () => {

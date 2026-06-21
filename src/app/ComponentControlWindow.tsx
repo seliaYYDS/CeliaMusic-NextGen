@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
+  UIButton,
   UISelect,
   UISlider,
   UISwitch,
@@ -10,19 +11,31 @@ import {
 } from "../ui/components";
 import {
   COMPONENT_DYNAMIC_ISLAND_WINDOW_LABEL,
+  emitComponentDynamicIslandSettings,
   openComponentDynamicIslandWindow,
   readComponentDynamicIslandSettings,
   writeComponentDynamicIslandSettings,
-  emitComponentDynamicIslandSettings,
   type ComponentDynamicIslandColorMode,
   type ComponentDynamicIslandDefaultContentMode,
   type ComponentDynamicIslandDesign,
   type ComponentDynamicIslandSettings,
 } from "./componentDynamicIslandSync";
+import {
+  COMPONENT_SONG_INFO_CARD_WINDOW_LABEL,
+  clearComponentSongInfoCardPosition,
+  emitComponentSongInfoCardSettings,
+  openComponentSongInfoCardWindow,
+  readComponentSongInfoCardSettings,
+  writeComponentSongInfoCardSettings,
+  type ComponentSongInfoCardBackgroundMode,
+  type ComponentSongInfoCardColorMode,
+  type ComponentSongInfoCardSettings,
+  type ComponentSongInfoCardStyle,
+} from "./componentSongInfoCardSync";
 import "./styles.css";
 import "./component-windows.css";
 
-type ComponentControlPage = "list" | "dynamic-island";
+type ComponentControlPage = "list" | "dynamic-island" | "song-info-card";
 
 const COMPONENT_HUB_COPY = {
   title: "组件控制窗口",
@@ -43,10 +56,23 @@ const COMPONENT_HUB_COPY = {
   dynamicIslandDefaultCustomText: "自定义文字",
   dynamicIslandDefaultCustomFormat: "自定义格式",
   dynamicIslandDefaultCustomFormatHelper:
-    "支持 yyyy mm dd hh MM ss，例如：今天是yyyy年mm月dd日",
+    "支持 yyyy mm dd hh MM ss，例如：今天是 yyyy 年 mm 月 dd 日",
+  songInfoCardTitle: "歌曲信息卡片",
+  songInfoCardDescription: "开启一个独立的歌曲信息卡片组件，用于展示当前播放歌曲的关键信息。",
+  songInfoCardEnabled: "开启歌曲信息卡片",
+  songInfoCardScale: "卡片缩放",
+  songInfoCardAlwaysOnTop: "卡片置顶",
+  songInfoCardHideOnMouseNearby: "鼠标靠近隐藏",
+  songInfoCardHideWhenMainWindowVisible: "主窗口显示时隐藏",
+  songInfoCardHideWhenOtherAppsFullscreen: "其他应用全屏时隐藏",
+  songInfoCardHideWhenIdle: "无播放时隐藏",
+  songInfoCardStyle: "卡片样式",
+  songInfoCardColorMode: "卡片配色",
+  songInfoCardBackgroundMode: "背景模式",
+  songInfoCardResetPosition: "重置卡片位置",
   cards: [
     { id: "dynamic-island", title: "灵动岛" },
-    { id: "playback-info", title: "播放信息卡片" },
+    { id: "song-info-card", title: "歌曲信息卡片" },
     { id: "lyrics-display", title: "歌词显示" },
   ],
   designOptions: [
@@ -65,6 +91,23 @@ const COMPONENT_HUB_COPY = {
     { value: "custom-text", label: "自定义文字" },
     { value: "custom-format", label: "自定义格式" },
   ] satisfies UISelectOption[],
+  songInfoCardStyleOptions: [
+    { value: "default", label: "默认" },
+    { value: "compact", label: "紧凑" },
+    { value: "box", label: "方盒" },
+    { value: "minimal", label: "简洁" },
+  ] satisfies UISelectOption[],
+  songInfoCardColorOptions: [
+    { value: "follow-app", label: "跟随应用配色" },
+    { value: "light", label: "亮色" },
+    { value: "dark", label: "暗色" },
+    { value: "follow-system", label: "跟随系统" },
+  ] satisfies UISelectOption[],
+  songInfoCardBackgroundOptions: [
+    { value: "solid", label: "单色" },
+    { value: "gradient", label: "双色渐变" },
+    { value: "cover-blur", label: "封面模糊" },
+  ] satisfies UISelectOption[],
 } as const;
 
 export function ComponentControlWindow() {
@@ -73,6 +116,9 @@ export function ComponentControlWindow() {
   const [page, setPage] = useState<ComponentControlPage>("list");
   const [dynamicIslandSettings, setDynamicIslandSettings] = useState<ComponentDynamicIslandSettings>(
     () => readComponentDynamicIslandSettings(),
+  );
+  const [songInfoCardSettings, setSongInfoCardSettings] = useState<ComponentSongInfoCardSettings>(
+    () => readComponentSongInfoCardSettings(),
   );
 
   useEffect(() => {
@@ -112,6 +158,52 @@ export function ComponentControlWindow() {
     };
 
     await persistDynamicIslandSettings(nextSettings);
+  };
+
+  const persistSongInfoCardSettings = async (nextSettings: ComponentSongInfoCardSettings) => {
+    setSongInfoCardSettings(nextSettings);
+    writeComponentSongInfoCardSettings(nextSettings);
+    const cardWindow = await WebviewWindow.getByLabel(COMPONENT_SONG_INFO_CARD_WINDOW_LABEL).catch(
+      () => null,
+    );
+
+    if (nextSettings.enabled) {
+      if (!cardWindow) {
+        await openComponentSongInfoCardWindow().catch(() => undefined);
+      }
+      await emitComponentSongInfoCardSettings(nextSettings).catch(() => undefined);
+      return;
+    }
+
+    if (cardWindow) {
+      await emitComponentSongInfoCardSettings(nextSettings).catch(() => undefined);
+      await cardWindow.destroy().catch(() => undefined);
+    }
+  };
+
+  const updateSongInfoCardSettings = async (patch: Partial<ComponentSongInfoCardSettings>) => {
+    const nextSettings = {
+      ...songInfoCardSettings,
+      ...patch,
+    };
+
+    await persistSongInfoCardSettings(nextSettings);
+  };
+
+  const handleResetSongInfoCardPosition = async () => {
+    clearComponentSongInfoCardPosition();
+    const cardWindow = await WebviewWindow.getByLabel(COMPONENT_SONG_INFO_CARD_WINDOW_LABEL).catch(
+      () => null,
+    );
+
+    if (cardWindow) {
+      await cardWindow.destroy().catch(() => undefined);
+    }
+
+    if (songInfoCardSettings.enabled) {
+      await openComponentSongInfoCardWindow().catch(() => undefined);
+      await emitComponentSongInfoCardSettings(songInfoCardSettings).catch(() => undefined);
+    }
   };
 
   const handleToggleMaximize = async () => {
@@ -245,6 +337,8 @@ export function ComponentControlWindow() {
                       onClick={() => {
                         if (card.id === "dynamic-island") {
                           setPage("dynamic-island");
+                        } else if (card.id === "song-info-card") {
+                          setPage("song-info-card");
                         }
                       }}
                     >
@@ -382,6 +476,122 @@ export function ComponentControlWindow() {
                       }}
                     />
                   ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {page === "song-info-card" ? (
+            <div className="component-control-window__page">
+              <button
+                type="button"
+                className="component-control-window__back-button"
+                onClick={() => setPage("list")}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M9.5 3.5 5 8l4.5 4.5" />
+                </svg>
+                <span>{COMPONENT_HUB_COPY.backLabel}</span>
+              </button>
+
+              <div className="component-control-window__page-section">
+                <div className="component-control-window__section-copy">
+                  <h2>{COMPONENT_HUB_COPY.songInfoCardTitle}</h2>
+                  <p>{COMPONENT_HUB_COPY.songInfoCardDescription}</p>
+                </div>
+
+                <div className="component-control-window__settings-stack">
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.songInfoCardEnabled}
+                    checked={songInfoCardSettings.enabled}
+                    onChange={(checked) => {
+                      void updateSongInfoCardSettings({ enabled: checked });
+                    }}
+                  />
+                  <UISlider
+                    label={COMPONENT_HUB_COPY.songInfoCardScale}
+                    value={songInfoCardSettings.scale}
+                    min={70}
+                    max={160}
+                    step={1}
+                    valueSuffix="%"
+                    onChange={(value) => {
+                      void updateSongInfoCardSettings({ scale: value });
+                    }}
+                  />
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.songInfoCardAlwaysOnTop}
+                    checked={songInfoCardSettings.alwaysOnTop}
+                    onChange={(checked) => {
+                      void updateSongInfoCardSettings({ alwaysOnTop: checked });
+                    }}
+                  />
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.songInfoCardHideOnMouseNearby}
+                    checked={songInfoCardSettings.hideOnMouseNearby}
+                    onChange={(checked) => {
+                      void updateSongInfoCardSettings({ hideOnMouseNearby: checked });
+                    }}
+                  />
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.songInfoCardHideWhenMainWindowVisible}
+                    checked={songInfoCardSettings.hideWhenMainWindowVisible}
+                    onChange={(checked) => {
+                      void updateSongInfoCardSettings({ hideWhenMainWindowVisible: checked });
+                    }}
+                  />
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.songInfoCardHideWhenOtherAppsFullscreen}
+                    checked={songInfoCardSettings.hideWhenOtherAppsFullscreen}
+                    onChange={(checked) => {
+                      void updateSongInfoCardSettings({ hideWhenOtherAppsFullscreen: checked });
+                    }}
+                  />
+                  <UISwitch
+                    label={COMPONENT_HUB_COPY.songInfoCardHideWhenIdle}
+                    checked={songInfoCardSettings.hideWhenIdle}
+                    onChange={(checked) => {
+                      void updateSongInfoCardSettings({ hideWhenIdle: checked });
+                    }}
+                  />
+                  <UISelect
+                    label={COMPONENT_HUB_COPY.songInfoCardStyle}
+                    options={COMPONENT_HUB_COPY.songInfoCardStyleOptions as UISelectOption[]}
+                    value={songInfoCardSettings.style}
+                    onChange={(value) => {
+                      void updateSongInfoCardSettings({
+                        style: value as ComponentSongInfoCardStyle,
+                      });
+                    }}
+                  />
+                  <UISelect
+                    label={COMPONENT_HUB_COPY.songInfoCardColorMode}
+                    options={COMPONENT_HUB_COPY.songInfoCardColorOptions as UISelectOption[]}
+                    value={songInfoCardSettings.colorMode}
+                    onChange={(value) => {
+                      void updateSongInfoCardSettings({
+                        colorMode: value as ComponentSongInfoCardColorMode,
+                      });
+                    }}
+                  />
+                  <UISelect
+                    label={COMPONENT_HUB_COPY.songInfoCardBackgroundMode}
+                    options={COMPONENT_HUB_COPY.songInfoCardBackgroundOptions as UISelectOption[]}
+                    value={songInfoCardSettings.backgroundMode}
+                    onChange={(value) => {
+                      void updateSongInfoCardSettings({
+                        backgroundMode: value as ComponentSongInfoCardBackgroundMode,
+                      });
+                    }}
+                  />
+                  <UIButton
+                    variant="secondary"
+                    onClick={() => {
+                      void handleResetSongInfoCardPosition();
+                    }}
+                  >
+                    {COMPONENT_HUB_COPY.songInfoCardResetPosition}
+                  </UIButton>
                 </div>
               </div>
             </div>
