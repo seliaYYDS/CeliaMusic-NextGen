@@ -30,6 +30,7 @@ export type ImmersiveWallpaperStaticSnapshot = {
   lyricsSettings: LyricsSettings;
   appBackgroundImageStyle: string;
   appBackgroundVideoSrc: string | null;
+  immersiveBackgroundVideoSrc: string | null;
   appBackgroundVideoLoop: boolean;
   appBackgroundOpacity: number;
   appBackgroundBlurPx: number;
@@ -134,6 +135,7 @@ export const EMPTY_IMMERSIVE_WALLPAPER_STATIC_SNAPSHOT: ImmersiveWallpaperStatic
   lyricsSettings: DEFAULT_LYRICS_SETTINGS,
   appBackgroundImageStyle: "none",
   appBackgroundVideoSrc: null,
+  immersiveBackgroundVideoSrc: null,
   appBackgroundVideoLoop: true,
   appBackgroundOpacity: 0,
   appBackgroundBlurPx: 0,
@@ -293,6 +295,7 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
       value.immersiveBackgroundMode === "palette-solid" ||
       value.immersiveBackgroundMode === "palette-gradient" ||
       value.immersiveBackgroundMode === "app-background" ||
+      value.immersiveBackgroundMode === "background-mv" ||
       value.immersiveBackgroundMode === "cover-blur" ||
       value.immersiveBackgroundMode === "flow"
         ? value.immersiveBackgroundMode
@@ -431,6 +434,7 @@ function normalizeStaticSnapshot(rawValue: unknown): ImmersiveWallpaperStaticSna
       EMPTY_IMMERSIVE_WALLPAPER_STATIC_SNAPSHOT.appBackgroundImageStyle,
     ),
     appBackgroundVideoSrc: normalizeNullableString(rawValue.appBackgroundVideoSrc),
+    immersiveBackgroundVideoSrc: normalizeNullableString(rawValue.immersiveBackgroundVideoSrc),
     appBackgroundVideoLoop: normalizeBoolean(
       rawValue.appBackgroundVideoLoop,
       EMPTY_IMMERSIVE_WALLPAPER_STATIC_SNAPSHOT.appBackgroundVideoLoop,

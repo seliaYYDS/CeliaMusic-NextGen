@@ -104,7 +104,7 @@ export function ImmersiveWallpaperWindow() {
         appBackgroundImageStyle={safeStaticSnapshot.appBackgroundImageStyle}
         appBackgroundVideoSrc={safeStaticSnapshot.appBackgroundVideoSrc}
         appBackgroundVideoLoop={safeStaticSnapshot.appBackgroundVideoLoop}
-        immersiveBackgroundVideoSrc={safeStaticSnapshot.appBackgroundVideoSrc}
+        immersiveBackgroundVideoSrc={safeStaticSnapshot.immersiveBackgroundVideoSrc}
         appBackgroundOpacity={safeStaticSnapshot.appBackgroundOpacity}
         appBackgroundBlurPx={safeStaticSnapshot.appBackgroundBlurPx}
         appBackgroundDimOpacity={safeStaticSnapshot.appBackgroundDimOpacity}

@@ -40,7 +40,9 @@ use windows::{
         Foundation::RECT,
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST},
         UI::WindowsAndMessaging::{
-            GetForegroundWindow, GetWindowRect, IsWindowVisible,
+            GetClassNameW, GetForegroundWindow, GetWindowRect, IsWindowVisible, SetWindowPos,
+            HWND_TOPMOST, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SWP_SHOWWINDOW,
         },
     },
 };
@@ -91,6 +93,15 @@ fn is_other_app_fullscreen(app: tauri::AppHandle) -> bool {
             return false;
         }
 
+        let mut class_name_buffer = [0u16; 256];
+        let class_name_length = GetClassNameW(foreground, &mut class_name_buffer);
+        if class_name_length > 0 {
+            let class_name = String::from_utf16_lossy(&class_name_buffer[..class_name_length as usize]);
+            if matches!(class_name.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "SHELLDLL_DefView") {
+                return false;
+            }
+        }
+
         if island_hwnd.is_some_and(|hwnd| hwnd == foreground)
             || main_hwnd.is_some_and(|hwnd| hwnd == foreground)
         {
@@ -123,6 +134,27 @@ fn is_other_app_fullscreen(app: tauri::AppHandle) -> bool {
             && window_rect.top <= monitor_info.rcMonitor.top
             && window_rect.right >= monitor_info.rcMonitor.right
             && window_rect.bottom >= monitor_info.rcMonitor.bottom
+    }
+}
+
+#[cfg(windows)]
+fn reinforce_component_dynamic_island_topmost<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SET_WINDOW_POS_FLAGS(
+                SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0 | SWP_SHOWWINDOW.0,
+            ),
+        );
     }
 }
 
@@ -263,6 +295,8 @@ async fn open_component_dynamic_island_window(app: tauri::AppHandle) -> Result<(
     };
 
     let _ = window.set_ignore_cursor_events(true);
+    #[cfg(windows)]
+    reinforce_component_dynamic_island_topmost(&window);
 
     if created_now {
         if let Some(monitor) = app.primary_monitor().map_err(|error| error.to_string())? {
