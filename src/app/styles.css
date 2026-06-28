@@ -933,6 +933,20 @@ select {
   border-left: 1px solid var(--section-divider-vertical-color, rgba(124, 144, 178, 0.1));
 }
 
+.settings-screen__confirm-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+}
+
+.settings-screen__confirm-text {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--text-secondary, #67738e);
+  white-space: nowrap;
+}
+
 .settings-screen__autosave {
   align-self: center;
   font-size: 0.76rem;
@@ -5435,6 +5449,12 @@ select {
   gap: 12px;
   padding-top: 18px;
   border-top: 1px solid var(--section-divider-color, rgba(124, 144, 178, 0.24));
+}
+
+.network-section-error {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
 }
 
 .library-song-toolbar {
@@ -10199,6 +10219,14 @@ select {
   min-width: 0;
 }
 
+.playbar__queue-popover-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .playbar__queue-popover-header strong {
   font-size: 0.78rem;
   font-weight: 700;
@@ -10243,6 +10271,16 @@ select {
   border-color: var(--panel-border-accent, rgba(45, 95, 168, 0.18));
   color: var(--accent-strong, #234d8d);
   transform: translateY(-1px);
+}
+
+.playbar__queue-popover-link--danger {
+  color: var(--danger, #b44958);
+}
+
+.playbar__queue-popover-link--danger:hover {
+  background: color-mix(in srgb, rgba(180, 73, 88, 0.12) 76%, transparent 24%);
+  border-color: color-mix(in srgb, rgba(180, 73, 88, 0.28) 72%, rgba(124, 144, 178, 0.16) 28%);
+  color: var(--danger, #b44958);
 }
 
 .playbar__queue-empty {

@@ -659,6 +659,8 @@ const UI_COPY = {
       autoSaveEnabled: "已启用自动保存",
       autoSaving: "正在自动保存...",
       restore: "恢复默认",
+      restoreConfirm: "是否恢复默认设置",
+      restoreConfirmAction: "确定",
       save: "保存设置",
       saving: "保存中...",
       sections: {
@@ -1029,6 +1031,8 @@ const UI_COPY = {
       autoSaveEnabled: "Auto-save is enabled",
       autoSaving: "Saving changes...",
       restore: "Restore Default",
+      restoreConfirm: "Restore default settings?",
+      restoreConfirmAction: "Confirm",
       save: "Save Settings",
       saving: "Saving...",
       sections: {
@@ -1368,6 +1372,7 @@ function getPlaybarQueueCopy(locale: string) {
       title: "Current Queue",
       empty: "No tracks in the queue yet.",
       current: "Now Playing",
+      clear: "Clear Queue",
       reorder: "Drag to Reorder",
       openSourcePlaylist: "Open Source Playlist",
       moveUp: "Move Up",
@@ -1382,6 +1387,7 @@ function getPlaybarQueueCopy(locale: string) {
     title: "当前播放列表",
     empty: "当前播放列表还没有歌曲。",
     current: "正在播放",
+    clear: "清空列表",
     reorder: "拖拽调整顺序",
     openSourcePlaylist: "打开来源歌单",
     moveUp: "上移",
@@ -3971,6 +3977,7 @@ export function AppShell() {
   const [isTestingNeteaseApi, setIsTestingNeteaseApi] = useState(false);
   const [localNeteaseApiStatus, setLocalNeteaseApiStatus] =
     useState<LocalNeteaseApiServerStatus | null>(null);
+  const localNeteaseApiStatusRef = useRef<LocalNeteaseApiServerStatus | null>(null);
   const [appGreetingPhase, setAppGreetingPhase] = useState<"hold" | "expand" | "exit" | "hidden">(
     "hold",
   );
@@ -5647,6 +5654,10 @@ export function AppShell() {
     restoreActiveVolume?: boolean;
     cancelAutoMixForSourceTrack?: boolean;
   }) => {
+    const sourceTrackId = songTransitionSourceTrackIdRef.current;
+    const fadingOutAudio = songTransitionFromAudioRef.current;
+    const incomingAudio = songTransitionToAudioRef.current;
+
     clearSongTransitionAnimation();
     clearPreparedSongTransition({ resetAudio: options?.resetInactiveAudio !== false });
     isSongTransitionRunningRef.current = false;
@@ -5654,12 +5665,10 @@ export function AppShell() {
     syncTimelineOwnerMode("active");
     setIsAutoMixTransitionActive(false);
 
-    const fadingOutAudio = songTransitionFromAudioRef.current;
-    const incomingAudio = songTransitionToAudioRef.current;
-    const sourceTrackId = songTransitionSourceTrackIdRef.current;
-
     if (options?.cancelAutoMixForSourceTrack && sourceTrackId) {
       cancelledAutoMixTrackIdRef.current = sourceTrackId;
+      songTransitionArmedTrackIdRef.current = null;
+      delete autoMixDecisionCacheRef.current[sourceTrackId];
     }
 
     songTransitionFromAudioRef.current = null;
@@ -5927,6 +5936,46 @@ export function AppShell() {
     return promise;
   };
 
+  const waitForLocalNeteaseApiReady = async (
+    targetSettings: AppSettings,
+    options?: {
+      timeoutMs?: number;
+      pollMs?: number;
+    },
+  ) => {
+    if (
+      !targetSettings.network.useLocalApiServer ||
+      !targetSettings.network.enabledSources.includes("netease")
+    ) {
+      return true;
+    }
+
+    const timeoutMs = Math.max(
+      2000,
+      Math.min(30000, options?.timeoutMs ?? targetSettings.network.requestTimeoutMs ?? 12000),
+    );
+    const pollMs = Math.max(250, Math.min(1000, options?.pollMs ?? 500));
+    const startedAt = performance.now();
+    let lastKnownStatus = localNeteaseApiStatusRef.current;
+
+    while (performance.now() - startedAt < timeoutMs) {
+      const status = await syncLocalNeteaseApiServer(targetSettings);
+      lastKnownStatus = status;
+      setLocalNeteaseApiStatus(status);
+      setLocalNeteaseApiRuntimeBaseUrl(status.enabled ? status.url.replace(/\/+$/, "") : null);
+
+      if (status.running) {
+        return true;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, pollMs);
+      });
+    }
+
+    return Boolean(lastKnownStatus?.running);
+  };
+
   useEffect(() => {
     syncActiveAudioReference(activeAudioSlotRef.current);
   }, []);
@@ -6091,6 +6140,10 @@ export function AppShell() {
   useEffect(() => {
     isSettingsLoadingRef.current = isSettingsLoading;
   }, [isSettingsLoading]);
+
+  useEffect(() => {
+    localNeteaseApiStatusRef.current = localNeteaseApiStatus;
+  }, [localNeteaseApiStatus]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -6771,6 +6824,16 @@ export function AppShell() {
             }),
         ),
       );
+
+      if (missingNeteaseTrackIds.length > 0 && settings.network.useLocalApiServer) {
+        try {
+          await waitForLocalNeteaseApiReady(settings, {
+            timeoutMs: settings.network.requestTimeoutMs,
+          });
+        } catch (error) {
+          console.error("[player] failed while waiting for local api before restore", error);
+        }
+      }
 
       if (missingNeteaseTrackIds.length > 0 && isNeteaseSourceEnabled(settings)) {
         try {
@@ -11993,9 +12056,13 @@ export function AppShell() {
           : Math.max(0, nextDuration - transitionDecision.transitionStartSeconds);
 
       if (nextTime >= resolvedTransitionStartSeconds) {
+        cancelledAutoMixTrackIdRef.current = currentTrackIdRef.current;
         songTransitionArmedTrackIdRef.current = null;
         clearPreparedSongTransition();
         setIsAutoMixTransitionActive(false);
+        if (currentTrackIdRef.current) {
+          delete autoMixDecisionCacheRef.current[currentTrackIdRef.current];
+        }
         console.log("[automix]", {
           phase: "seek-cancelled",
           currentTrackId: currentTrackIdRef.current,
@@ -12133,6 +12200,15 @@ export function AppShell() {
 
     if (!target || target.action !== "play-track" || !target.trackId) {
       return;
+    }
+
+    const preparedTransition = songTransitionPreparedRef.current;
+    if (
+      preparedTransition &&
+      preparedTransition.sourceTrackId === currentTrackId &&
+      preparedTransition.targetTrackId !== target.trackId
+    ) {
+      clearPreparedSongTransition();
     }
 
     const transitionDecision =
@@ -12573,6 +12649,34 @@ export function AppShell() {
       autoplay: isPlayingRef.current,
       announceNotice: false,
     });
+  };
+
+  const handleClearPlaybackQueue = () => {
+    pauseActiveTrackForTransition();
+    replacePlaybackQueue([]);
+    playbackQueueIdsRef.current = [];
+    currentQueueIdsRef.current = [];
+    setCurrentTrackId(null);
+    currentTrackRef.current = null;
+    currentTrackIdRef.current = null;
+    setIsPlaying(false);
+    isPlayingRef.current = false;
+    setIsPlaybackLoading(false);
+    isPlaybackLoadingRef.current = false;
+    syncPlaybackVisualState({
+      currentTimeSeconds: 0,
+      visualCurrentTimeSeconds: 0,
+      durationSeconds: 0,
+      isPlaybackLoading: false,
+      isPlaying: false,
+    });
+    syncPlaybarDisplayState({
+      trackId: null,
+      currentTimeSeconds: 0,
+      visualTimeSeconds: 0,
+      durationSeconds: 0,
+    });
+    setIsQueuePopoverOpen(false);
   };
 
   const handleReorderQueueTrack = (draggingTrackId: string, insertionIndex: number) => {
@@ -14353,16 +14457,27 @@ export function AppShell() {
                       <div className="playbar__queue-popover-heading">
                         <strong>{playbarQueueCopy.title}</strong>
                       </div>
-                      {playbackQueueSourcePlaylist ? (
-                        <button
-                          className="playbar__queue-popover-link"
-                          type="button"
-                          onClick={handleOpenQueueSourcePlaylist}
-                        >
-                          <QueueOpenPlaylistIcon />
-                          <span>{playbarQueueCopy.openSourcePlaylist}</span>
-                        </button>
-                      ) : null}
+                      <div className="playbar__queue-popover-actions">
+                        {currentQueueTracks.length > 0 ? (
+                          <button
+                            className="playbar__queue-popover-link playbar__queue-popover-link--danger"
+                            type="button"
+                            onClick={handleClearPlaybackQueue}
+                          >
+                            <span>{playbarQueueCopy.clear}</span>
+                          </button>
+                        ) : null}
+                        {playbackQueueSourcePlaylist ? (
+                          <button
+                            className="playbar__queue-popover-link"
+                            type="button"
+                            onClick={handleOpenQueueSourcePlaylist}
+                          >
+                            <QueueOpenPlaylistIcon />
+                            <span>{playbarQueueCopy.openSourcePlaylist}</span>
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     {currentQueueTracks.length === 0 ? (
                       <p className="playbar__queue-empty">{playbarQueueCopy.empty}</p>
@@ -15592,6 +15707,7 @@ function SettingsScreen({
   const [isLoadingNeteaseAccount, setIsLoadingNeteaseAccount] = useState(false);
   const [neteaseAccountError, setNeteaseAccountError] = useState<string | null>(null);
   const [isReleasingMemoryCache, setIsReleasingMemoryCache] = useState(false);
+  const [isResetConfirming, setIsResetConfirming] = useState(false);
   const [systemFontFamilies, setSystemFontFamilies] = useState<string[]>([]);
   const [isLoadingSystemFonts, setIsLoadingSystemFonts] = useState(false);
   const prioritizedSystemFontFamilies = useMemo(
@@ -15660,6 +15776,37 @@ function SettingsScreen({
       value: "bloom",
     },
   ];
+
+  useEffect(() => {
+    setIsResetConfirming(false);
+  }, [settingsView]);
+
+  const handleResetAction = () => {
+    if (isLoading || isSaving) {
+      return;
+    }
+
+    if (!isResetConfirming) {
+      setIsResetConfirming(true);
+      return;
+    }
+
+    setIsResetConfirming(false);
+    onReset();
+  };
+
+  const resetActionNode = isResetConfirming ? (
+    <div className="settings-screen__confirm-action" aria-live="polite">
+      <span className="settings-screen__confirm-text">{copy.settings.restoreConfirm}</span>
+      <UIButton variant="danger" onClick={handleResetAction} disabled={isLoading || isSaving}>
+        {copy.settings.restoreConfirmAction}
+      </UIButton>
+    </div>
+  ) : (
+    <UIButton variant="secondary" onClick={handleResetAction} disabled={isLoading || isSaving}>
+      {copy.settings.restore}
+    </UIButton>
+  );
   const globalParticleLayerOptions: UISelectOption[] = [
     {
       label: themeEditorCopy.globalParticleLayerTop,
@@ -16138,13 +16285,11 @@ function SettingsScreen({
           <UIButton variant="secondary" onClick={() => setSettingsView("main")}>
             {themeEditorCopy.backButton}
           </UIButton>
-            <UIButton variant="secondary" onClick={onReset} disabled={isLoading || isSaving}>
-              {copy.settings.restore}
-            </UIButton>
-            <UIButton variant="primary" onClick={onSave} disabled={isLoading || isSaving}>
-              {isSaving ? copy.settings.saving : copy.settings.save}
-            </UIButton>
-          </div>
+          {resetActionNode}
+          <UIButton variant="primary" onClick={onSave} disabled={isLoading || isSaving}>
+            {isSaving ? copy.settings.saving : copy.settings.save}
+          </UIButton>
+        </div>
         </header>
 
         <section className="settings-card settings-card--wide">
@@ -16896,9 +17041,7 @@ function SettingsScreen({
           <span className="settings-screen__autosave">
             {isSaving ? copy.settings.autoSaving : copy.settings.autoSaveEnabled}
           </span>
-          <UIButton variant="secondary" onClick={onReset} disabled={isLoading || isSaving}>
-            {copy.settings.restore}
-          </UIButton>
+          {resetActionNode}
           <UIButton variant="primary" onClick={onSave} disabled={isLoading || isSaving}>
             {isSaving ? copy.settings.saving : copy.settings.save}
           </UIButton>
@@ -18512,6 +18655,27 @@ function SongArtistLinks({
   );
 }
 
+function NetworkSectionError({
+  message,
+  actionLabel,
+  onRetry,
+  disabled,
+}: {
+  message: string;
+  actionLabel: string;
+  onRetry: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="network-section-error">
+      <p className="library-empty">{message}</p>
+      <UIButton variant="secondary" size="sm" onClick={onRetry} disabled={disabled}>
+        {actionLabel}
+      </UIButton>
+    </div>
+  );
+}
+
 function HomeScreen({
   copy,
   settings,
@@ -18586,6 +18750,8 @@ function HomeScreen({
   const [guessPlaylists, setGuessPlaylists] = useState<NeteasePlaylistRecommendation[]>([]);
   const [isPersonalFmRefreshing, setIsPersonalFmRefreshing] = useState(false);
   const [personalFmError, setPersonalFmError] = useState<string | null>(null);
+  const [homeReloadKey, setHomeReloadKey] = useState(0);
+  const retryActionLabel = getRetryActionLabel(copy.locale);
   const applyHomeFeedCache = (entry: NeteaseHomeFeedCacheEntry) => {
     setNeteaseAccount(entry.account);
     setGuestSongs(entry.guestSongs);
@@ -18756,9 +18922,10 @@ function HomeScreen({
     return () => {
       isDisposed = true;
     };
-  }, [dataVersion, hasSavedNeteaseCookie, homeCopy.loadFailed, isNeteaseEnabled, settings]);
+  }, [dataVersion, hasSavedNeteaseCookie, homeCopy.loadFailed, homeReloadKey, isNeteaseEnabled, settings]);
 
   const isLoggedIn = neteaseAccount !== null;
+  const shouldHideHomeStats = isNeteaseEnabled && hasSavedNeteaseCookie;
   const homeTitle = isLoggedIn
     ? `${homeCopy.titleLoggedIn}${neteaseAccount?.nickname ? `，${neteaseAccount.nickname}` : ""}`
     : homeCopy.titleLoggedOut;
@@ -18836,6 +19003,9 @@ function HomeScreen({
       setIsPersonalFmRefreshing(false);
     }
   };
+  const handleRetryHomeSections = () => {
+    setHomeReloadKey((current) => current + 1);
+  };
   return (
     <section className="home-screen">
       <header className="home-hero">
@@ -18855,39 +19025,48 @@ function HomeScreen({
         </div>
       </header>
 
-      <div className="home-stat-grid">
-        <div className="home-stat-card">
-          <span>{homeCopy.statsTracks}</span>
-          <strong>{tracks.length.toLocaleString(copy.locale)}</strong>
-          <small>{homeCopy.sourceOffline}</small>
+      {shouldHideHomeStats ? null : (
+        <div className="home-stat-grid">
+          <div className="home-stat-card">
+            <span>{homeCopy.statsTracks}</span>
+            <strong>{tracks.length.toLocaleString(copy.locale)}</strong>
+            <small>{homeCopy.sourceOffline}</small>
+          </div>
+          <div className="home-stat-card">
+            <span>{homeCopy.statsLocalTracks}</span>
+            <strong>{localTracks.length.toLocaleString(copy.locale)}</strong>
+            <small>{homeCopy.sourceOffline}</small>
+          </div>
+          <div className="home-stat-card">
+            <span>{homeCopy.statsArtists}</span>
+            <strong>{uniqueArtists.size.toLocaleString(copy.locale)}</strong>
+            <small>{homeCopy.sourceOffline}</small>
+          </div>
+          <div className="home-stat-card">
+            <span>{homeCopy.statsAlbums}</span>
+            <strong>{uniqueAlbums.size.toLocaleString(copy.locale)}</strong>
+            <small>
+              {isLoggedIn && likedPlaylist?.trackCount !== null && likedPlaylist?.trackCount !== undefined
+                ? `${likedPlaylist.trackCount.toLocaleString(copy.locale)} ${homeCopy.remoteCountSuffix}`
+                : homeCopy.sourceOffline}
+            </small>
+          </div>
         </div>
-        <div className="home-stat-card">
-          <span>{homeCopy.statsLocalTracks}</span>
-          <strong>{localTracks.length.toLocaleString(copy.locale)}</strong>
-          <small>{homeCopy.sourceOffline}</small>
-        </div>
-        <div className="home-stat-card">
-          <span>{homeCopy.statsArtists}</span>
-          <strong>{uniqueArtists.size.toLocaleString(copy.locale)}</strong>
-          <small>{homeCopy.sourceOffline}</small>
-        </div>
-        <div className="home-stat-card">
-          <span>{homeCopy.statsAlbums}</span>
-          <strong>{uniqueAlbums.size.toLocaleString(copy.locale)}</strong>
-          <small>
-            {isLoggedIn && likedPlaylist?.trackCount !== null && likedPlaylist?.trackCount !== undefined
-              ? `${likedPlaylist.trackCount.toLocaleString(copy.locale)} ${homeCopy.remoteCountSuffix}`
-              : homeCopy.sourceOffline}
-          </small>
-        </div>
-      </div>
+      )}
 
       {isLoggedIn ? (
         <section className="home-section home-section--fm">
           {isHomeLoading && personalFmSongItems.length === 0 ? (
             <UILoadingBlock label={homeCopy.loadingPersonalFm} variant="grid" />
+          ) : personalFmError && personalFmSongItems.length === 0 ? (
+            <NetworkSectionError
+              message={personalFmError}
+              actionLabel={retryActionLabel}
+              onRetry={() => void handleRefreshPersonalFm()}
+              disabled={isHomeLoading || isPersonalFmRefreshing}
+            />
           ) : personalFmSongItems.length === 0 ? (
-            <p className="library-empty">{personalFmError || homeCopy.emptyOnline}</p>
+            <p className="library-empty">{homeCopy.emptyOnline}</p>
           ) : (
             <div className="home-fm-panel">
               <div className="home-fm-panel__hero">
@@ -18989,7 +19168,12 @@ function HomeScreen({
             {!isNeteaseEnabled ? (
               <p className="library-empty">{homeCopy.unavailableOnline}</p>
             ) : homeError ? (
-              <p className="library-empty">{homeError}</p>
+              <NetworkSectionError
+                message={homeError}
+                actionLabel={retryActionLabel}
+                onRetry={handleRetryHomeSections}
+                disabled={isHomeLoading}
+              />
             ) : isHomeLoading && dailySongItems.length === 0 ? (
               <UILoadingBlock label={homeCopy.loadingOnline} variant="list" />
             ) : dailySongItems.length === 0 ? (
@@ -19073,6 +19257,18 @@ function HomeScreen({
                 <UILoadingBlock label={homeCopy.loadingOnline} variant="grid" />
               ) : null}
 
+              {!isHomeLoading &&
+              homeError &&
+              likedPlaylist === null &&
+              dailyPlaylists.length === 0 &&
+              guessPlaylists.length === 0 ? (
+                <NetworkSectionError
+                  message={homeError}
+                  actionLabel={retryActionLabel}
+                  onRetry={handleRetryHomeSections}
+                />
+              ) : null}
+
               {dailyPlaylists.length > 0 ? (
                 <div className="playlist-waterfall-indicator">{homeCopy.sectionDailyPlaylists}</div>
               ) : null}
@@ -19114,7 +19310,12 @@ function HomeScreen({
           ) : (
             <div className="home-song-list">
               {homeError ? (
-                <p className="library-empty">{homeError}</p>
+                <NetworkSectionError
+                  message={homeError}
+                  actionLabel={retryActionLabel}
+                  onRetry={handleRetryHomeSections}
+                  disabled={isHomeLoading}
+                />
               ) : isHomeLoading && guestSongItems.length === 0 ? (
                 <UILoadingBlock label={homeCopy.loadingOnline} variant="list" />
               ) : guestSongItems.length === 0 ? (
@@ -19406,6 +19607,9 @@ function PlaylistScreen({
   const [trackError, setTrackError] = useState<string | null>(null);
   const [playlistPage, setPlaylistPage] = useState(1);
   const [isPageTransitioning, setIsPageTransitioning] = useState(false);
+  const [collectionReloadKey, setCollectionReloadKey] = useState(0);
+  const [trackReloadKey, setTrackReloadKey] = useState(0);
+  const retryActionLabel = getRetryActionLabel(copy.locale);
   const applyPlaylistLibraryCache = (entry: NeteasePlaylistLibraryCacheEntry) => {
     setNeteaseAccount(entry.account);
     setUserPlaylists(entry.userPlaylists);
@@ -19518,6 +19722,7 @@ function PlaylistScreen({
       isDisposed = true;
     };
   }, [
+    collectionReloadKey,
     dataVersion,
     hasSavedNeteaseCookie,
     initialSelection,
@@ -19595,7 +19800,7 @@ function PlaylistScreen({
     return () => {
       isDisposed = true;
     };
-  }, [dataVersion, initialSelection?.id, isNeteaseEnabled, settings, userPlaylists]);
+  }, [dataVersion, initialSelection?.id, isNeteaseEnabled, settings, trackReloadKey, userPlaylists]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -19671,6 +19876,7 @@ function PlaylistScreen({
     neteaseAccount,
     playlistCopy.loadingTracks,
     settings,
+    trackReloadKey,
   ]);
 
   const allPlaylists = mergePlaylistRecommendations(userPlaylists);
@@ -19759,7 +19965,12 @@ function PlaylistScreen({
           <p className="library-empty">{playlistCopy.notLoggedIn}</p>
         )
       ) : collectionError ? (
-        <p className="library-empty">{collectionError}</p>
+        <NetworkSectionError
+          message={collectionError}
+          actionLabel={retryActionLabel}
+          onRetry={() => setCollectionReloadKey((current) => current + 1)}
+          disabled={isLoadingCollections}
+        />
       ) : initialSelection === null ? (
         <div className="playlist-browser">
           <div className="playlist-browser__toolbar">
@@ -19863,7 +20074,12 @@ function PlaylistScreen({
                 </div>
 
                 {trackError ? (
-                  <p className="library-empty">{trackError}</p>
+                  <NetworkSectionError
+                    message={trackError}
+                    actionLabel={retryActionLabel}
+                    onRetry={() => setTrackReloadKey((current) => current + 1)}
+                    disabled={isLoadingTracks}
+                  />
                 ) : isLoadingTracks ? (
                   <UILoadingBlock label={playlistCopy.loadingTracks} variant="list" items={5} />
                 ) : playlistTracks.length === 0 ? (
@@ -20018,6 +20234,9 @@ function LikedSongsScreen({
   const [trackError, setTrackError] = useState<string | null>(null);
   const [playlistPage, setPlaylistPage] = useState(1);
   const [isPageTransitioning, setIsPageTransitioning] = useState(false);
+  const [collectionReloadKey, setCollectionReloadKey] = useState(0);
+  const [trackReloadKey, setTrackReloadKey] = useState(0);
+  const retryActionLabel = getRetryActionLabel(copy.locale);
 
   useEffect(() => {
     let isDisposed = false;
@@ -20111,7 +20330,7 @@ function LikedSongsScreen({
     return () => {
       isDisposed = true;
     };
-  }, [dataVersion, hasSavedNeteaseCookie, isNeteaseEnabled, likedSongsCopy.loading, settings]);
+  }, [collectionReloadKey, dataVersion, hasSavedNeteaseCookie, isNeteaseEnabled, likedSongsCopy.loading, settings]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -20165,7 +20384,7 @@ function LikedSongsScreen({
     return () => {
       isDisposed = true;
     };
-  }, [dataVersion, isNeteaseEnabled, likedPlaylist, settings]);
+  }, [dataVersion, isNeteaseEnabled, likedPlaylist, settings, trackReloadKey]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -20241,6 +20460,7 @@ function LikedSongsScreen({
     likedSongsCopy.loadingTracks,
     neteaseAccount,
     settings,
+    trackReloadKey,
   ]);
 
   useEffect(() => {
@@ -20299,7 +20519,12 @@ function LikedSongsScreen({
           <p className="library-empty">{likedSongsCopy.notLoggedIn}</p>
         )
       ) : collectionError ? (
-        <p className="library-empty">{collectionError}</p>
+        <NetworkSectionError
+          message={collectionError}
+          actionLabel={retryActionLabel}
+          onRetry={() => setCollectionReloadKey((current) => current + 1)}
+          disabled={isLoadingCollections}
+        />
       ) : isLoadingCollections && !selectedPlaylist ? (
         <UILoadingBlock label={likedSongsCopy.loading} variant="grid" />
       ) : !selectedPlaylist ? (
@@ -20382,7 +20607,12 @@ function LikedSongsScreen({
             </div>
 
             {trackError ? (
-              <p className="library-empty">{trackError}</p>
+              <NetworkSectionError
+                message={trackError}
+                actionLabel={retryActionLabel}
+                onRetry={() => setTrackReloadKey((current) => current + 1)}
+                disabled={isLoadingTracks}
+              />
             ) : isLoadingTracks ? (
               <UILoadingBlock label={likedSongsCopy.loadingTracks} variant="list" items={5} />
             ) : playlistTracks.length === 0 ? (
@@ -26472,6 +26702,10 @@ function GlobalParticleCanvas({
       aria-hidden="true"
     />
   );
+}
+
+function getRetryActionLabel(locale: string) {
+  return locale === "en-US" ? "Retry" : "刷新";
 }
 
 function buildGlobalAnalogFilterSurfaceStyle(
