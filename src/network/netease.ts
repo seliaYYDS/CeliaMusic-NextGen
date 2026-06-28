@@ -1553,6 +1553,40 @@ export async function getNeteaseSongLyrics(
   return lyrics;
 }
 
+export function parseRawLyrics(options: {
+  rawLyric: string | null;
+  rawTranslatedLyric?: string | null;
+  rawRomanizedLyric?: string | null;
+  rawDynamicLyric?: string | null;
+}): NeteaseSongLyrics | null {
+  const rawLyric = options.rawLyric ?? null;
+  const rawTranslatedLyric = options.rawTranslatedLyric ?? null;
+  const rawRomanizedLyric = options.rawRomanizedLyric ?? null;
+  const rawDynamicLyric = options.rawDynamicLyric ?? null;
+  const dynamicLines = parseNeteaseDynamicLyricLines(rawDynamicLyric);
+  const metadataEntries = mergeNeteaseLyricMetadataEntries(rawLyric, rawDynamicLyric);
+  const lines = normalizeParsedLyricLines({
+    rawLyric,
+    rawTranslatedLyric,
+    rawRomanizedLyric,
+    rawDynamicLyric,
+  });
+
+  if (!rawLyric && !rawTranslatedLyric && !rawRomanizedLyric && !rawDynamicLyric) {
+    return null;
+  }
+
+  return {
+    lyric: rawLyric,
+    translatedLyric: rawTranslatedLyric,
+    romanizedLyric: rawRomanizedLyric,
+    dynamicLyric: rawDynamicLyric,
+    metadataEntries,
+    lines,
+    source: dynamicLines.length > 0 ? "word" : "line",
+  };
+}
+
 export async function checkNeteaseSongAvailability(
   settings: AppSettings,
   id: number,

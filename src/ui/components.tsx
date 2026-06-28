@@ -204,8 +204,14 @@ export function UITextField({
   value,
   onChange,
 }: UITextFieldProps) {
+  const searchText = [label, placeholder, helper, value].filter(Boolean).join(" ");
+
   return (
-    <label className="ui-field">
+    <label
+      className="ui-field"
+      data-settings-search-item="true"
+      data-settings-search={searchText}
+    >
       <span className="ui-field__label">{label}</span>
       <span className="ui-input-shell">
         {prefix ? <span className="ui-input-shell__prefix">{prefix}</span> : null}
@@ -255,6 +261,15 @@ export function UISelect({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const activeOption = options.find((option) => option.value === value) ?? options[0];
+  const searchText = [
+    label,
+    helper,
+    activeOption?.label,
+    activeOption?.value,
+    ...options.flatMap((option) => [option.label, option.value, option.description]),
+  ]
+    .filter(Boolean)
+    .join(" ");
   const isOpen = menuState === "opening" || menuState === "open";
   const isRendered = menuState !== "closed";
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
@@ -332,7 +347,7 @@ export function UISelect({
   }, []);
 
   return (
-    <div className="ui-field">
+    <div className="ui-field" data-settings-search-item="true" data-settings-search={searchText}>
       <span className="ui-field__label">{label}</span>
       <div
         className={["ui-select", isOpen ? "ui-select--open" : ""].filter(Boolean).join(" ")}
@@ -446,6 +461,7 @@ export function UISlider({
   const range = Math.max(max - min, 0);
   const ratio = range === 0 ? 0 : Math.min(1, Math.max(0, (value - min) / range));
   const displayRatio = dragRatio ?? ratio;
+  const searchText = [label, `${value}${valueSuffix}`].join(" ");
 
   const updateValueFromPosition = (clientX: number) => {
     const track = trackRef.current;
@@ -492,6 +508,8 @@ export function UISlider({
   return (
     <label
       className={["ui-slider", isActive ? "ui-slider--active" : ""].filter(Boolean).join(" ")}
+      data-settings-search-item="true"
+      data-settings-search={searchText}
       style={
         {
           "--slider-ratio": displayRatio,
@@ -541,8 +559,16 @@ export function UICheckbox({
   checked,
   onChange,
 }: UICheckboxProps) {
+  const searchText = [label, description, checked ? "true enabled on checked" : "false disabled off unchecked"]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={["ui-check", checked ? "ui-check--checked" : ""].filter(Boolean).join(" ")}>
+    <div
+      className={["ui-check", checked ? "ui-check--checked" : ""].filter(Boolean).join(" ")}
+      data-settings-search-item="true"
+      data-settings-search={searchText}
+    >
       <div className="ui-check__text">
         <strong>{label}</strong>
         {description ? <span>{description}</span> : null}
@@ -574,6 +600,9 @@ export function UISwitch({
   onChange,
 }: UISwitchProps) {
   const [isActive, setIsActive] = useState(false);
+  const searchText = [label, description, checked ? "true enabled on checked" : "false disabled off unchecked"]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div
@@ -584,6 +613,8 @@ export function UISwitch({
       ]
         .filter(Boolean)
         .join(" ")}
+      data-settings-search-item="true"
+      data-settings-search={searchText}
     >
       <div className="ui-switch__text">
         <strong>{label}</strong>

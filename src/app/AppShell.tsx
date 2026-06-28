@@ -1,6 +1,7 @@
 ﻿import {
   memo,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -44,6 +45,8 @@ import {
   deleteMediaTracks,
   importMediaFiles,
   listMediaLibrary,
+  loadLocalLyrics,
+  saveLocalLyrics,
 } from "../media/library";
 import {
   createDefaultSongConfig,
@@ -69,6 +72,7 @@ import {
   getNeteaseRecommendedDjs,
   getNeteaseRecommendedPlaylists,
   getNeteaseMvStream,
+  parseRawLyrics,
   getNeteaseSongDetail,
   getNeteaseSongLyrics,
   getNeteaseUserPlaylists,
@@ -81,6 +85,7 @@ import {
   registerResolvedNeteaseTrackToLibrary,
   resolveNeteaseTrack,
   searchNeteaseArtists,
+  searchNeteaseSongDetailsPage,
   searchNeteaseSongs,
   setLocalNeteaseApiRuntimeBaseUrl,
   subscribeNeteasePlaylist,
@@ -828,10 +833,8 @@ const UI_COPY = {
           directoriesHelper: "这里保存自动扫描目录。",
           watchLabel: "监听目录变化",
           watchDescription: "自动发现新增或变动的本地文件。",
-          importArtworkLabel: "自动导入外部封面",
-          importArtworkDescription: "扫描同目录中的封面图片。",
-          embeddedLabel: "提取内嵌封面",
-          embeddedDescription: "从音频标签中提取封面。",
+          onlineLyricsLabel: "在线歌词补全",
+          onlineLyricsDescription: "播放无歌词的本地歌曲时，尝试从在线接口获取歌词并保存同名 .lrc 文件。",
         },
         network: {
           eyebrow: "网络",
@@ -884,10 +887,6 @@ const UI_COPY = {
           accountVipActive: "已开通",
           accountVipInactive: "未开通",
           accountSignatureEmpty: "这个账号还没有设置个性签名。",
-          meteredLabel: "允许计量网络",
-          meteredDescription: "允许在受限网络下访问在线源。",
-          metadataLabel: "优先在线元数据",
-          metadataDescription: "优先补全在线歌曲信息。",
         },
       },
     },
@@ -1204,10 +1203,8 @@ const UI_COPY = {
           directoriesHelper: "These folders are saved as automatic scan targets. They are scanned on app launch, and updates sync while running if directory watching is enabled.",
           watchLabel: "Watch Folder Changes",
           watchDescription: "Automatically detect newly added or replaced local music files.",
-          importArtworkLabel: "Import External Artwork",
-          importArtworkDescription: "Scan for cover, folder, and similar artwork files in the same directory.",
-          embeddedLabel: "Extract Embedded Artwork",
-          embeddedDescription: "Reserve a switch for extracting artwork from audio tags.",
+          onlineLyricsLabel: "Online Lyrics Completion",
+          onlineLyricsDescription: "When a local track has no lyrics, try fetching them from the online API and save a matching `.lrc` file beside the audio file.",
         },
         network: {
           eyebrow: "Network",
@@ -1260,10 +1257,6 @@ const UI_COPY = {
           accountVipActive: "Active",
           accountVipInactive: "Inactive",
           accountSignatureEmpty: "This account has not set a signature yet.",
-          meteredLabel: "Allow Metered Network",
-          meteredDescription: "Allow access to online sources even on limited or metered networks.",
-          metadataLabel: "Prefer Online Metadata",
-          metadataDescription: "Try online metadata first when local track information is incomplete.",
         },
       },
     },
@@ -8737,11 +8730,12 @@ export function AppShell() {
     }
 
     const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(playbarDisplayTrack.playback.cacheKey);
-    if (
-      playbarDisplayTrack.source.kind !== "remoteStream" ||
-      !neteaseTrackId ||
-      !isNeteaseSourceEnabled(settingsRef.current)
-    ) {
+    const localLyricsCacheKey = buildLocalLyricsCacheKey(playbarDisplayTrack);
+    const cacheKey =
+      localLyricsCacheKey ??
+      (playbarDisplayTrack.source.kind === "remoteStream" && neteaseTrackId ? `${neteaseTrackId}` : null);
+
+    if (!cacheKey) {
       syncCurrentTrackLyrics(null);
       if (isCurrentTrackLyricsLoading) {
         setIsCurrentTrackLyricsLoading(false);
@@ -8749,7 +8743,6 @@ export function AppShell() {
       return;
     }
 
-    const cacheKey = `${neteaseTrackId}`;
     if (Object.prototype.hasOwnProperty.call(lyricsCacheRef.current, cacheKey)) {
       syncCurrentTrackLyrics(lyricsCacheRef.current[cacheKey] ?? null);
       if (isCurrentTrackLyricsLoading) {
@@ -8761,7 +8754,62 @@ export function AppShell() {
     let isCancelled = false;
     setIsCurrentTrackLyricsLoading(true);
 
-    void getNeteaseSongLyrics(settingsRef.current, neteaseTrackId)
+    void (async () => {
+      if (playbarDisplayTrack.source.kind === "localFile") {
+        const localPath = playbarDisplayTrack.source.path;
+        const rawLocalLyrics = await loadLocalLyrics(localPath);
+        const parsedLocalLyrics = rawLocalLyrics ? parseRawLyrics({ rawLyric: rawLocalLyrics }) : null;
+        if (parsedLocalLyrics) {
+          return parsedLocalLyrics;
+        }
+
+        if (
+          !settingsRef.current.library.onlineLyricsCompletion ||
+          !isNeteaseSourceEnabled(settingsRef.current)
+        ) {
+          return null;
+        }
+
+        const keywords = buildNeteaseSearchKeywords(playbarDisplayTrack);
+        if (!keywords) {
+          return null;
+        }
+
+        const searchPage = await searchNeteaseSongDetailsPage(settingsRef.current, keywords, {
+          limit: 8,
+        });
+        const bestCandidate = [...searchPage.items]
+          .sort(
+            (left, right) =>
+              scoreNeteaseLyricCandidate(playbarDisplayTrack, right) -
+              scoreNeteaseLyricCandidate(playbarDisplayTrack, left),
+          )
+          .find((candidate) => scoreNeteaseLyricCandidate(playbarDisplayTrack, candidate) >= 70);
+
+        if (!bestCandidate) {
+          return null;
+        }
+
+        const lyrics = await getNeteaseSongLyrics(settingsRef.current, bestCandidate.id);
+        const rawLyric = lyrics?.lyric?.trim() ?? "";
+        if (!lyrics || !rawLyric) {
+          return null;
+        }
+
+        await saveLocalLyrics(localPath, rawLyric);
+        return lyrics;
+      }
+
+      if (
+        playbarDisplayTrack.source.kind === "remoteStream" &&
+        neteaseTrackId &&
+        isNeteaseSourceEnabled(settingsRef.current)
+      ) {
+        return getNeteaseSongLyrics(settingsRef.current, neteaseTrackId);
+      }
+
+      return null;
+    })()
       .then((lyrics) => {
         if (isCancelled) {
           return;
@@ -13124,10 +13172,7 @@ export function AppShell() {
     artistIndex: number,
     fallbackArtistName?: string,
   ) => {
-    const artistNames = (track.artist ?? "")
-      .split(" / ")
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0);
+    const artistNames = splitTrackArtistNames(track.artist);
     const artistName = fallbackArtistName?.trim() || artistNames[artistIndex] || artistNames[0] || "";
     if (!artistName) {
       return;
@@ -13657,7 +13702,11 @@ export function AppShell() {
             queueKind: "personal-fm",
           })
         }
-        onOpenTrackArtist={(track) => void handleOpenTrackArtist(track)}
+        onOpenTrackArtist={(track, artistIndex, artistName) =>
+          artistIndex !== undefined || artistName
+            ? void handleOpenTrackArtistByIndex(track, artistIndex ?? 0, artistName)
+            : void handleOpenTrackArtist(track)
+        }
         onOpenTrackAlbum={(track) => void handleOpenTrackAlbum(track)}
         onOpenSongArtist={(artistId, artistName) => openExploreArtistView(artistId, artistName)}
         onOpenSongAlbum={(albumId, albumName) => openExploreAlbumView(albumId, albumName)}
@@ -13771,7 +13820,11 @@ export function AppShell() {
         onImportAudioDirectory={() => void handleImportAudioDirectory()}
         onDeleteTracks={(trackIds) => void handleDeleteLibraryTracks(trackIds)}
         onPlayTrack={playTrackSelection}
-        onOpenTrackArtist={(track) => void handleOpenTrackArtist(track)}
+        onOpenTrackArtist={(track, artistIndex, artistName) =>
+          artistIndex !== undefined || artistName
+            ? void handleOpenTrackArtistByIndex(track, artistIndex ?? 0, artistName)
+            : void handleOpenTrackArtist(track)
+        }
         onOpenTrackAlbum={(track) => void handleOpenTrackAlbum(track)}
         isNavigatingToRemoteDetail={workspaceLoadingMessage !== null}
         onTrackContextMenu={handleTrackContextMenu}
@@ -15695,6 +15748,13 @@ function SettingsScreen({
   const scanDirectoriesText = settings.library.scanDirectories.join(", ");
   const themeEditorCopy = getThemeEditorCopy(copy.locale);
   const [settingsView, setSettingsView] = useState<"main" | "theme">("main");
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
+  const [settingsSearchState, setSettingsSearchState] = useState<"closed" | "opening" | "open" | "closing">("closed");
+  const settingsSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const settingsSearchRegionRef = useRef<HTMLDivElement | null>(null);
+  const settingsSearchObserverRef = useRef<MutationObserver | null>(null);
+  const [matchedSettingsKeys, setMatchedSettingsKeys] = useState<Set<string>>(() => new Set());
+  const settingsSearchInstanceId = useId();
   const isNeteaseEnabled = settings.network.enabledSources.includes("netease");
   const [qrLoginSession, setQrLoginSession] = useState<NeteaseQrLoginSession | null>(null);
   const [qrLoginState, setQrLoginState] = useState<
@@ -15780,6 +15840,65 @@ function SettingsScreen({
   useEffect(() => {
     setIsResetConfirming(false);
   }, [settingsView]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setSettingsSearchState((current) => {
+          if (current === "open" || current === "opening") {
+            if (settingsSearchQuery.trim().length > 0) {
+              setSettingsSearchQuery("");
+            }
+            return "closing";
+          }
+
+          window.requestAnimationFrame(() => {
+            settingsSearchInputRef.current?.focus();
+            settingsSearchInputRef.current?.select();
+          });
+          return "opening";
+        });
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (settingsSearchQuery.trim().length > 0) {
+          setSettingsSearchQuery("");
+          return;
+        }
+
+        setSettingsSearchState("closing");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [settingsSearchQuery]);
+
+  useEffect(() => {
+    if (settingsSearchState === "opening") {
+      const timer = window.setTimeout(() => {
+        setSettingsSearchState("open");
+        settingsSearchInputRef.current?.focus();
+        settingsSearchInputRef.current?.select();
+      }, 16);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    if (settingsSearchState === "closing") {
+      const timer = window.setTimeout(() => {
+        setSettingsSearchState("closed");
+      }, 160);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+  }, [settingsSearchState]);
 
   const handleResetAction = () => {
     if (isLoading || isSaving) {
@@ -15986,6 +16105,309 @@ function SettingsScreen({
       value: "advanced",
     },
   ];
+  const normalizedSettingsSearchQuery = settingsSearchQuery.trim().toLocaleLowerCase(copy.locale);
+  const isSearchingSettings = normalizedSettingsSearchQuery.length > 0;
+  const isSettingsSearchRendered = settingsSearchState !== "closed";
+  const isSettingsSearchVisible = settingsSearchState === "opening" || settingsSearchState === "open";
+  const shouldShowThemeResults = settingsView === "theme" || isSearchingSettings;
+
+  const matchesSettingsSearch = (parts: Array<string | number | boolean | null | undefined>) =>
+    !isSearchingSettings ||
+    buildSettingsSearchBlob(parts).includes(normalizedSettingsSearchQuery);
+
+  const getSearchableOptions = (options: UISelectOption[]) =>
+    options.flatMap((option) => [option.label, option.value, option.description]);
+
+  const getSearchableBooleanState = (checked: boolean) =>
+    checked ? ["true", "enabled", "on", "checked"] : ["false", "disabled", "off", "unchecked"];
+
+  const matchesSettingKey = (key: string) =>
+    !isSearchingSettings || matchedSettingsKeys.has(`${settingsSearchInstanceId}:${key}`);
+
+  const showThemePreviewSection = shouldShowThemeResults && (!isSearchingSettings || matchesSettingsSearch([
+    themeEditorCopy.previewTitle,
+    themeEditorCopy.previewDescription,
+    settings.appearance.themeMode,
+    settings.appearance.colorScheme,
+  ]));
+  const showThemeModeSection = shouldShowThemeResults && (!isSearchingSettings || matchesSettingsSearch([
+    themeEditorCopy.modeTitle,
+    themeEditorCopy.modeDescription,
+    themeEditorCopy.lightMode,
+    themeEditorCopy.darkMode,
+    settings.appearance.colorScheme,
+  ]));
+  const showThemePresetSection = shouldShowThemeResults && (!isSearchingSettings || matchesSettingsSearch([
+    themeEditorCopy.presetsTitle,
+    themeEditorCopy.presetsDescription,
+    themeEditorCopy.primaryLabel,
+    themeEditorCopy.secondaryLabel,
+    themeEditorCopy.surfaceLabel,
+    copy.settings.sections.appearance.followArtworkThemeLabel,
+    copy.settings.sections.appearance.followArtworkThemeDescription,
+    settings.appearance.themeMode,
+    settings.appearance.customThemePrimary,
+    settings.appearance.customThemeSecondary,
+    settings.appearance.customThemeSurface,
+    settings.appearance.followSongArtworkTheme,
+  ]));
+  const showThemeBackgroundSection = shouldShowThemeResults && (!isSearchingSettings || matchesSettingsSearch([
+    themeEditorCopy.backgroundTitle,
+    themeEditorCopy.backgroundDescription,
+    themeEditorCopy.backgroundModeLabel,
+    themeEditorCopy.backgroundMvLabel,
+    themeEditorCopy.backgroundMvDescription,
+    themeEditorCopy.customImageDescription,
+    themeEditorCopy.customImageOpacityLabel,
+    themeEditorCopy.customBlurLabel,
+    themeEditorCopy.customDimLabel,
+    themeEditorCopy.globalParticleTitle,
+    themeEditorCopy.globalParticleEnabledLabel,
+    themeEditorCopy.globalParticleEnabledDescription,
+    themeEditorCopy.globalParticleTypeLabel,
+    themeEditorCopy.globalParticleLayerLabel,
+    themeEditorCopy.globalParticleOpacityLabel,
+    themeEditorCopy.globalParticleWindSpeedLabel,
+    themeEditorCopy.globalParticleFallSpeedLabel,
+    themeEditorCopy.globalParticleCountLabel,
+    themeEditorCopy.globalParticleSizeLabel,
+    themeEditorCopy.immersiveBackgroundModeLabel,
+    themeEditorCopy.immersiveBackgroundDescription,
+    themeEditorCopy.immersiveBackgroundAnimatedLabel,
+    themeEditorCopy.immersiveBackgroundAnimatedDescription,
+    themeEditorCopy.immersiveBackgroundResolutionLabel,
+    themeEditorCopy.immersiveBackgroundSpeedLabel,
+    themeEditorCopy.immersiveBackgroundSoftnessLabel,
+    themeEditorCopy.immersiveBackgroundBlurLabel,
+    themeEditorCopy.immersiveBackgroundDimLabel,
+    themeEditorCopy.immersiveBackgroundMvBlurLabel,
+    themeEditorCopy.immersiveBackgroundMvDimLabel,
+    settings.appearance.backgroundMode,
+    settings.appearance.useBackgroundMv,
+    settings.appearance.backgroundImagePath,
+    settings.appearance.backgroundImageOpacity,
+    settings.appearance.backgroundBlur,
+    settings.appearance.backgroundDim,
+    settings.appearance.globalParticleEffectEnabled,
+    settings.appearance.globalParticleEffectType,
+    settings.appearance.globalParticleEffectLayer,
+    settings.appearance.globalParticleEffectOpacity,
+    settings.appearance.globalParticleEffectWindSpeed,
+    settings.appearance.globalParticleEffectFallSpeed,
+    settings.appearance.globalParticleEffectCount,
+    settings.appearance.globalParticleEffectSize,
+    settings.appearance.globalFilterEffectIntensity,
+    settings.appearance.globalFilterEffectSpeed,
+    settings.appearance.globalFilterEffectRange,
+    settings.appearance.globalBloomEffectIntensity,
+    settings.appearance.globalBloomEffectSpeed,
+    settings.appearance.globalBloomEffectRange,
+    settings.appearance.immersiveBackgroundMode,
+    settings.appearance.immersiveBackgroundAnimated,
+    settings.appearance.immersiveBackgroundResolution,
+    settings.appearance.immersiveBackgroundSpeed,
+    settings.appearance.immersiveBackgroundSoftness,
+    settings.appearance.immersiveBackgroundBlur,
+    settings.appearance.immersiveBackgroundDim,
+    settings.appearance.immersiveBackgroundMvBlur,
+    settings.appearance.immersiveBackgroundMvDim,
+  ]));
+  const showAppearanceSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.appearance.title,
+    copy.settings.sections.appearance.languageLabel,
+    copy.settings.sections.appearance.themeLabel,
+    copy.settings.sections.appearance.fontLabel,
+    copy.settings.sections.appearance.fontWeightLabel,
+    settings.appearance.language,
+    settings.appearance.themeMode,
+    settings.appearance.fontFamily,
+    settings.appearance.fontWeight,
+  ]);
+  const showDynamicIslandSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.dynamicIsland.title,
+    copy.settings.sections.dynamicIsland.enabledLabel,
+    copy.settings.sections.dynamicIsland.styleLabel,
+    copy.settings.sections.dynamicIsland.colorLabel,
+    copy.settings.sections.dynamicIsland.positionLabel,
+    copy.settings.sections.dynamicIsland.contentLabel,
+    copy.settings.sections.dynamicIsland.lyricsLabel,
+    settings.appearance.showDynamicIsland,
+    settings.appearance.dynamicIslandStyle,
+    settings.appearance.dynamicIslandColorMode,
+    settings.appearance.dynamicIslandPosition,
+    settings.appearance.dynamicIslandDefaultContent,
+    settings.appearance.dynamicIslandShowLyrics,
+  ]);
+  const showLyricsSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.lyrics.title,
+    copy.settings.sections.lyrics.description,
+    copy.settings.sections.lyrics.delayLabel,
+    copy.settings.sections.lyrics.fontLabel,
+    copy.settings.sections.lyrics.fontWeightLabel,
+    copy.settings.sections.lyrics.fontSizeLabel,
+    copy.settings.sections.lyrics.lineSpacingLabel,
+    copy.settings.sections.lyrics.lineAlignmentLabel,
+    copy.settings.sections.lyrics.textAlignmentLabel,
+    copy.settings.sections.lyrics.renderModeLabel,
+    copy.settings.sections.lyrics.progressBarPreviewLabel,
+    copy.settings.sections.lyrics.textShadowLabel,
+    copy.settings.sections.lyrics.glowLabel,
+    copy.settings.sections.lyrics.animationSpeedLabel,
+    copy.settings.sections.lyrics.lineAnimationStaggerLabel,
+    copy.settings.sections.lyrics.blurRangeLabel,
+    copy.settings.sections.lyrics.curveAmountLabel,
+    settings.lyrics.delayMs,
+    settings.lyrics.fontFamily,
+    settings.lyrics.fontWeight,
+    settings.lyrics.fontSize,
+    settings.lyrics.lineSpacing,
+    settings.lyrics.lineAlignment,
+    settings.lyrics.textAlignment,
+    settings.lyrics.renderMode,
+    settings.lyrics.progressBarPreview,
+    settings.lyrics.textShadow,
+    settings.lyrics.glow,
+    settings.lyrics.animationSpeed,
+    settings.lyrics.lineAnimationStaggerMs,
+    settings.lyrics.blurRange,
+    settings.lyrics.curveAmount,
+  ]);
+  const showPlaybackSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.playback.title,
+    copy.settings.sections.playback.qualityLabel,
+    copy.settings.sections.playback.cacheModeLabel,
+    copy.settings.sections.playback.preferRemoteLabel,
+    copy.settings.sections.playback.songTransitionLabel,
+    copy.settings.sections.playback.songTransitionModeLabel,
+    copy.settings.sections.playback.songTransitionTimingLabel,
+    copy.settings.sections.playback.rememberQueueLabel,
+    settings.playback.defaultVolume,
+    settings.playback.muted,
+    settings.playback.cacheMode,
+    settings.playback.preferRemoteStreaming,
+    settings.playback.preferredQuality,
+    settings.playback.songTransitionEnabled,
+    settings.playback.songTransitionMode,
+    settings.playback.songTransitionStartMs,
+    settings.playback.rememberQueue,
+  ]);
+  const showShortcutsSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.shortcuts.title,
+    copy.settings.sections.shortcuts.description,
+    copy.settings.sections.shortcuts.builtInTitle,
+    copy.settings.sections.shortcuts.customTitle,
+    copy.settings.sections.shortcuts.openEditor,
+    copy.settings.sections.shortcuts.clearAction,
+    copy.settings.sections.shortcuts.unbound,
+    ...SHORTCUT_ACTION_IDS.map((actionId) => copy.settings.sections.shortcuts.actions[actionId]),
+    ...SHORTCUT_ACTION_IDS.flatMap((actionId) => settings.shortcuts[actionId]),
+  ]);
+  const showLibrarySection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.library.title,
+    copy.settings.sections.library.directoriesLabel,
+    copy.settings.sections.library.directoriesHelper,
+    copy.settings.sections.library.watchLabel,
+    copy.settings.sections.library.watchDescription,
+    copy.settings.sections.library.onlineLyricsLabel,
+    copy.settings.sections.library.onlineLyricsDescription,
+    copy.settings.sections.library.releaseMemoryCache,
+    copy.settings.sections.library.releaseMemoryCacheDescription,
+    scanDirectoriesText,
+    settings.library.watchDirectories,
+    settings.library.onlineLyricsCompletion,
+  ]);
+  const showNetworkSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.network.title,
+    copy.settings.sections.network.sourceLabel,
+    copy.settings.sections.network.localApiLabel,
+    copy.settings.sections.network.apiBaseUrlLabel,
+    copy.settings.sections.network.proxyLabel,
+    copy.settings.sections.network.realIpLabel,
+    copy.settings.sections.network.cookieLabel,
+    copy.settings.sections.network.timeoutLabel,
+    settings.network.enabledSources.join(" "),
+    settings.network.useLocalApiServer,
+    settings.network.neteaseApiBaseUrl,
+    settings.network.neteaseProxy,
+    settings.network.neteaseRealIp,
+    settings.network.neteaseCookie,
+    settings.network.requestTimeoutMs,
+  ]);
+  const visibleThemeSettingsSectionCount = [
+    showThemePreviewSection,
+    showThemeModeSection,
+    showThemePresetSection,
+    showThemeBackgroundSection,
+  ].filter(Boolean).length;
+
+  useEffect(() => {
+    if (isSearchingSettings && settingsView !== "main") {
+      setSettingsView("main");
+    }
+  }, [isSearchingSettings, settingsView]);
+
+  useEffect(() => {
+    if (!isSearchingSettings) {
+      setMatchedSettingsKeys(new Set());
+      settingsSearchObserverRef.current?.disconnect();
+      settingsSearchObserverRef.current = null;
+      if (settingsSearchRegionRef.current) {
+        applySettingsSearchVisibility(settingsSearchRegionRef.current, "");
+      }
+      return;
+    }
+
+    const updateMatches = () => {
+      const root = settingsSearchRegionRef.current;
+      if (!root) {
+        return;
+      }
+
+      const nextMatches = new Set<string>();
+      const elements = root.querySelectorAll<HTMLElement>("[data-settings-key]");
+      elements.forEach((element) => {
+        const key = element.dataset.settingsKey;
+        if (!key) {
+          return;
+        }
+
+        const ownSearch = element.dataset.settingsSearch ?? "";
+        const descendantSearch = Array.from(
+          element.querySelectorAll<HTMLElement>("[data-settings-search]"),
+        )
+          .map((node) => node.dataset.settingsSearch ?? "")
+          .join(" ");
+        const haystack = buildSettingsSearchBlob([ownSearch, descendantSearch]);
+        if (haystack.includes(normalizedSettingsSearchQuery)) {
+          nextMatches.add(key);
+        }
+      });
+      setMatchedSettingsKeys(nextMatches);
+      applySettingsSearchVisibility(root, normalizedSettingsSearchQuery);
+    };
+
+    updateMatches();
+    settingsSearchObserverRef.current?.disconnect();
+    const observer = new MutationObserver(() => {
+      updateMatches();
+    });
+    if (settingsSearchRegionRef.current) {
+      observer.observe(settingsSearchRegionRef.current, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-settings-search", "data-settings-key"],
+      });
+    }
+    settingsSearchObserverRef.current = observer;
+
+    return () => {
+      observer.disconnect();
+      if (settingsSearchObserverRef.current === observer) {
+        settingsSearchObserverRef.current = null;
+      }
+    };
+  }, [isSearchingSettings, normalizedSettingsSearchQuery]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -16241,6 +16663,32 @@ function SettingsScreen({
     loggedIn: hasSavedNeteaseCookie,
   });
   const showNeteaseQrLogin = !hasSavedNeteaseCookie;
+  const showAccountSection =
+    isNeteaseEnabled &&
+    (!isSearchingSettings || matchesSettingsSearch([
+      copy.settings.sections.network.loginTitle,
+      copy.settings.sections.network.loginDescription,
+      copy.settings.sections.network.accountTitle,
+      copy.settings.sections.network.accountDescription,
+      copy.settings.sections.network.loginCookieLabel,
+      qrLoginStatusLabel,
+      qrLoginMessage,
+      neteaseCookiePreview,
+      neteaseAccount?.nickname,
+      neteaseAccount?.signature,
+      neteaseAccount?.userId,
+      neteaseAccount?.level,
+    ]));
+  const visibleMainSettingsSectionCount = [
+    showAppearanceSection,
+    showDynamicIslandSection,
+    showLyricsSection,
+    showPlaybackSection,
+    showShortcutsSection,
+    showLibrarySection,
+    showNetworkSection,
+    showAccountSection,
+  ].filter(Boolean).length;
 
   const handleRefreshNeteaseAccount = async () => {
     if (!isNeteaseEnabled || !settings.network.neteaseCookie.trim()) {
@@ -16292,6 +16740,33 @@ function SettingsScreen({
         </div>
         </header>
 
+        {isSettingsSearchRendered ? (
+          <div
+            className={[
+              "settings-search-overlay",
+              isSettingsSearchVisible ? "settings-search-overlay--visible" : "",
+            ].join(" ")}
+          >
+            <div
+              className={[
+                "settings-search-box",
+                isSettingsSearchVisible ? "settings-search-box--visible" : "",
+              ].join(" ")}
+            >
+              <input
+                ref={settingsSearchInputRef}
+                className="settings-search-box__input"
+                type="text"
+                value={settingsSearchQuery}
+                onChange={(event) => setSettingsSearchQuery(event.target.value)}
+                placeholder={copy.locale === "en-US" ? "Search settings" : "搜索设置"}
+                aria-label={copy.locale === "en-US" ? "Search settings" : "搜索设置"}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {showThemePreviewSection ? (
         <section className="settings-card settings-card--wide">
           <div className="settings-card__header">
             <div>
@@ -16306,8 +16781,10 @@ function SettingsScreen({
             <ThemePreviewCard settings={settings} />
           </div>
         </section>
+        ) : null}
 
         <div className="settings-grid">
+          {showThemeModeSection ? (
           <section className="settings-card">
             <div className="settings-card__header">
               <div>
@@ -16362,8 +16839,10 @@ function SettingsScreen({
               </label>
             </div>
           </section>
+          ) : null}
         </div>
 
+        {showThemePresetSection ? (
         <section className="settings-card settings-card--wide">
           <div className="settings-card__header">
             <div>
@@ -16469,7 +16948,9 @@ function SettingsScreen({
             />
           </div>
         </section>
+        ) : null}
 
+        {showThemeBackgroundSection ? (
         <section className="settings-card settings-card--wide">
           <div className="settings-card__header">
             <div>
@@ -17024,6 +17505,13 @@ function SettingsScreen({
             </div>
           </div>
         </section>
+        ) : null}
+
+        {isSearchingSettings && visibleThemeSettingsSectionCount === 0 ? (
+          <p className="library-empty">
+            {copy.locale === "en-US" ? "No settings matched your search." : "没有匹配的设置。"}
+          </p>
+        ) : null}
 
       </section>
     );
@@ -17047,7 +17535,33 @@ function SettingsScreen({
           </UIButton>
         </div>
       </header>
-      <div className="settings-grid">
+      {isSettingsSearchRendered ? (
+        <div
+          className={[
+            "settings-search-overlay",
+            isSettingsSearchVisible ? "settings-search-overlay--visible" : "",
+          ].join(" ")}
+        >
+          <div
+            className={[
+              "settings-search-box",
+              isSettingsSearchVisible ? "settings-search-box--visible" : "",
+            ].join(" ")}
+          >
+            <input
+              ref={settingsSearchInputRef}
+              className="settings-search-box__input"
+              type="text"
+              value={settingsSearchQuery}
+              onChange={(event) => setSettingsSearchQuery(event.target.value)}
+              placeholder={copy.locale === "en-US" ? "Search settings" : "搜索设置"}
+              aria-label={copy.locale === "en-US" ? "Search settings" : "搜索设置"}
+            />
+          </div>
+        </div>
+      ) : null}
+      <div className="settings-grid" ref={settingsSearchRegionRef}>
+        {showAppearanceSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -17056,85 +17570,142 @@ function SettingsScreen({
           </div>
 
           <div className="settings-card__body">
-            <UISelect
-              label={copy.settings.sections.appearance.languageLabel}
-              value={settings.appearance.language}
-              options={[...languageOptions]}
-              onChange={(value) =>
-                onUpdate((current) => ({
-                  ...current,
-                  appearance: {
-                    ...current.appearance,
-                    language: value,
-                  },
-                }))
-              }
-            />
-            <UISelect
-              label={copy.settings.sections.appearance.fontLabel}
-              helper={
-                isLoadingSystemFonts
-                  ? copy.settings.sections.appearance.fontHelperLoading
-                  : copy.settings.sections.appearance.fontHelperReady
-              }
-              value={settings.appearance.fontFamily}
-              options={appFontOptions}
-              searchable
-              searchPlaceholder={copy.settings.sections.appearance.fontSearchPlaceholder}
-              emptyStateLabel={copy.settings.sections.appearance.fontSearchEmpty}
-              onChange={(value) =>
-                onUpdate((current) => ({
-                  ...current,
-                  appearance: {
-                    ...current.appearance,
-                    fontFamily: value,
-                  },
-                }))
-              }
-            />
-            <UISlider
-              label={copy.settings.sections.appearance.fontWeightLabel}
-              value={settings.appearance.fontWeight}
-              min={100}
-              max={900}
-              step={50}
-              onChange={(value) =>
-                onUpdate((current) => ({
-                  ...current,
-                  appearance: {
-                    ...current.appearance,
-                    fontWeight: clampNumber(Math.round(value / 50) * 50, 100, 900),
-                  },
-                }))
-              }
-            />
-            <span className="ui-field__helper">
-              {copy.settings.sections.appearance.fontWeightHelper}
-            </span>
-            <UIButton
-              variant="secondary"
-              className="settings-card__jump-button"
-              onClick={() => setSettingsView("theme")}
+            <SettingsSearchItem
+              itemKey="appearance-language"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("appearance-language")}
+              searchParts={[
+                copy.settings.sections.appearance.languageLabel,
+                settings.appearance.language,
+                ...getSearchableOptions(languageOptions),
+              ]}
             >
-              {themeEditorCopy.openButton}
-            </UIButton>
-            <UISwitch
-              label={copy.settings.sections.appearance.compactLabel}
-              description={copy.settings.sections.appearance.compactDescription}
-              checked={settings.appearance.useCompactMode}
-              onChange={(checked) =>
-                onUpdate((current) => ({
-                  ...current,
-                  appearance: {
-                    ...current.appearance,
-                    useCompactMode: checked,
-                  },
-                }))
-              }
-            />
+              <UISelect
+                label={copy.settings.sections.appearance.languageLabel}
+                value={settings.appearance.language}
+                options={[...languageOptions]}
+                onChange={(value) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    appearance: {
+                      ...current.appearance,
+                      language: value,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="appearance-font"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("appearance-font")}
+              searchParts={[
+                copy.settings.sections.appearance.fontLabel,
+                copy.settings.sections.appearance.fontHelperLoading,
+                copy.settings.sections.appearance.fontHelperReady,
+                settings.appearance.fontFamily,
+                ...getSearchableOptions(appFontOptions),
+              ]}
+            >
+              <UISelect
+                label={copy.settings.sections.appearance.fontLabel}
+                helper={
+                  isLoadingSystemFonts
+                    ? copy.settings.sections.appearance.fontHelperLoading
+                    : copy.settings.sections.appearance.fontHelperReady
+                }
+                value={settings.appearance.fontFamily}
+                options={appFontOptions}
+                searchable
+                searchPlaceholder={copy.settings.sections.appearance.fontSearchPlaceholder}
+                emptyStateLabel={copy.settings.sections.appearance.fontSearchEmpty}
+                onChange={(value) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    appearance: {
+                      ...current.appearance,
+                      fontFamily: value,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="appearance-font-weight"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("appearance-font-weight")}
+              searchParts={[
+                copy.settings.sections.appearance.fontWeightLabel,
+                copy.settings.sections.appearance.fontWeightHelper,
+                settings.appearance.fontWeight,
+              ]}
+            >
+              <>
+                <UISlider
+                  label={copy.settings.sections.appearance.fontWeightLabel}
+                  value={settings.appearance.fontWeight}
+                  min={100}
+                  max={900}
+                  step={50}
+                  onChange={(value) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      appearance: {
+                        ...current.appearance,
+                        fontWeight: clampNumber(Math.round(value / 50) * 50, 100, 900),
+                      },
+                    }))
+                  }
+                />
+                <span className="ui-field__helper">
+                  {copy.settings.sections.appearance.fontWeightHelper}
+                </span>
+              </>
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="appearance-theme-editor"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("appearance-theme-editor")}
+              searchParts={[themeEditorCopy.openButton, copy.settings.sections.appearance.themeLabel]}
+            >
+              <UIButton
+                variant="secondary"
+                className="settings-card__jump-button"
+                onClick={() => setSettingsView("theme")}
+              >
+                {themeEditorCopy.openButton}
+              </UIButton>
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="appearance-compact"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("appearance-compact")}
+              searchParts={[
+                copy.settings.sections.appearance.compactLabel,
+                copy.settings.sections.appearance.compactDescription,
+                ...getSearchableBooleanState(settings.appearance.useCompactMode),
+              ]}
+            >
+              <UISwitch
+                label={copy.settings.sections.appearance.compactLabel}
+                description={copy.settings.sections.appearance.compactDescription}
+                checked={settings.appearance.useCompactMode}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    appearance: {
+                      ...current.appearance,
+                      useCompactMode: checked,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
           </div>
         </section>
+        ) : null}
 
+        {showDynamicIslandSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -17235,7 +17806,9 @@ function SettingsScreen({
             />
           </div>
         </section>
+        ) : null}
 
+        {showLyricsSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -17599,7 +18172,9 @@ function SettingsScreen({
             </span>
           </div>
         </section>
+        ) : null}
 
+        {showPlaybackSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -17746,9 +18321,13 @@ function SettingsScreen({
             />
           </div>
         </section>
+        ) : null}
 
-        <ShortcutSettingsSection copy={copy} bindings={settings.shortcuts} onUpdate={onUpdate} />
+        {showShortcutsSection ? (
+          <ShortcutSettingsSection copy={copy} bindings={settings.shortcuts} onUpdate={onUpdate} />
+        ) : null}
 
+        {showLibrarySection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -17792,51 +18371,63 @@ function SettingsScreen({
                 }))
               }
             />
-            <UISwitch
-              label={copy.settings.sections.library.watchLabel}
-              description={copy.settings.sections.library.watchDescription}
-              checked={settings.library.watchDirectories}
-              onChange={(checked) =>
-                onUpdate((current) => ({
-                  ...current,
-                  library: {
-                    ...current.library,
-                    watchDirectories: checked,
-                  },
-                }))
-              }
-            />
-            <UICheckbox
-              label={copy.settings.sections.library.importArtworkLabel}
-              description={copy.settings.sections.library.importArtworkDescription}
-              checked={settings.library.autoImportArtwork}
-              onChange={(checked) =>
-                onUpdate((current) => ({
-                  ...current,
-                  library: {
-                    ...current.library,
-                    autoImportArtwork: checked,
-                  },
-                }))
-              }
-            />
-            <UICheckbox
-              label={copy.settings.sections.library.embeddedLabel}
-              description={copy.settings.sections.library.embeddedDescription}
-              checked={settings.library.extractEmbeddedArtwork}
-              onChange={(checked) =>
-                onUpdate((current) => ({
-                  ...current,
-                  library: {
-                    ...current.library,
-                    extractEmbeddedArtwork: checked,
-                  },
-                }))
-              }
-            />
+            <SettingsSearchItem
+              itemKey="library-watch"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("library-watch")}
+              searchParts={[
+                copy.settings.sections.library.watchLabel,
+                copy.settings.sections.library.watchDescription,
+                ...getSearchableBooleanState(settings.library.watchDirectories),
+              ]}
+            >
+              <UISwitch
+                label={copy.settings.sections.library.watchLabel}
+                description={copy.settings.sections.library.watchDescription}
+                checked={settings.library.watchDirectories}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    library: {
+                      ...current.library,
+                      watchDirectories: checked,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            {isNeteaseEnabled ? (
+              <SettingsSearchItem
+                itemKey="library-online-lyrics"
+                instanceId={settingsSearchInstanceId}
+                visible={matchesSettingKey("library-online-lyrics")}
+                searchParts={[
+                  copy.settings.sections.library.onlineLyricsLabel,
+                  copy.settings.sections.library.onlineLyricsDescription,
+                  ...getSearchableBooleanState(settings.library.onlineLyricsCompletion),
+                ]}
+              >
+                <UICheckbox
+                  label={copy.settings.sections.library.onlineLyricsLabel}
+                  description={copy.settings.sections.library.onlineLyricsDescription}
+                  checked={settings.library.onlineLyricsCompletion}
+                  onChange={(checked) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      library: {
+                        ...current.library,
+                        onlineLyricsCompletion: checked,
+                      },
+                    }))
+                  }
+                />
+              </SettingsSearchItem>
+            ) : null}
           </div>
         </section>
+        ) : null}
 
+        {showNetworkSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -17845,36 +18436,59 @@ function SettingsScreen({
           </div>
 
           <div className="settings-card__body">
-            <UISwitch
-              label={copy.settings.sections.network.sourceLabel}
-              description={copy.settings.sections.network.sourceDescription}
-              checked={isNeteaseEnabled}
-              onChange={(checked) =>
-                onUpdate((current) => ({
-                  ...current,
-                  network: {
-                    ...current.network,
-                    enabledSources: checked ? ["netease"] : [],
-                  },
-                }))
-              }
-            />
+            <SettingsSearchItem
+              itemKey="network-source"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("network-source")}
+              searchParts={[
+                copy.settings.sections.network.sourceLabel,
+                copy.settings.sections.network.sourceDescription,
+                "netease",
+                ...getSearchableBooleanState(isNeteaseEnabled),
+              ]}
+            >
+              <UISwitch
+                label={copy.settings.sections.network.sourceLabel}
+                description={copy.settings.sections.network.sourceDescription}
+                checked={isNeteaseEnabled}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    network: {
+                      ...current.network,
+                      enabledSources: checked ? ["netease"] : [],
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
             {isNeteaseEnabled ? (
               <>
-                <UISwitch
-                  label={copy.settings.sections.network.localApiLabel}
-                  description={copy.settings.sections.network.localApiDescription}
-                  checked={settings.network.useLocalApiServer}
-                  onChange={(checked) =>
-                    onUpdate((current) => ({
-                      ...current,
-                      network: {
-                        ...current.network,
-                        useLocalApiServer: checked,
-                      },
-                    }))
-                  }
-                />
+                <SettingsSearchItem
+                  itemKey="network-local-api"
+                  instanceId={settingsSearchInstanceId}
+                  visible={matchesSettingKey("network-local-api")}
+                  searchParts={[
+                    copy.settings.sections.network.localApiLabel,
+                    copy.settings.sections.network.localApiDescription,
+                    ...getSearchableBooleanState(settings.network.useLocalApiServer),
+                  ]}
+                >
+                  <UISwitch
+                    label={copy.settings.sections.network.localApiLabel}
+                    description={copy.settings.sections.network.localApiDescription}
+                    checked={settings.network.useLocalApiServer}
+                    onChange={(checked) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        network: {
+                          ...current.network,
+                          useLocalApiServer: checked,
+                        },
+                      }))
+                    }
+                  />
+                </SettingsSearchItem>
                 {showLocalApiPanel ? (
                   <div className="local-api-console">
                     <div className="local-api-console__header">
@@ -17909,86 +18523,145 @@ function SettingsScreen({
                   </div>
                 ) : (
                   <>
-                    <UITextField
-                      label={copy.settings.sections.network.apiBaseUrlLabel}
-                      value={settings.network.neteaseApiBaseUrl}
-                      placeholder="http://127.0.0.1:3000"
-                      helper={copy.settings.sections.network.apiBaseUrlHelper}
-                      onChange={(value) =>
-                        onUpdate((current) => ({
-                          ...current,
-                          network: {
-                            ...current.network,
-                            neteaseApiBaseUrl: value,
-                          },
-                        }))
-                      }
-                    />
-                    <UITextField
-                      label={copy.settings.sections.network.proxyLabel}
-                      value={settings.network.neteaseProxy}
-                      placeholder="http://127.0.0.1:7890"
-                      helper={copy.settings.sections.network.proxyHelper}
-                      onChange={(value) =>
-                        onUpdate((current) => ({
-                          ...current,
-                          network: {
-                            ...current.network,
-                            neteaseProxy: value,
-                          },
-                        }))
-                      }
-                    />
-                    <UITextField
-                      label={copy.settings.sections.network.realIpLabel}
-                      value={settings.network.neteaseRealIp}
-                      placeholder="118.88.88.88"
-                      helper={copy.settings.sections.network.realIpHelper}
-                      onChange={(value) =>
-                        onUpdate((current) => ({
-                          ...current,
-                          network: {
-                            ...current.network,
-                            neteaseRealIp: value,
-                          },
-                        }))
-                      }
-                    />
+                    <SettingsSearchItem
+                      itemKey="network-api-base-url"
+                      instanceId={settingsSearchInstanceId}
+                      visible={matchesSettingKey("network-api-base-url")}
+                      searchParts={[
+                        copy.settings.sections.network.apiBaseUrlLabel,
+                        copy.settings.sections.network.apiBaseUrlHelper,
+                        settings.network.neteaseApiBaseUrl,
+                        "http://127.0.0.1:3000",
+                      ]}
+                    >
+                      <UITextField
+                        label={copy.settings.sections.network.apiBaseUrlLabel}
+                        value={settings.network.neteaseApiBaseUrl}
+                        placeholder="http://127.0.0.1:3000"
+                        helper={copy.settings.sections.network.apiBaseUrlHelper}
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            network: {
+                              ...current.network,
+                              neteaseApiBaseUrl: value,
+                            },
+                          }))
+                        }
+                      />
+                    </SettingsSearchItem>
+                    <SettingsSearchItem
+                      itemKey="network-proxy"
+                      instanceId={settingsSearchInstanceId}
+                      visible={matchesSettingKey("network-proxy")}
+                      searchParts={[
+                        copy.settings.sections.network.proxyLabel,
+                        copy.settings.sections.network.proxyHelper,
+                        settings.network.neteaseProxy,
+                        "http://127.0.0.1:7890",
+                      ]}
+                    >
+                      <UITextField
+                        label={copy.settings.sections.network.proxyLabel}
+                        value={settings.network.neteaseProxy}
+                        placeholder="http://127.0.0.1:7890"
+                        helper={copy.settings.sections.network.proxyHelper}
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            network: {
+                              ...current.network,
+                              neteaseProxy: value,
+                            },
+                          }))
+                        }
+                      />
+                    </SettingsSearchItem>
+                    <SettingsSearchItem
+                      itemKey="network-real-ip"
+                      instanceId={settingsSearchInstanceId}
+                      visible={matchesSettingKey("network-real-ip")}
+                      searchParts={[
+                        copy.settings.sections.network.realIpLabel,
+                        copy.settings.sections.network.realIpHelper,
+                        settings.network.neteaseRealIp,
+                        "118.88.88.88",
+                      ]}
+                    >
+                      <UITextField
+                        label={copy.settings.sections.network.realIpLabel}
+                        value={settings.network.neteaseRealIp}
+                        placeholder="118.88.88.88"
+                        helper={copy.settings.sections.network.realIpHelper}
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            network: {
+                              ...current.network,
+                              neteaseRealIp: value,
+                            },
+                          }))
+                        }
+                      />
+                    </SettingsSearchItem>
                   </>
                 )}
-                <UITextField
-                  label={copy.settings.sections.network.cookieLabel}
-                  value={settings.network.neteaseCookie}
-                  placeholder="MUSIC_U=..."
-                  helper={copy.settings.sections.network.cookieHelper}
-                  onChange={(value) =>
-                    onUpdate((current) => ({
-                      ...current,
-                      network: {
-                        ...current.network,
-                        neteaseCookie: value,
-                      },
-                    }))
-                  }
-                />
-                <UITextField
-                  label={copy.settings.sections.network.timeoutLabel}
-                  value={String(settings.network.requestTimeoutMs)}
-                  placeholder="15000"
-                  helper={copy.settings.sections.network.timeoutHelper}
-                  onChange={(value) =>
-                    onUpdate((current) => ({
-                      ...current,
-                      network: {
-                        ...current.network,
-                        requestTimeoutMs: sanitizePositiveNumber(
-                          value,
-                          current.network.requestTimeoutMs,
-                        ),
-                      },
-                    }))
-                  }
-                />
+                <SettingsSearchItem
+                  itemKey="network-cookie"
+                  instanceId={settingsSearchInstanceId}
+                  visible={matchesSettingKey("network-cookie")}
+                  searchParts={[
+                    copy.settings.sections.network.cookieLabel,
+                    copy.settings.sections.network.cookieHelper,
+                    settings.network.neteaseCookie,
+                    "MUSIC_U",
+                  ]}
+                >
+                  <UITextField
+                    label={copy.settings.sections.network.cookieLabel}
+                    value={settings.network.neteaseCookie}
+                    placeholder="MUSIC_U=..."
+                    helper={copy.settings.sections.network.cookieHelper}
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        network: {
+                          ...current.network,
+                          neteaseCookie: value,
+                        },
+                      }))
+                    }
+                  />
+                </SettingsSearchItem>
+                <SettingsSearchItem
+                  itemKey="network-timeout"
+                  instanceId={settingsSearchInstanceId}
+                  visible={matchesSettingKey("network-timeout")}
+                  searchParts={[
+                    copy.settings.sections.network.timeoutLabel,
+                    copy.settings.sections.network.timeoutHelper,
+                    settings.network.requestTimeoutMs,
+                  ]}
+                >
+                  <UITextField
+                    label={copy.settings.sections.network.timeoutLabel}
+                    value={String(settings.network.requestTimeoutMs)}
+                    placeholder="15000"
+                    helper={copy.settings.sections.network.timeoutHelper}
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        network: {
+                          ...current.network,
+                          requestTimeoutMs: sanitizePositiveNumber(
+                            value,
+                            current.network.requestTimeoutMs,
+                          ),
+                        },
+                      }))
+                    }
+                  />
+                </SettingsSearchItem>
                 <div className="settings-inline-actions">
                   <UIButton
                     variant="secondary"
@@ -18000,40 +18673,13 @@ function SettingsScreen({
                       : copy.settings.sections.network.testLabel}
                   </UIButton>
                 </div>
-                <UISwitch
-                  label={copy.settings.sections.network.meteredLabel}
-                  description={copy.settings.sections.network.meteredDescription}
-                  checked={settings.network.allowMeteredNetwork}
-                  onChange={(checked) =>
-                    onUpdate((current) => ({
-                      ...current,
-                      network: {
-                        ...current.network,
-                        allowMeteredNetwork: checked,
-                      },
-                    }))
-                  }
-                />
-                <UICheckbox
-                  label={copy.settings.sections.network.metadataLabel}
-                  description={copy.settings.sections.network.metadataDescription}
-                  checked={settings.network.preferOnlineMetadata}
-                  onChange={(checked) =>
-                    onUpdate((current) => ({
-                      ...current,
-                      network: {
-                        ...current.network,
-                        preferOnlineMetadata: checked,
-                      },
-                    }))
-                  }
-                />
               </>
             ) : null}
           </div>
         </section>
+        ) : null}
 
-        {isNeteaseEnabled ? (
+        {showAccountSection ? (
           <section className="settings-card">
             <div className="settings-card__header">
               <div>
@@ -18174,6 +18820,7 @@ function SettingsScreen({
           </section>
         ) : null}
 
+        {showLibrarySection ? (
         <section className="settings-card settings-card--wide">
           <div className="settings-card__header">
             <div>
@@ -18218,6 +18865,13 @@ function SettingsScreen({
             </div>
           </div>
         </section>
+        ) : null}
+
+        {isSearchingSettings && visibleMainSettingsSectionCount === 0 ? (
+          <p className="library-empty">
+            {copy.locale === "en-US" ? "No settings matched your search." : "没有匹配的设置。"}
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -18655,6 +19309,225 @@ function SongArtistLinks({
   );
 }
 
+function buildLocalLyricsCacheKey(track: TrackRecord) {
+  if (track.source.kind !== "localFile") {
+    return null;
+  }
+
+  return `local:${track.source.path}`;
+}
+
+function buildNeteaseSearchKeywords(track: TrackRecord) {
+  const parts = [track.title, track.artist ?? "", track.album ?? ""]
+    .map((value) => value.trim())
+    .filter((value, index, collection) => value.length > 0 && collection.indexOf(value) === index);
+  return parts.join(" ");
+}
+
+function scoreNeteaseLyricCandidate(track: TrackRecord, song: NeteaseSongDetail) {
+  let score = 0;
+  const trackTitle = track.title.trim().toLowerCase();
+  const songTitle = song.name.trim().toLowerCase();
+  if (trackTitle && songTitle) {
+    if (trackTitle === songTitle) {
+      score += 80;
+    } else if (songTitle.includes(trackTitle) || trackTitle.includes(songTitle)) {
+      score += 40;
+    }
+  }
+
+  const trackArtist = (track.artist ?? "").trim().toLowerCase();
+  const songArtists = song.artists.map((artist) => artist.trim().toLowerCase()).filter(Boolean);
+  if (trackArtist && songArtists.some((artist) => artist === trackArtist || trackArtist.includes(artist) || artist.includes(trackArtist))) {
+    score += 30;
+  }
+
+  const trackAlbum = (track.album ?? "").trim().toLowerCase();
+  const songAlbum = (song.album ?? "").trim().toLowerCase();
+  if (trackAlbum && songAlbum && (trackAlbum === songAlbum || trackAlbum.includes(songAlbum) || songAlbum.includes(trackAlbum))) {
+    score += 10;
+  }
+
+  const trackDuration = track.durationMs ?? null;
+  const songDuration = song.durationMs ?? null;
+  if (trackDuration && songDuration) {
+    const diffMs = Math.abs(trackDuration - songDuration);
+    if (diffMs <= 1500) {
+      score += 25;
+    } else if (diffMs <= 4000) {
+      score += 10;
+    }
+  }
+
+  return score;
+}
+
+function splitTrackArtistNames(
+  artist: string | null | undefined,
+  unknownArtistLabel?: string,
+) {
+  const parts = (artist ?? "")
+    .split("/")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+
+  if (parts.length > 0) {
+    return parts;
+  }
+
+  return unknownArtistLabel ? [unknownArtistLabel] : [];
+}
+
+function normalizeSettingsSearchText(value: string | number | boolean | null | undefined) {
+  if (typeof value === "boolean") {
+    return value ? "true on enabled yes" : "false off disabled no";
+  }
+
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  return (value ?? "").toString().trim().toLocaleLowerCase();
+}
+
+function buildSettingsSearchBlob(parts: Array<string | number | boolean | null | undefined>) {
+  return parts
+    .map((part) => normalizeSettingsSearchText(part))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function createSettingsSearchKey(instanceId: string, key: string) {
+  return `${instanceId}:${key}`;
+}
+
+function applySettingsSearchVisibility(root: HTMLElement, normalizedQuery: string) {
+  const hasQuery = normalizedQuery.trim().length > 0;
+  const isHelperNode = (element: HTMLElement) =>
+    element.classList.contains("ui-field__helper") ||
+    element.classList.contains("settings-screen__description");
+  const isSettingItemNode = (element: HTMLElement) =>
+    element.dataset.settingsSearchItem === "true" || element.hasAttribute("data-settings-key");
+
+  const resetHiddenState = (element: HTMLElement) => {
+    element.hidden = false;
+    element.dataset.settingsSearchHidden = "false";
+    element.style.removeProperty("display");
+  };
+
+  const setElementHidden = (element: HTMLElement, hidden: boolean) => {
+    element.hidden = hidden;
+    element.dataset.settingsSearchHidden = hidden ? "true" : "false";
+    if (hidden) {
+      element.style.setProperty("display", "none", "important");
+      return;
+    }
+
+    element.style.removeProperty("display");
+  };
+
+  const cards = Array.from(root.querySelectorAll<HTMLElement>(".settings-card"));
+  cards.forEach((card) => {
+    resetHiddenState(card);
+    const body = card.querySelector<HTMLElement>(".settings-card__body");
+    const header = card.querySelector<HTMLElement>(".settings-card__header");
+    if (header) {
+      resetHiddenState(header);
+    }
+    if (!body) {
+      return;
+    }
+
+    const descendants = Array.from(body.querySelectorAll<HTMLElement>("*"));
+    descendants.forEach((element) => {
+      resetHiddenState(element);
+    });
+
+    const settingItems = Array.from(
+      body.querySelectorAll<HTMLElement>("[data-settings-search-item='true'], [data-settings-key]"),
+    ).filter((element) => {
+      const parentSettingItem = element.parentElement?.closest<HTMLElement>(
+        "[data-settings-search-item='true'], [data-settings-key]",
+      );
+      return parentSettingItem === null;
+    });
+
+    let hasVisibleItem = false;
+    settingItems.forEach((item) => {
+      const searchNodes = item.matches("[data-settings-search]")
+        ? [item, ...Array.from(item.querySelectorAll<HTMLElement>("[data-settings-search]"))]
+        : Array.from(item.querySelectorAll<HTMLElement>("[data-settings-search]"));
+      const searchText = buildSettingsSearchBlob(
+        searchNodes.map((node) => node.dataset.settingsSearch ?? ""),
+      );
+      const matches = !hasQuery || searchText.includes(normalizedQuery);
+      setElementHidden(item, !matches);
+      if (matches) {
+        hasVisibleItem = true;
+      }
+    });
+
+    Array.from(body.children).forEach((child) => {
+      const element = child as HTMLElement;
+      if (isSettingItemNode(element)) {
+        return;
+      }
+
+      if (isHelperNode(element)) {
+        const previousElement = element.previousElementSibling as HTMLElement | null;
+        const keepVisible =
+          previousElement !== null && previousElement.dataset.settingsSearchHidden !== "true";
+        setElementHidden(element, hasQuery ? !keepVisible : false);
+        return;
+      }
+
+      const visibleDescendant = element.querySelector(
+        "[data-settings-search-item='true']:not([hidden]), [data-settings-key]:not([hidden])",
+      );
+      const keepVisible = !hasQuery || visibleDescendant !== null;
+      setElementHidden(element, !keepVisible);
+    });
+
+    if (hasQuery && !hasVisibleItem) {
+      setElementHidden(card, true);
+    }
+  });
+
+  const emptyStates = Array.from(root.querySelectorAll<HTMLElement>(".library-empty"));
+  emptyStates.forEach((element) => {
+    if (element.textContent?.includes("没有匹配的设置。") || element.textContent?.includes("No settings matched your search.")) {
+      setElementHidden(element, true);
+    }
+  });
+}
+
+function SettingsSearchItem({
+  itemKey,
+  instanceId,
+  visible,
+  searchParts,
+  children,
+}: {
+  itemKey: string;
+  instanceId: string;
+  visible: boolean;
+  searchParts?: Array<string | number | boolean | null | undefined>;
+  children: ReactNode;
+}) {
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <div
+      data-settings-key={createSettingsSearchKey(instanceId, itemKey)}
+      data-settings-search={searchParts ? buildSettingsSearchBlob(searchParts) : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
 function NetworkSectionError({
   message,
   actionLabel,
@@ -18706,7 +19579,7 @@ function HomeScreen({
   onPlayLocalTrack: (trackId: string, queueTracks: TrackRecord[]) => void;
   onPlayNeteaseTrack: (trackId: number, queueSongs: NeteaseSongDetail[]) => void;
   onPlayPersonalFmTrack: (trackId: number, queueSongs: NeteaseSongDetail[]) => void;
-  onOpenTrackArtist: (track: TrackRecord) => void;
+  onOpenTrackArtist: (track: TrackRecord, artistIndex?: number, artistName?: string) => void;
   onOpenTrackAlbum: (track: TrackRecord) => void;
   onOpenSongArtist: (artistId: number, artistName: string) => void;
   onOpenSongAlbum: (albumId: number, albumName: string) => void;
@@ -21279,7 +22152,7 @@ function LibraryScreen({
   onImportAudioDirectory: () => void;
   onDeleteTracks: (trackIds: string[]) => Promise<void> | void;
   onPlayTrack: (trackId: string, queueTracks: TrackRecord[]) => void;
-  onOpenTrackArtist: (track: TrackRecord) => void;
+  onOpenTrackArtist: (track: TrackRecord, artistIndex?: number, artistName?: string) => void;
   onOpenTrackAlbum: (track: TrackRecord) => void;
   isNavigatingToRemoteDetail: boolean;
   onTrackContextMenu: (
@@ -21323,12 +22196,9 @@ function LibraryScreen({
   const artworksById = new Map((mediaLibrary?.artworks ?? []).map((artwork) => [artwork.id, artwork]));
   const isLibraryBusy = isImporting || isDeletingTracks;
   const artists = Array.from(
-    new Map(
-      tracks.map((track) => [
-        track.artist?.trim() || unknownArtistLabel,
-        track.artist?.trim() || unknownArtistLabel,
-      ]),
-    ).values(),
+    new Set(
+      tracks.flatMap((track) => splitTrackArtistNames(track.artist, unknownArtistLabel)),
+    ),
   ).sort((left, right) => left.localeCompare(right, copy.locale));
   const albums = Array.from(
     new Map(
@@ -21340,7 +22210,7 @@ function LibraryScreen({
   ).sort((left, right) => left.localeCompare(right, copy.locale));
   const artistSummaries = artists.map((artist) => {
     const artistTracks = tracks.filter(
-      (track) => (track.artist?.trim() || unknownArtistLabel) === artist,
+      (track) => splitTrackArtistNames(track.artist, unknownArtistLabel).includes(artist),
     );
     const representativeTrack =
       artistTracks.find((track) => resolveTrackArtworkUrl(track, artworksById) !== null) ??
@@ -21370,7 +22240,7 @@ function LibraryScreen({
       album,
       trackCount: albumTracks.length,
       artistCount: new Set(
-        albumTracks.map((track) => track.artist?.trim() || unknownArtistLabel),
+        albumTracks.flatMap((track) => splitTrackArtistNames(track.artist, unknownArtistLabel)),
       ).size,
       representativeTrack,
     };
@@ -21396,7 +22266,9 @@ function LibraryScreen({
       ? []
       : tracks.filter(
           (track) =>
-            (track.artist?.trim() || unknownArtistLabel) === resolvedSelectedArtistDetail.artist,
+            splitTrackArtistNames(track.artist, unknownArtistLabel).includes(
+              resolvedSelectedArtistDetail.artist,
+            ),
         );
   const selectedAlbumTracks =
     resolvedSelectedAlbumDetail === null
@@ -22447,7 +23319,7 @@ function LibrarySongList({
   selectedTrackIds?: string[];
   onToggleTrackSelection?: (trackId: string) => void;
   onPlayTrack: (trackId: string, queueTracks: TrackRecord[]) => void;
-  onOpenArtist: (track: TrackRecord) => void;
+  onOpenArtist: (track: TrackRecord, artistIndex?: number, artistName?: string) => void;
   onOpenAlbum: (track: TrackRecord) => void;
   disableMetaNavigation?: boolean;
   onTrackContextMenu?: (
@@ -22535,11 +23407,18 @@ function LibrarySongList({
             <div className="library-song-item__field library-song-item__field--artist">
               <div className="library-song-item__field-label">{copy.library.songFields.artist}</div>
               <div className="library-song-item__field-value">
-                <SongMetaButton
-                  className="library-song-item__field-button"
-                  label={track.artist?.trim() || copy.library.songFields.unknownArtist}
-                  onClick={() => onOpenArtist(track)}
-                  disabled={!track.artist?.trim() || disableMetaNavigation}
+                <SongArtistLinks
+                  fallback={copy.library.songFields.unknownArtist}
+                  artists={splitTrackArtistNames(track.artist, copy.library.songFields.unknownArtist).map(
+                    (artistName, artistIndex) => ({
+                      key: `${track.id}:library-artist:${artistName}:${artistIndex}`,
+                      name: artistName,
+                      onClick:
+                        disableMetaNavigation || artistName === copy.library.songFields.unknownArtist
+                          ? undefined
+                          : () => onOpenArtist(track, artistIndex, artistName),
+                    }),
+                  )}
                 />
               </div>
             </div>

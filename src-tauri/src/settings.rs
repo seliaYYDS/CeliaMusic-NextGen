@@ -10,7 +10,7 @@ use fontdb::Database;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 8;
+const SETTINGS_SCHEMA_VERSION: u32 = 9;
 const DEFAULT_SETTINGS_FILE: &str = "app-settings.json";
 pub const DEFAULT_WINDOW_WIDTH: u32 = 960;
 pub const DEFAULT_WINDOW_HEIGHT: u32 = 600;
@@ -249,8 +249,7 @@ impl Default for PlaybackSettings {
 pub struct LibrarySettings {
     pub scan_directories: Vec<String>,
     pub watch_directories: bool,
-    pub auto_import_artwork: bool,
-    pub extract_embedded_artwork: bool,
+    pub online_lyrics_completion: bool,
 }
 
 impl Default for LibrarySettings {
@@ -258,8 +257,7 @@ impl Default for LibrarySettings {
         Self {
             scan_directories: Vec::new(),
             watch_directories: false,
-            auto_import_artwork: true,
-            extract_embedded_artwork: true,
+            online_lyrics_completion: false,
         }
     }
 }
@@ -269,8 +267,6 @@ impl Default for LibrarySettings {
 pub struct NetworkSettings {
     pub enabled_sources: Vec<String>,
     pub use_local_api_server: bool,
-    pub allow_metered_network: bool,
-    pub prefer_online_metadata: bool,
     pub request_timeout_ms: u64,
     pub netease_api_base_url: String,
     pub netease_cookie: String,
@@ -283,8 +279,6 @@ impl Default for NetworkSettings {
         Self {
             enabled_sources: vec!["netease".to_string()],
             use_local_api_server: false,
-            allow_metered_network: true,
-            prefer_online_metadata: true,
             request_timeout_ms: 15000,
             netease_api_base_url: "http://127.0.0.1:3000".to_string(),
             netease_cookie: String::new(),

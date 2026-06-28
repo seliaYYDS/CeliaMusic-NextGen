@@ -91,3 +91,18 @@ export const analyzeLocalAudioTrack = async (path: string): Promise<AudioTrackAn
       path,
     },
   });
+
+export const loadLocalLyrics = async (path: string): Promise<string | null> =>
+  invoke("load_local_lyrics", {
+    request: {
+      path,
+    },
+  });
+
+export const saveLocalLyrics = async (path: string, content: string): Promise<string> =>
+  invoke("save_local_lyrics", {
+    request: {
+      path,
+      content,
+    },
+  });

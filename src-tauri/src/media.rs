@@ -4,7 +4,7 @@ use std::{
     collections::HashSet,
     fs,
     hash::{Hash, Hasher},
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -75,6 +75,12 @@ struct MediaLibraryDocument {
     tracks: Vec<TrackRecord>,
     artworks: Vec<ArtworkRecord>,
     imported_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct InferredLocalTrackMetadata {
+    artist: Option<String>,
+    album: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -248,12 +254,40 @@ pub struct AudioTrackAnalysisRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalLyricsRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLocalLyricsRequest {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioAlignmentAnalysisRequest {
     pub reference_path: String,
     pub candidate_path: String,
     pub max_duration_ms: Option<u32>,
     pub frame_ms: Option<u16>,
     pub search_window_ms: Option<u32>,
+}
+
+#[tauri::command]
+pub fn load_local_lyrics(request: LocalLyricsRequest) -> Result<Option<String>, String> {
+    let path = PathBuf::from(request.path);
+    load_local_lyrics_impl(&path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn save_local_lyrics(request: SaveLocalLyricsRequest) -> Result<String, String> {
+    let path = PathBuf::from(request.path);
+    save_local_lyrics_impl(&path, &request.content)
+        .map(|saved_path| saved_path.display().to_string())
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1818,25 +1852,33 @@ fn parse_audio_track(path: &Path) -> anyhow::Result<TrackRecord> {
 
     let properties = tagged_file.properties();
     let primary_tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+    let fallback_name = file_stem(path).unwrap_or_else(|| "Unknown Title".to_string());
+    let inferred_file_name = infer_metadata_from_file_name(&fallback_name);
     let now = now_ms();
     let title = primary_tag
         .and_then(|tag| tag.get_string(ItemKey::TrackTitle))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .map(str::to_owned)
-        .or_else(|| file_stem(path))
         .unwrap_or_else(|| "Unknown Title".to_string());
-
     let artist = primary_tag
         .and_then(|tag| tag.get_string(ItemKey::TrackArtist))
-        .map(str::to_owned);
+        .map(normalize_multi_artist_text)
+        .filter(|value| !value.is_empty())
+        .or_else(|| inferred_file_name.artist.clone());
     let album = primary_tag
         .and_then(|tag| tag.get_string(ItemKey::AlbumTitle))
-        .map(str::to_owned);
+        .map(normalize_metadata_text)
+        .filter(|value| !value.is_empty())
+        .or_else(|| inferred_file_name.album.clone());
     let album_artist = primary_tag
         .and_then(|tag| tag.get_string(ItemKey::AlbumArtist))
-        .map(str::to_owned);
+        .map(normalize_multi_artist_text)
+        .filter(|value| !value.is_empty())
+        .or_else(|| artist.clone());
     let genre = primary_tag
         .and_then(|tag| tag.get_string(ItemKey::Genre))
-        .map(str::to_owned);
+        .map(normalize_metadata_text);
     let year = primary_tag
         .and_then(|tag| tag.get_string(ItemKey::RecordingDate))
         .and_then(parse_year);
@@ -1870,6 +1912,128 @@ fn parse_audio_track(path: &Path) -> anyhow::Result<TrackRecord> {
     })
 }
 
+fn load_local_lyrics_impl(path: &Path) -> anyhow::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    if let Some(embedded) = read_embedded_lyrics(path)? {
+        if !embedded.trim().is_empty() {
+            return Ok(Some(embedded));
+        }
+    }
+
+    if let Some(sidecar_path) = find_sidecar_lrc_path(path) {
+        let content = fs::read_to_string(&sidecar_path)
+            .with_context(|| format!("Failed to read lyric file {}", sidecar_path.display()))?;
+        if !content.trim().is_empty() {
+            return Ok(Some(content));
+        }
+    }
+
+    Ok(None)
+}
+
+fn save_local_lyrics_impl(path: &Path, content: &str) -> anyhow::Result<PathBuf> {
+    let sidecar_path = build_sidecar_lrc_path(path)?;
+    if let Some(parent) = sidecar_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create lyric directory {}", parent.display()))?;
+    }
+
+    let mut file = fs::File::create(&sidecar_path)
+        .with_context(|| format!("Failed to create lyric file {}", sidecar_path.display()))?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("Failed to write lyric file {}", sidecar_path.display()))?;
+    Ok(sidecar_path)
+}
+
+fn read_embedded_lyrics(path: &Path) -> anyhow::Result<Option<String>> {
+    let tagged_file = Probe::open(path)
+        .with_context(|| format!("Failed to open audio file {}", path.display()))?
+        .read()
+        .with_context(|| format!("Failed to parse audio file {}", path.display()))?;
+
+    let primary_tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+    let mut candidates: Vec<String> = Vec::new();
+
+    if let Some(tag) = primary_tag {
+        if let Some(lyrics) = tag.get_string(ItemKey::UnsyncLyrics) {
+            candidates.push(lyrics.to_string());
+        }
+        if let Some(comment) = tag.get_string(ItemKey::Comment) {
+            candidates.push(comment.to_string());
+        }
+    }
+
+    for candidate in candidates {
+        let trimmed = candidate.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if looks_like_lyric_content(trimmed) {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
+fn looks_like_lyric_content(text: &str) -> bool {
+    if text.contains("[00:") || text.contains("[0:") || text.contains("\n") {
+        return true;
+    }
+
+    let compact = text.trim();
+    compact.len() >= 12 && compact.chars().filter(|ch| ch.is_whitespace()).count() >= 2
+}
+
+fn find_sidecar_lrc_path(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let stem = path.file_stem()?.to_str()?;
+    let mut exact_candidates = vec![
+        parent.join(format!("{stem}.lrc")),
+        parent.join(format!("{stem}.LRC")),
+    ];
+
+    for candidate in exact_candidates.drain(..) {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    let entries = fs::read_dir(parent).ok()?;
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        let extension = candidate
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        if extension.as_deref() != Some("lrc") {
+            continue;
+        }
+
+        let candidate_stem = candidate.file_stem().and_then(|value| value.to_str());
+        if candidate_stem.is_some_and(|value| value.eq_ignore_ascii_case(stem)) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn build_sidecar_lrc_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("Track path {} does not have a parent directory", path.display()))?;
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow!("Track path {} does not have a valid file stem", path.display()))?;
+    Ok(parent.join(format!("{stem}.lrc")))
+}
+
 fn import_path_into_library(
     document: &mut MediaLibraryDocument,
     target_path: &Path,
@@ -1895,17 +2059,12 @@ fn import_path_into_library(
         let mut track = parse_audio_track(target_path)?;
         let mut artwork_ids = Vec::new();
 
-        if import_settings.auto_import_artwork {
-            artwork_ids.extend(collect_related_artworks(document, target_path)?);
-        }
-
-        if import_settings.extract_embedded_artwork {
-            artwork_ids.extend(extract_embedded_artworks(
-                document,
-                target_path,
-                app_data_dir,
-            )?);
-        }
+        artwork_ids.extend(collect_related_artworks(document, target_path)?);
+        artwork_ids.extend(extract_embedded_artworks(
+            document,
+            target_path,
+            app_data_dir,
+        )?);
 
         artwork_ids.sort();
         artwork_ids.dedup();
@@ -1918,7 +2077,7 @@ fn import_path_into_library(
         return Ok(());
     }
 
-    if import_settings.auto_import_artwork && is_supported_image(target_path) {
+    if is_supported_image(target_path) {
         let _ = upsert_artwork(document, parse_image_artwork(target_path)?);
     }
 
@@ -2101,7 +2260,7 @@ fn collect_related_artworks(
 
 fn hydrate_missing_local_artworks(
     document: &mut MediaLibraryDocument,
-    import_settings: &LibrarySettings,
+    _import_settings: &LibrarySettings,
     app_data_dir: &Path,
 ) -> anyhow::Result<()> {
     let mut library_updated = false;
@@ -2126,17 +2285,12 @@ fn hydrate_missing_local_artworks(
 
         let mut artwork_ids = document.tracks[track_index].artwork_ids.clone();
 
-        if import_settings.auto_import_artwork {
-            artwork_ids.extend(collect_related_artworks(document, &audio_path)?);
-        }
-
-        if import_settings.extract_embedded_artwork {
-            artwork_ids.extend(extract_embedded_artworks(
-                document,
-                &audio_path,
-                app_data_dir,
-            )?);
-        }
+        artwork_ids.extend(collect_related_artworks(document, &audio_path)?);
+        artwork_ids.extend(extract_embedded_artworks(
+            document,
+            &audio_path,
+            app_data_dir,
+        )?);
 
         artwork_ids.sort();
         artwork_ids.dedup();
@@ -2340,6 +2494,78 @@ fn track_local_path(track: &TrackRecord) -> Option<String> {
 fn file_stem(path: &Path) -> Option<String> {
     path.file_stem()
         .map(|value| value.to_string_lossy().to_string())
+}
+
+fn normalize_metadata_text(value: &str) -> String {
+    value
+        .replace(['\u{3000}', '\t'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(['-', '/', '、', ',', '，', ';', '；', '|', ' '])
+        .trim()
+        .to_string()
+}
+
+fn split_multi_artist_candidates(value: &str) -> Vec<String> {
+    value
+        .split(['/', '／', '、', ',', '，', ';', '；', '&', '|'])
+        .flat_map(|segment| segment.split(" feat. "))
+        .flat_map(|segment| segment.split(" featuring "))
+        .flat_map(|segment| segment.split(" ft. "))
+        .map(normalize_metadata_text)
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn normalize_multi_artist_text(value: &str) -> String {
+    let candidates = split_multi_artist_candidates(value);
+    if candidates.is_empty() {
+        return normalize_metadata_text(value);
+    }
+
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        if !deduped.iter().any(|existing: &String| existing.eq_ignore_ascii_case(&candidate)) {
+            deduped.push(candidate);
+        }
+    }
+
+    deduped.join(" / ")
+}
+
+fn infer_metadata_from_file_name(file_name: &str) -> InferredLocalTrackMetadata {
+    let normalized = normalize_metadata_text(file_name);
+    if normalized.is_empty() {
+        return InferredLocalTrackMetadata::default();
+    }
+
+    let separators = [" - ", " – ", " — ", " _ "];
+    for separator in separators {
+        if let Some((left, right)) = normalized.split_once(separator) {
+            let left = normalize_multi_artist_text(left);
+            let right = normalize_metadata_text(right);
+            if !left.is_empty() && !right.is_empty() {
+                return InferredLocalTrackMetadata {
+                    artist: Some(left),
+                    album: Some(right),
+                };
+            }
+        }
+    }
+
+    if let Some((left, right)) = normalized.split_once('/') {
+        let left = normalize_multi_artist_text(left);
+        let right = normalize_metadata_text(right);
+        if !left.is_empty() && !right.is_empty() {
+            return InferredLocalTrackMetadata {
+                artist: Some(left),
+                album: Some(right),
+            };
+        }
+    }
+
+    InferredLocalTrackMetadata::default()
 }
 
 fn parse_year(value: &str) -> Option<i32> {

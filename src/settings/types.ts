@@ -100,15 +100,12 @@ export type PlaybackSettings = {
 export type LibrarySettings = {
   scanDirectories: string[];
   watchDirectories: boolean;
-  autoImportArtwork: boolean;
-  extractEmbeddedArtwork: boolean;
+  onlineLyricsCompletion: boolean;
 };
 
 export type NetworkSettings = {
   enabledSources: string[];
   useLocalApiServer: boolean;
-  allowMeteredNetwork: boolean;
-  preferOnlineMetadata: boolean;
   requestTimeoutMs: number;
   neteaseApiBaseUrl: string;
   neteaseCookie: string;
@@ -238,14 +235,11 @@ export const createDefaultAppSettings = (): AppSettings => ({
   library: {
     scanDirectories: [],
     watchDirectories: false,
-    autoImportArtwork: true,
-    extractEmbeddedArtwork: true,
+    onlineLyricsCompletion: false,
   },
   network: {
     enabledSources: ["netease"],
     useLocalApiServer: false,
-    allowMeteredNetwork: true,
-    preferOnlineMetadata: true,
     requestTimeoutMs: 15000,
     neteaseApiBaseUrl: "http://127.0.0.1:3000",
     neteaseCookie: "",
