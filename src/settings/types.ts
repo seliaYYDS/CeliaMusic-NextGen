@@ -4,7 +4,7 @@ export type DynamicIslandStyle = "default" | "soft" | "solid";
 export type DynamicIslandColorMode = "follow-theme" | "primary" | "secondary";
 export type DynamicIslandDefaultContent = "time" | "date" | "datetime";
 export type DynamicIslandPosition = "center" | "left" | "right";
-export type GlobalParticleEffectType = "lines" | "dots" | "snow" | "sakura";
+export type GlobalParticleEffectType = "lines" | "dots" | "snow" | "sakura" | "mist" | "bloom";
 export type GlobalParticleLayer = "top" | "background";
 export type ImmersiveBackgroundMode =
   | "palette-solid"
@@ -65,6 +65,12 @@ export type AppearanceSettings = {
   globalParticleEffectFallSpeed: number;
   globalParticleEffectCount: number;
   globalParticleEffectSize: number;
+  globalFilterEffectIntensity: number;
+  globalFilterEffectSpeed: number;
+  globalFilterEffectRange: number;
+  globalBloomEffectIntensity: number;
+  globalBloomEffectSpeed: number;
+  globalBloomEffectRange: number;
   immersiveBackgroundMode: ImmersiveBackgroundMode;
   immersiveBackgroundAnimated: boolean;
   immersiveBackgroundResolution: number;
@@ -199,6 +205,12 @@ export const createDefaultAppSettings = (): AppSettings => ({
     globalParticleEffectFallSpeed: 66,
     globalParticleEffectCount: 52,
     globalParticleEffectSize: 100,
+    globalFilterEffectIntensity: 72,
+    globalFilterEffectSpeed: 54,
+    globalFilterEffectRange: 62,
+    globalBloomEffectIntensity: 32,
+    globalBloomEffectSpeed: 24,
+    globalBloomEffectRange: 36,
     immersiveBackgroundMode: "flow",
     immersiveBackgroundAnimated: true,
     immersiveBackgroundResolution: 72,

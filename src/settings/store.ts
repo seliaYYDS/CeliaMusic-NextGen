@@ -60,7 +60,9 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       globalParticleEffectType:
         settings.appearance.globalParticleEffectType === "dots" ||
         settings.appearance.globalParticleEffectType === "snow" ||
-        settings.appearance.globalParticleEffectType === "sakura"
+        settings.appearance.globalParticleEffectType === "sakura" ||
+        settings.appearance.globalParticleEffectType === "mist" ||
+        settings.appearance.globalParticleEffectType === "bloom"
           ? settings.appearance.globalParticleEffectType
           : "lines",
       globalParticleEffectLayer:
@@ -70,6 +72,36 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       globalParticleEffectFallSpeed: clampInteger(settings.appearance.globalParticleEffectFallSpeed, 0, 100),
       globalParticleEffectCount: clampInteger(settings.appearance.globalParticleEffectCount, 8, 160),
       globalParticleEffectSize: clampInteger(settings.appearance.globalParticleEffectSize, 40, 220),
+      globalFilterEffectIntensity: clampInteger(
+        settings.appearance.globalFilterEffectIntensity ?? defaultSettings.appearance.globalFilterEffectIntensity,
+        0,
+        100,
+      ),
+      globalFilterEffectSpeed: clampInteger(
+        settings.appearance.globalFilterEffectSpeed ?? defaultSettings.appearance.globalFilterEffectSpeed,
+        0,
+        100,
+      ),
+      globalFilterEffectRange: clampInteger(
+        settings.appearance.globalFilterEffectRange ?? defaultSettings.appearance.globalFilterEffectRange,
+        0,
+        100,
+      ),
+      globalBloomEffectIntensity: clampInteger(
+        settings.appearance.globalBloomEffectIntensity ?? defaultSettings.appearance.globalBloomEffectIntensity,
+        0,
+        100,
+      ),
+      globalBloomEffectSpeed: clampInteger(
+        settings.appearance.globalBloomEffectSpeed ?? defaultSettings.appearance.globalBloomEffectSpeed,
+        0,
+        100,
+      ),
+      globalBloomEffectRange: clampInteger(
+        settings.appearance.globalBloomEffectRange ?? defaultSettings.appearance.globalBloomEffectRange,
+        0,
+        100,
+      ),
       immersiveBackgroundMode:
         settings.appearance.immersiveBackgroundMode === "palette-solid" ||
         settings.appearance.immersiveBackgroundMode === "app-background" ||

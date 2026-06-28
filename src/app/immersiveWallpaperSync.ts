@@ -90,6 +90,12 @@ const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   globalParticleEffectFallSpeed: 66,
   globalParticleEffectCount: 52,
   globalParticleEffectSize: 100,
+  globalFilterEffectIntensity: 72,
+  globalFilterEffectSpeed: 54,
+  globalFilterEffectRange: 62,
+  globalBloomEffectIntensity: 32,
+  globalBloomEffectSpeed: 24,
+  globalBloomEffectRange: 36,
   immersiveBackgroundMode: "flow",
   immersiveBackgroundAnimated: true,
   immersiveBackgroundResolution: 72,
@@ -266,6 +272,8 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
     ),
     globalParticleEffectType:
       value.globalParticleEffectType === "dots" ||
+      value.globalParticleEffectType === "bloom" ||
+      value.globalParticleEffectType === "mist" ||
       value.globalParticleEffectType === "snow" ||
       value.globalParticleEffectType === "sakura" ||
       value.globalParticleEffectType === "lines"
@@ -292,6 +300,30 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
     globalParticleEffectSize: normalizeNumber(
       value.globalParticleEffectSize,
       DEFAULT_APPEARANCE_SETTINGS.globalParticleEffectSize,
+    ),
+    globalFilterEffectIntensity: normalizeNumber(
+      value.globalFilterEffectIntensity,
+      DEFAULT_APPEARANCE_SETTINGS.globalFilterEffectIntensity,
+    ),
+    globalFilterEffectSpeed: normalizeNumber(
+      value.globalFilterEffectSpeed,
+      DEFAULT_APPEARANCE_SETTINGS.globalFilterEffectSpeed,
+    ),
+    globalFilterEffectRange: normalizeNumber(
+      value.globalFilterEffectRange,
+      DEFAULT_APPEARANCE_SETTINGS.globalFilterEffectRange,
+    ),
+    globalBloomEffectIntensity: normalizeNumber(
+      value.globalBloomEffectIntensity,
+      DEFAULT_APPEARANCE_SETTINGS.globalBloomEffectIntensity,
+    ),
+    globalBloomEffectSpeed: normalizeNumber(
+      value.globalBloomEffectSpeed,
+      DEFAULT_APPEARANCE_SETTINGS.globalBloomEffectSpeed,
+    ),
+    globalBloomEffectRange: normalizeNumber(
+      value.globalBloomEffectRange,
+      DEFAULT_APPEARANCE_SETTINGS.globalBloomEffectRange,
     ),
     immersiveBackgroundMode:
       value.immersiveBackgroundMode === "palette-solid" ||

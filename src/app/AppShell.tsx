@@ -1660,10 +1660,10 @@ function getThemeEditorCopy(locale: string) {
       customImageOpacityLabel: "Media Opacity",
       customBlurLabel: "Background Blur",
       customDimLabel: "Background Darken",
-      globalParticleTitle: "Global Particle Effects",
-      globalParticleEnabledLabel: "Enable Global Particle Effects",
-      globalParticleEnabledDescription: "May cause frame drops and increased memory usage.",
-      globalParticleTypeLabel: "Particle Effect",
+    globalParticleTitle: "Global Render Effects",
+    globalParticleEnabledLabel: "Enable Global Render Effects",
+    globalParticleEnabledDescription: "May cause frame drops and increased memory usage.",
+    globalParticleTypeLabel: "Render Effect",
       globalParticleLayerLabel: "Display Layer",
       globalParticleLayerTop: "Top Layer",
       globalParticleLayerBackground: "Background Layer",
@@ -1672,10 +1672,18 @@ function getThemeEditorCopy(locale: string) {
       globalParticleFallSpeedLabel: "Fall Speed",
       globalParticleCountLabel: "Particle Count",
       globalParticleSizeLabel: "Particle Size",
+      globalFilterIntensityLabel: "Filter Intensity",
+      globalFilterSpeedLabel: "Filter Speed",
+      globalFilterRangeLabel: "Edge Range",
+      globalBloomIntensityLabel: "Glow Intensity",
+      globalBloomSpeedLabel: "Pulse Speed",
+      globalBloomRangeLabel: "Glow Radius",
       globalParticleTypeLines: "Lines",
       globalParticleTypeDots: "Dots",
       globalParticleTypeSnow: "Snow",
       globalParticleTypeSakura: "Sakura",
+      globalParticleTypeMist: "Old TV",
+      globalParticleTypeBloom: "Bloom",
       immersiveBackgroundTitle: "Immersive Background",
       immersiveBackgroundDescription: "Choose the background style for the immersive player.",
       immersiveBackgroundModeLabel: "Immersive Background",
@@ -1741,10 +1749,10 @@ function getThemeEditorCopy(locale: string) {
     customImageOpacityLabel: "媒体透明度",
     customBlurLabel: "背景模糊",
     customDimLabel: "背景暗化",
-    globalParticleTitle: "全局粒子效果",
-    globalParticleEnabledLabel: "启用全局粒子效果",
+    globalParticleTitle: "全局渲染效果",
+    globalParticleEnabledLabel: "启用全局渲染效果",
     globalParticleEnabledDescription: "可能会导致应用卡顿和内存占用增加。",
-    globalParticleTypeLabel: "粒子效果",
+    globalParticleTypeLabel: "渲染效果",
     globalParticleLayerLabel: "显示层级",
     globalParticleLayerTop: "最顶层",
     globalParticleLayerBackground: "背景层",
@@ -1753,10 +1761,18 @@ function getThemeEditorCopy(locale: string) {
     globalParticleFallSpeedLabel: "下落速度",
     globalParticleCountLabel: "粒子数量",
     globalParticleSizeLabel: "粒子大小",
+    globalFilterIntensityLabel: "滤镜强度",
+    globalFilterSpeedLabel: "滤镜速度",
+    globalFilterRangeLabel: "边缘范围",
+    globalBloomIntensityLabel: "发光强度",
+    globalBloomSpeedLabel: "呼吸速度",
+    globalBloomRangeLabel: "发光范围",
     globalParticleTypeLines: "连线",
     globalParticleTypeDots: "散点",
     globalParticleTypeSnow: "雪花",
     globalParticleTypeSakura: "樱花",
+    globalParticleTypeMist: "老电视",
+    globalParticleTypeBloom: "Bloom",
     immersiveBackgroundTitle: "沉浸式背景",
     immersiveBackgroundDescription: "选择沉浸式播放页的背景样式。",
     immersiveBackgroundModeLabel: "沉浸式背景",
@@ -4186,6 +4202,25 @@ export function AppShell() {
     configuredAppFontFamily,
     settings.appearance,
   ]);
+  const globalFilterType = settings.appearance.globalParticleEffectType;
+  const isGlobalContainerFilterEnabled =
+    settings.appearance.globalParticleEffectEnabled &&
+    (globalFilterType === "mist" || globalFilterType === "bloom");
+  const appShellAnalogFilterStyle = !isGlobalContainerFilterEnabled
+    ? undefined
+    : globalFilterType === "bloom"
+      ? buildGlobalBloomFilterSurfaceStyle(
+        "app-shell-global-bloom-filter",
+        settings.appearance.globalBloomEffectIntensity,
+        settings.appearance.globalBloomEffectRange,
+      )
+      : globalFilterType === "mist"
+        ? buildGlobalAnalogFilterSurfaceStyle(
+          "app-shell-global-tv-filter",
+          settings.appearance.globalFilterEffectIntensity,
+          settings.appearance.globalFilterEffectRange,
+        )
+        : undefined;
 
   useEffect(() => {
     document.documentElement.style.setProperty("--app-font-family", configuredAppFontFamily);
@@ -13735,7 +13770,9 @@ export function AppShell() {
         </div>
       ) : null}
       {settings.appearance.globalParticleEffectEnabled &&
-      settings.appearance.globalParticleEffectLayer === "top" ? (
+      settings.appearance.globalParticleEffectLayer === "top" &&
+      settings.appearance.globalParticleEffectType !== "mist" &&
+      settings.appearance.globalParticleEffectType !== "bloom" ? (
         <GlobalParticleCanvas
           enabled={true}
           effectType={settings.appearance.globalParticleEffectType}
@@ -13745,12 +13782,40 @@ export function AppShell() {
           fallSpeed={settings.appearance.globalParticleEffectFallSpeed}
           count={settings.appearance.globalParticleEffectCount}
           size={settings.appearance.globalParticleEffectSize}
+          filterIntensity={settings.appearance.globalFilterEffectIntensity}
+          filterSpeed={settings.appearance.globalFilterEffectSpeed}
+          filterRange={settings.appearance.globalFilterEffectRange}
           colorScheme={settings.appearance.colorScheme}
         />
       ) : null}
-      <div className="app-shell__surface">
+      <div className="app-shell__surface" style={appShellAnalogFilterStyle}>
+        {isGlobalContainerFilterEnabled ? (
+          globalFilterType === "bloom" ? (
+            <GlobalBloomFilterOverlay
+              enabled={true}
+              filterId="app-shell-global-bloom-filter"
+              intensity={settings.appearance.globalBloomEffectIntensity}
+              speed={settings.appearance.globalBloomEffectSpeed}
+              range={settings.appearance.globalBloomEffectRange}
+              colorScheme={settings.appearance.colorScheme}
+              className="app-shell__global-filter-overlay"
+            />
+          ) : (
+            <GlobalAnalogFilterOverlay
+              enabled={true}
+              filterId="app-shell-global-tv-filter"
+              intensity={settings.appearance.globalFilterEffectIntensity}
+              speed={settings.appearance.globalFilterEffectSpeed}
+              range={settings.appearance.globalFilterEffectRange}
+              colorScheme={settings.appearance.colorScheme}
+              className="app-shell__global-filter-overlay"
+            />
+          )
+        ) : null}
         {settings.appearance.globalParticleEffectEnabled &&
-        settings.appearance.globalParticleEffectLayer === "background" ? (
+        settings.appearance.globalParticleEffectLayer === "background" &&
+        settings.appearance.globalParticleEffectType !== "mist" &&
+        settings.appearance.globalParticleEffectType !== "bloom" ? (
           <GlobalParticleCanvas
             enabled={true}
             effectType={settings.appearance.globalParticleEffectType}
@@ -13760,6 +13825,9 @@ export function AppShell() {
             fallSpeed={settings.appearance.globalParticleEffectFallSpeed}
             count={settings.appearance.globalParticleEffectCount}
             size={settings.appearance.globalParticleEffectSize}
+            filterIntensity={settings.appearance.globalFilterEffectIntensity}
+            filterSpeed={settings.appearance.globalFilterEffectSpeed}
+            filterRange={settings.appearance.globalFilterEffectRange}
             colorScheme={settings.appearance.colorScheme}
           />
         ) : null}
@@ -15583,6 +15651,14 @@ function SettingsScreen({
       label: themeEditorCopy.globalParticleTypeSakura,
       value: "sakura",
     },
+    {
+      label: themeEditorCopy.globalParticleTypeMist,
+      value: "mist",
+    },
+    {
+      label: themeEditorCopy.globalParticleTypeBloom,
+      value: "bloom",
+    },
   ];
   const globalParticleLayerOptions: UISelectOption[] = [
     {
@@ -15594,6 +15670,31 @@ function SettingsScreen({
       value: "background",
     },
   ];
+  const isGlobalOldTvEffect = settings.appearance.globalParticleEffectType === "mist";
+  const isGlobalBloomEffect = settings.appearance.globalParticleEffectType === "bloom";
+  const isGlobalFilterEffect = isGlobalOldTvEffect || isGlobalBloomEffect;
+  const globalFilterControlLabels = isGlobalBloomEffect
+      ? {
+        intensity: themeEditorCopy.globalBloomIntensityLabel,
+        speed: themeEditorCopy.globalBloomSpeedLabel,
+        range: themeEditorCopy.globalBloomRangeLabel,
+      }
+      : {
+        intensity: themeEditorCopy.globalFilterIntensityLabel,
+        speed: themeEditorCopy.globalFilterSpeedLabel,
+        range: themeEditorCopy.globalFilterRangeLabel,
+      };
+  const globalFilterControlValues = isGlobalBloomEffect
+      ? {
+        intensity: settings.appearance.globalBloomEffectIntensity,
+        speed: settings.appearance.globalBloomEffectSpeed,
+        range: settings.appearance.globalBloomEffectRange,
+      }
+      : {
+        intensity: settings.appearance.globalFilterEffectIntensity,
+        speed: settings.appearance.globalFilterEffectSpeed,
+        range: settings.appearance.globalFilterEffectRange,
+      };
   const immersiveBackgroundModeOptions: UISelectOption[] = [
     {
       label: themeEditorCopy.immersiveBackgroundModePaletteSolid,
@@ -16401,106 +16502,172 @@ function SettingsScreen({
                       }
                     />
                   </div>
-                  <div className="theme-background-select theme-background-select--standalone-label">
-                    <UISelect
-                      label={themeEditorCopy.globalParticleLayerLabel}
-                      value={settings.appearance.globalParticleEffectLayer}
-                      options={globalParticleLayerOptions}
-                      onChange={(value) =>
-                        onUpdate((current) => ({
-                          ...current,
-                          appearance: {
-                            ...current.appearance,
-                            globalParticleEffectLayer: value as AppSettings["appearance"]["globalParticleEffectLayer"],
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                  <UISlider
-                    label={themeEditorCopy.globalParticleOpacityLabel}
-                    value={settings.appearance.globalParticleEffectOpacity}
-                    min={0}
-                    max={100}
-                    step={1}
-                    valueSuffix="%"
-                    onChange={(value) =>
-                      onUpdate((current) => ({
-                        ...current,
-                        appearance: {
-                          ...current.appearance,
-                          globalParticleEffectOpacity: value,
-                        },
-                      }))
-                    }
-                  />
-                  <UISlider
-                    label={themeEditorCopy.globalParticleWindSpeedLabel}
-                    value={settings.appearance.globalParticleEffectWindSpeed}
-                    min={0}
-                    max={100}
-                    step={1}
-                    valueSuffix="%"
-                    onChange={(value) =>
-                      onUpdate((current) => ({
-                        ...current,
-                        appearance: {
-                          ...current.appearance,
-                          globalParticleEffectWindSpeed: value,
-                        },
-                      }))
-                    }
-                  />
-                  <UISlider
-                    label={themeEditorCopy.globalParticleFallSpeedLabel}
-                    value={settings.appearance.globalParticleEffectFallSpeed}
-                    min={0}
-                    max={100}
-                    step={1}
-                    valueSuffix="%"
-                    onChange={(value) =>
-                      onUpdate((current) => ({
-                        ...current,
-                        appearance: {
-                          ...current.appearance,
-                          globalParticleEffectFallSpeed: value,
-                        },
-                      }))
-                    }
-                  />
-                  <UISlider
-                    label={themeEditorCopy.globalParticleCountLabel}
-                    value={settings.appearance.globalParticleEffectCount}
-                    min={8}
-                    max={160}
-                    step={1}
-                    onChange={(value) =>
-                      onUpdate((current) => ({
-                        ...current,
-                        appearance: {
-                          ...current.appearance,
-                          globalParticleEffectCount: value,
-                        },
-                      }))
-                    }
-                  />
-                  <UISlider
-                    label={themeEditorCopy.globalParticleSizeLabel}
-                    value={settings.appearance.globalParticleEffectSize ?? 100}
-                    min={40}
-                    max={220}
-                    step={1}
-                    valueSuffix="%"
-                    onChange={(value) =>
-                      onUpdate((current) => ({
-                        ...current,
-                        appearance: {
-                          ...current.appearance,
-                          globalParticleEffectSize: value,
-                        },
-                      }))
-                    }
-                  />
+                  {!isGlobalFilterEffect ? (
+                    <div className="theme-background-select theme-background-select--standalone-label">
+                      <UISelect
+                        label={themeEditorCopy.globalParticleLayerLabel}
+                        value={settings.appearance.globalParticleEffectLayer}
+                        options={globalParticleLayerOptions}
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              globalParticleEffectLayer: value as AppSettings["appearance"]["globalParticleEffectLayer"],
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  ) : null}
+                  {isGlobalFilterEffect ? (
+                    <>
+                      <UISlider
+                        label={globalFilterControlLabels.intensity}
+                        value={globalFilterControlValues.intensity}
+                        min={0}
+                        max={100}
+                        step={1}
+                        valueSuffix="%"
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              ...(isGlobalBloomEffect
+                                ? { globalBloomEffectIntensity: value }
+                                : { globalFilterEffectIntensity: value }),
+                            },
+                          }))
+                        }
+                      />
+                      <UISlider
+                        label={globalFilterControlLabels.speed}
+                        value={globalFilterControlValues.speed}
+                        min={0}
+                        max={100}
+                        step={1}
+                        valueSuffix="%"
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              ...(isGlobalBloomEffect
+                                ? { globalBloomEffectSpeed: value }
+                                : { globalFilterEffectSpeed: value }),
+                            },
+                          }))
+                        }
+                      />
+                      <UISlider
+                        label={globalFilterControlLabels.range}
+                        value={globalFilterControlValues.range}
+                        min={0}
+                        max={100}
+                        step={1}
+                        valueSuffix="%"
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              ...(isGlobalBloomEffect
+                                ? { globalBloomEffectRange: value }
+                                : { globalFilterEffectRange: value }),
+                            },
+                          }))
+                        }
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <UISlider
+                        label={themeEditorCopy.globalParticleOpacityLabel}
+                        value={settings.appearance.globalParticleEffectOpacity}
+                        min={0}
+                        max={100}
+                        step={1}
+                        valueSuffix="%"
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              globalParticleEffectOpacity: value,
+                            },
+                          }))
+                        }
+                      />
+                      <UISlider
+                        label={themeEditorCopy.globalParticleWindSpeedLabel}
+                        value={settings.appearance.globalParticleEffectWindSpeed}
+                        min={0}
+                        max={100}
+                        step={1}
+                        valueSuffix="%"
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              globalParticleEffectWindSpeed: value,
+                            },
+                          }))
+                        }
+                      />
+                      <UISlider
+                        label={themeEditorCopy.globalParticleFallSpeedLabel}
+                        value={settings.appearance.globalParticleEffectFallSpeed}
+                        min={0}
+                        max={100}
+                        step={1}
+                        valueSuffix="%"
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              globalParticleEffectFallSpeed: value,
+                            },
+                          }))
+                        }
+                      />
+                      <UISlider
+                        label={themeEditorCopy.globalParticleCountLabel}
+                        value={settings.appearance.globalParticleEffectCount}
+                        min={8}
+                        max={160}
+                        step={1}
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              globalParticleEffectCount: value,
+                            },
+                          }))
+                        }
+                      />
+                      <UISlider
+                        label={themeEditorCopy.globalParticleSizeLabel}
+                        value={settings.appearance.globalParticleEffectSize ?? 100}
+                        min={40}
+                        max={220}
+                        step={1}
+                        valueSuffix="%"
+                        onChange={(value) =>
+                          onUpdate((current) => ({
+                            ...current,
+                            appearance: {
+                              ...current.appearance,
+                              globalParticleEffectSize: value,
+                            },
+                          }))
+                        }
+                      />
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -23174,10 +23341,35 @@ export function ImmersivePlayerOverlay({
 
   const immersiveBackgroundModeClass = `immersive-player__fluid--${appearanceSettings.immersiveBackgroundMode}`;
   const showFluidBackground = appearanceSettings.immersiveBackgroundMode === "flow";
+  const globalImmersiveFilterType = appearanceSettings.globalParticleEffectType;
+  const showGlobalAnalogFilter =
+    appearanceSettings.globalParticleEffectEnabled &&
+    (globalImmersiveFilterType === "mist" || globalImmersiveFilterType === "bloom");
   const showGlobalParticleBackgroundLayer =
-    appearanceSettings.globalParticleEffectEnabled && appearanceSettings.globalParticleEffectLayer === "background";
+    appearanceSettings.globalParticleEffectEnabled &&
+    appearanceSettings.globalParticleEffectLayer === "background" &&
+    appearanceSettings.globalParticleEffectType !== "mist" &&
+    appearanceSettings.globalParticleEffectType !== "bloom";
   const showGlobalParticleTopLayer =
-    appearanceSettings.globalParticleEffectEnabled && appearanceSettings.globalParticleEffectLayer === "top";
+    appearanceSettings.globalParticleEffectEnabled &&
+    appearanceSettings.globalParticleEffectLayer === "top" &&
+    appearanceSettings.globalParticleEffectType !== "mist" &&
+    appearanceSettings.globalParticleEffectType !== "bloom";
+  const immersiveAnalogFilterStyle = showGlobalAnalogFilter
+    ? globalImmersiveFilterType === "bloom"
+      ? buildGlobalBloomFilterSurfaceStyle(
+        "immersive-global-bloom-filter",
+        appearanceSettings.globalBloomEffectIntensity,
+        appearanceSettings.globalBloomEffectRange,
+      )
+      : globalImmersiveFilterType === "mist"
+        ? buildGlobalAnalogFilterSurfaceStyle(
+          "immersive-global-tv-filter",
+          appearanceSettings.globalFilterEffectIntensity,
+          appearanceSettings.globalFilterEffectRange,
+        )
+        : undefined
+    : undefined;
   const showAppBackground = appearanceSettings.immersiveBackgroundMode === "app-background";
   const showBackgroundMvMode = appearanceSettings.immersiveBackgroundMode === "background-mv";
   const showBackgroundMvVideo = showBackgroundMvMode && Boolean(immersiveBackgroundVideoSrc);
@@ -23444,6 +23636,29 @@ export function ImmersivePlayerOverlay({
       }
     >
       <div className={["immersive-player__fluid", immersiveBackgroundModeClass].join(" ")} aria-hidden="true">
+        {showGlobalAnalogFilter ? (
+          globalImmersiveFilterType === "bloom" ? (
+            <GlobalBloomFilterOverlay
+              enabled={true}
+              filterId="immersive-global-bloom-filter"
+              intensity={appearanceSettings.globalBloomEffectIntensity}
+              speed={appearanceSettings.globalBloomEffectSpeed}
+              range={appearanceSettings.globalBloomEffectRange}
+              colorScheme={appearanceSettings.colorScheme}
+              className="immersive-player__global-filter-overlay"
+            />
+          ) : (
+            <GlobalAnalogFilterOverlay
+              enabled={true}
+              filterId="immersive-global-tv-filter"
+              intensity={appearanceSettings.globalFilterEffectIntensity}
+              speed={appearanceSettings.globalFilterEffectSpeed}
+              range={appearanceSettings.globalFilterEffectRange}
+              colorScheme={appearanceSettings.colorScheme}
+              className="immersive-player__global-filter-overlay"
+            />
+          )
+        ) : null}
         {showAppBackground ? (
           <div className="immersive-player__app-background-shell">
             {showAppBackgroundVideo ? (
@@ -23515,6 +23730,9 @@ export function ImmersivePlayerOverlay({
           fallSpeed={appearanceSettings.globalParticleEffectFallSpeed}
           count={appearanceSettings.globalParticleEffectCount}
           size={appearanceSettings.globalParticleEffectSize}
+          filterIntensity={appearanceSettings.globalFilterEffectIntensity}
+          filterSpeed={appearanceSettings.globalFilterEffectSpeed}
+          filterRange={appearanceSettings.globalFilterEffectRange}
           colorScheme={appearanceSettings.colorScheme}
           className="immersive-player__global-particles"
         />
@@ -23530,6 +23748,9 @@ export function ImmersivePlayerOverlay({
           fallSpeed={appearanceSettings.globalParticleEffectFallSpeed}
           count={appearanceSettings.globalParticleEffectCount}
           size={appearanceSettings.globalParticleEffectSize}
+          filterIntensity={appearanceSettings.globalFilterEffectIntensity}
+          filterSpeed={appearanceSettings.globalFilterEffectSpeed}
+          filterRange={appearanceSettings.globalFilterEffectRange}
           colorScheme={appearanceSettings.colorScheme}
           className="immersive-player__global-particles"
         />
@@ -23721,6 +23942,7 @@ export function ImmersivePlayerOverlay({
       ) : null}
       <div
         className="immersive-player__content"
+        style={immersiveAnalogFilterStyle}
         onClick={(event) => {
           event.stopPropagation();
         }}
@@ -25581,6 +25803,9 @@ function GlobalParticleCanvas({
   fallSpeed,
   count,
   size,
+  filterIntensity,
+  filterSpeed,
+  filterRange,
   colorScheme,
   className,
 }: {
@@ -25592,6 +25817,9 @@ function GlobalParticleCanvas({
   fallSpeed: number;
   count: number;
   size: number;
+  filterIntensity: number;
+  filterSpeed: number;
+  filterRange: number;
   colorScheme: AppSettings["appearance"]["colorScheme"];
   className?: string;
 }) {
@@ -25603,10 +25831,18 @@ function GlobalParticleCanvas({
       return;
     }
 
-    const context = canvas.getContext("2d", { alpha: true });
+    const context = canvas.getContext("webgl", {
+      alpha: true,
+      antialias: true,
+      depth: false,
+      stencil: false,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
+    });
     if (!context) {
       return;
     }
+    const gl = context;
 
     type Particle = {
       x: number;
@@ -25625,7 +25861,7 @@ function GlobalParticleCanvas({
     let height = 0;
     let frameId = 0;
     let lastTime = 0;
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
     const isDark = colorScheme === "dark";
     const baseParticleCount =
       effectType === "lines" ? 42 : effectType === "dots" ? 64 : effectType === "snow" ? 52 : 34;
@@ -25634,6 +25870,318 @@ function GlobalParticleCanvas({
     const sizeScale = clampNumber(size / 100, 0.4, 2.2);
     const windScale = clampNumber(windSpeed / 100, 0, 2.5);
     const fallScale = clampNumber(fallSpeed / 100, 0, 2.5);
+    const isMist = effectType === "mist";
+    const effectMode = effectType === "snow" ? 1 : effectType === "sakura" ? 2 : 0;
+
+    const compileShader = (shaderType: number, source: string) => {
+      const shader = gl.createShader(shaderType);
+      if (!shader) {
+        return null;
+      }
+
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        gl.deleteShader(shader);
+        return null;
+      }
+
+      return shader;
+    };
+
+    const createProgram = (vertexSource: string, fragmentSource: string) => {
+      const vertexShader = compileShader(gl.VERTEX_SHADER, vertexSource);
+      const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+      if (!vertexShader || !fragmentShader) {
+        if (vertexShader) {
+          gl.deleteShader(vertexShader);
+        }
+        if (fragmentShader) {
+          gl.deleteShader(fragmentShader);
+        }
+        return null;
+      }
+
+      const program = gl.createProgram();
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        return null;
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        gl.deleteProgram(program);
+        return null;
+      }
+
+      return program;
+    };
+
+    const particleProgram = createProgram(
+      `
+        attribute vec2 aPosition;
+        attribute float aSize;
+        attribute float aAlpha;
+        attribute float aRotation;
+
+        uniform vec2 uResolution;
+        uniform float uPixelRatio;
+
+        varying float vAlpha;
+        varying float vRotation;
+        varying float vPointSize;
+
+        void main() {
+          vec2 zeroToOne = aPosition / uResolution;
+          vec2 clip = (zeroToOne * 2.0) - 1.0;
+          gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0);
+          gl_PointSize = max(1.0, aSize * uPixelRatio * 2.0);
+          vAlpha = aAlpha;
+          vRotation = aRotation;
+          vPointSize = gl_PointSize;
+        }
+      `,
+      `
+        precision highp float;
+
+        uniform vec3 uColor;
+        uniform float uEffectMode;
+
+        varying float vAlpha;
+        varying float vRotation;
+        varying float vPointSize;
+
+        mat2 rotate2d(float angle) {
+          float s = sin(angle);
+          float c = cos(angle);
+          return mat2(c, -s, s, c);
+        }
+
+        void main() {
+          vec2 uv = (gl_PointCoord * 2.0) - 1.0;
+          vec2 rotated = rotate2d(vRotation) * uv;
+          float alphaMask = 0.0;
+          float edge = max(0.008, 1.35 / max(vPointSize, 1.0));
+
+          if (uEffectMode < 0.5) {
+            float radius = length(uv);
+            alphaMask = 1.0 - smoothstep(1.0 - edge, 1.0, radius);
+          } else if (uEffectMode < 1.5) {
+            vec2 absUv = abs(rotated);
+            float spine = max(
+              (1.0 - smoothstep(0.12 - edge, 0.12 + edge, absUv.x)) * (1.0 - smoothstep(1.0 - edge, 1.0, absUv.y)),
+              (1.0 - smoothstep(0.12 - edge, 0.12 + edge, absUv.y)) * (1.0 - smoothstep(1.0 - edge, 1.0, absUv.x))
+            );
+            vec2 diagA = rotate2d(0.78539816339) * rotated;
+            vec2 diagB = rotate2d(-0.78539816339) * rotated;
+            float branches = max(
+              (1.0 - smoothstep(0.09 - edge, 0.09 + edge, abs(diagA.x))) * (1.0 - smoothstep(1.0 - edge, 1.0, abs(diagA.y))),
+              (1.0 - smoothstep(0.09 - edge, 0.09 + edge, abs(diagB.x))) * (1.0 - smoothstep(1.0 - edge, 1.0, abs(diagB.y)))
+            );
+            alphaMask = max(spine, branches * 0.72);
+          } else {
+            vec2 sakuraUv = rotated * vec2(1.06, 1.06);
+            float angle = atan(sakuraUv.y, sakuraUv.x);
+            float radius = length(sakuraUv);
+            float petalRadius = 0.62 + (0.18 * cos(5.0 * angle)) - (0.07 * cos(10.0 * angle));
+            float petal = 1.0 - smoothstep(petalRadius - (edge * 1.4), petalRadius + (edge * 1.4), radius);
+            float center = 1.0 - smoothstep(0.16, 0.36, radius);
+            alphaMask = max(petal, center * 0.82);
+          }
+
+          float finalAlpha = clamp(alphaMask * vAlpha, 0.0, 1.0);
+          if (finalAlpha <= 0.001) {
+            discard;
+          }
+
+          gl_FragColor = vec4(uColor, finalAlpha);
+        }
+      `,
+    );
+
+    const lineProgram = createProgram(
+      `
+        attribute vec2 aPosition;
+        attribute float aAlpha;
+
+        uniform vec2 uResolution;
+
+        varying float vAlpha;
+
+        void main() {
+          vec2 zeroToOne = aPosition / uResolution;
+          vec2 clip = (zeroToOne * 2.0) - 1.0;
+          gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0);
+          vAlpha = aAlpha;
+        }
+      `,
+      `
+        precision highp float;
+
+        uniform vec3 uColor;
+
+        varying float vAlpha;
+
+        void main() {
+          gl_FragColor = vec4(uColor, vAlpha);
+        }
+      `,
+    );
+
+    const mistProgram = createProgram(
+      `
+        attribute vec2 aClipPosition;
+
+        varying vec2 vUv;
+
+        void main() {
+          vUv = (aClipPosition * 0.5) + 0.5;
+          gl_Position = vec4(aClipPosition, 0.0, 1.0);
+        }
+      `,
+      `
+        precision highp float;
+
+        uniform vec2 uResolution;
+        uniform float uTime;
+        uniform float uIntensity;
+        uniform float uSpeed;
+        uniform float uRange;
+        uniform vec3 uTintA;
+        uniform vec3 uTintB;
+
+        varying vec2 vUv;
+
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }
+
+        float noise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
+            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+            u.y
+          );
+        }
+
+        float fbm(vec2 p) {
+          float value = 0.0;
+          float amplitude = 0.5;
+          for (int octave = 0; octave < 5; octave += 1) {
+            value += amplitude * noise(p);
+            p = (p * 2.02) + vec2(17.1, 9.2);
+            amplitude *= 0.52;
+          }
+          return value;
+        }
+
+        void main() {
+          vec2 uv = vUv;
+          vec2 centered = (uv - 0.5) * 2.0;
+          float aspect = uResolution.x / max(uResolution.y, 1.0);
+          centered.x *= aspect;
+          float radius = length(centered);
+          float edgeStart = mix(0.72, 0.28, uRange);
+          float edgeMask = smoothstep(edgeStart, 1.05, radius);
+          float innerBand = smoothstep(edgeStart - 0.06, edgeStart + 0.08, radius);
+          float outerBand = smoothstep(edgeStart + 0.1, 1.06, radius);
+          float edgeBand = clamp(innerBand - outerBand, 0.0, 1.0);
+          float t = uTime * mix(0.45, 3.2, uSpeed);
+          float wobble = sin((centered.y * 18.0) + (t * 5.6)) * mix(0.01, 0.045, uIntensity);
+          float bentRadius = length(vec2(centered.x + (edgeMask * wobble), centered.y));
+          float distortedEdge = smoothstep(edgeStart, 1.03, bentRadius);
+          float scan = sin((uv.y * mix(140.0, 340.0, uSpeed)) + (t * 28.0)) * 0.5 + 0.5;
+          float shimmer = sin((uv.y * 240.0) + (t * 42.0)) * 0.5 + 0.5;
+          float grain = fbm((centered * vec2(10.0, 20.0)) + vec2(t * 3.1, -t * 1.9));
+          float staticPulse = step(0.76 - (uIntensity * 0.22), grain) * edgeBand;
+          float chroma = smoothstep(edgeStart + 0.02, 1.08, bentRadius + (wobble * 0.6));
+
+          vec3 tint = mix(uTintA, uTintB, clamp((grain * 0.68) + (scan * 0.32), 0.0, 1.0));
+          vec3 color = mix(vec3(0.0), tint, edgeBand * (0.24 + (uIntensity * 0.72)));
+          color *= 0.82 + (scan * 0.22);
+          color.r += chroma * 0.32 * uIntensity;
+          color.b += (1.0 - chroma) * 0.14 * uIntensity;
+          color += staticPulse * vec3(0.18, 0.2, 0.24);
+
+          float vignette = distortedEdge * mix(0.26, 0.82, uIntensity);
+          float scanOverlay = edgeBand * (0.08 + (shimmer * 0.16) + (uIntensity * 0.1));
+          float alpha = clamp(vignette + scanOverlay + (staticPulse * 0.18), 0.0, 0.96);
+
+          if (alpha <= 0.002) {
+            discard;
+          }
+
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+    );
+
+    if (!particleProgram || !lineProgram || !mistProgram) {
+      if (particleProgram) {
+        gl.deleteProgram(particleProgram);
+      }
+      if (lineProgram) {
+        gl.deleteProgram(lineProgram);
+      }
+      if (mistProgram) {
+        gl.deleteProgram(mistProgram);
+      }
+      return;
+    }
+
+    const particlePositionLocation = gl.getAttribLocation(particleProgram, "aPosition");
+    const particleSizeLocation = gl.getAttribLocation(particleProgram, "aSize");
+    const particleAlphaLocation = gl.getAttribLocation(particleProgram, "aAlpha");
+    const particleRotationLocation = gl.getAttribLocation(particleProgram, "aRotation");
+    const particleResolutionLocation = gl.getUniformLocation(particleProgram, "uResolution");
+    const particlePixelRatioLocation = gl.getUniformLocation(particleProgram, "uPixelRatio");
+    const particleColorLocation = gl.getUniformLocation(particleProgram, "uColor");
+    const particleEffectModeLocation = gl.getUniformLocation(particleProgram, "uEffectMode");
+
+    const linePositionLocation = gl.getAttribLocation(lineProgram, "aPosition");
+    const lineAlphaLocation = gl.getAttribLocation(lineProgram, "aAlpha");
+    const lineResolutionLocation = gl.getUniformLocation(lineProgram, "uResolution");
+    const lineColorLocation = gl.getUniformLocation(lineProgram, "uColor");
+
+    const mistPositionLocation = gl.getAttribLocation(mistProgram, "aClipPosition");
+    const mistResolutionLocation = gl.getUniformLocation(mistProgram, "uResolution");
+    const mistTimeLocation = gl.getUniformLocation(mistProgram, "uTime");
+    const mistIntensityLocation = gl.getUniformLocation(mistProgram, "uIntensity");
+    const mistSpeedLocation = gl.getUniformLocation(mistProgram, "uSpeed");
+    const mistRangeLocation = gl.getUniformLocation(mistProgram, "uRange");
+    const mistTintALocation = gl.getUniformLocation(mistProgram, "uTintA");
+    const mistTintBLocation = gl.getUniformLocation(mistProgram, "uTintB");
+
+    const particlePositionBuffer = gl.createBuffer();
+    const particleSizeBuffer = gl.createBuffer();
+    const particleAlphaBuffer = gl.createBuffer();
+    const particleRotationBuffer = gl.createBuffer();
+    const linePositionBuffer = gl.createBuffer();
+    const lineAlphaBuffer = gl.createBuffer();
+    const mistPositionBuffer = gl.createBuffer();
+
+    if (
+      !particlePositionBuffer ||
+      !particleSizeBuffer ||
+      !particleAlphaBuffer ||
+      !particleRotationBuffer ||
+      !linePositionBuffer ||
+      !lineAlphaBuffer ||
+      !mistPositionBuffer
+    ) {
+      gl.deleteProgram(particleProgram);
+      gl.deleteProgram(lineProgram);
+      gl.deleteProgram(mistProgram);
+      return;
+    }
 
     const resetParticle = (particle: Particle, respawnAtTop = false) => {
       particle.x = Math.random() * Math.max(width, 1);
@@ -25672,11 +26220,9 @@ function GlobalParticleCanvas({
       const rect = canvas.getBoundingClientRect();
       width = rect.width;
       height = rect.height;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      context.imageSmoothingEnabled = true;
-      context.imageSmoothingQuality = "high";
       particles.length = 0;
       for (let index = 0; index < particleCount; index += 1) {
         const particle = {
@@ -25695,96 +26241,91 @@ function GlobalParticleCanvas({
       }
     };
 
-    const strokeColor = isDark ? "rgba(232, 240, 252, 0.22)" : "rgba(52, 76, 120, 0.14)";
-    const fillColor = isDark ? "rgba(240, 246, 255, 0.78)" : "rgba(72, 102, 146, 0.48)";
-    const petalColor = isDark ? "rgba(255, 216, 232, 0.72)" : "rgba(245, 173, 202, 0.62)";
-    const snowStrokeColor = isDark ? "rgba(255, 255, 255, 0.88)" : "rgba(236, 244, 255, 0.92)";
+    const strokeColor = isDark ? [232 / 255, 240 / 255, 252 / 255] : [52 / 255, 76 / 255, 120 / 255];
+    const fillColor =
+      effectType === "sakura"
+        ? (isDark ? [1, 216 / 255, 232 / 255] : [245 / 255, 173 / 255, 202 / 255])
+        : effectType === "snow"
+          ? (isDark ? [1, 1, 1] : [236 / 255, 244 / 255, 1])
+          : (isDark ? [240 / 255, 246 / 255, 1] : [72 / 255, 102 / 255, 146 / 255]);
+    const mistTintA = isDark ? [0.74, 0.83, 0.98] : [0.32, 0.48, 0.78];
+    const mistTintB = isDark ? [0.98, 0.56, 0.62] : [0.82, 0.9, 1];
+    const filterIntensityScale = clampNumber(filterIntensity / 100, 0.02, 1);
+    const filterSpeedScale = clampNumber(filterSpeed / 100, 0, 1);
+    const filterRangeScale = clampNumber(filterRange / 100, 0, 1);
 
-    const drawSnowflake = (particle: Particle) => {
-      context.save();
-      context.translate(particle.x, particle.y);
-      context.rotate(particle.rotation);
-      context.strokeStyle = snowStrokeColor;
-      context.lineWidth = Math.max(0.8, particle.size * 0.16);
-      context.lineCap = "round";
-      context.shadowColor = isDark ? "rgba(255,255,255,0.18)" : "rgba(120,140,180,0.12)";
-      context.shadowBlur = 6;
+    const particlePositions = new Float32Array(particleCount * 2);
+    const particleSizes = new Float32Array(particleCount);
+    const particleAlphas = new Float32Array(particleCount);
+    const particleRotations = new Float32Array(particleCount);
+    const maxLineSegments = particleCount * particleCount;
+    const linePositions = new Float32Array(maxLineSegments * 4);
+    const lineAlphas = new Float32Array(maxLineSegments * 2);
+    const mistQuad = new Float32Array([
+      -1, -1,
+      1, -1,
+      -1, 1,
+      1, 1,
+    ]);
 
-      for (let branch = 0; branch < 6; branch += 1) {
-        const angle = (Math.PI / 3) * branch;
-        const armLength = particle.size;
-        const armX = Math.cos(angle) * armLength;
-        const armY = Math.sin(angle) * armLength;
-        context.beginPath();
-        context.moveTo(0, 0);
-        context.lineTo(armX, armY);
-        context.stroke();
+    gl.bindBuffer(gl.ARRAY_BUFFER, mistPositionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, mistQuad, gl.STATIC_DRAW);
 
-        const branchBaseX = Math.cos(angle) * armLength * 0.54;
-        const branchBaseY = Math.sin(angle) * armLength * 0.54;
-        const leftAngle = angle - 0.62;
-        const rightAngle = angle + 0.62;
-        const branchLength = armLength * 0.28;
-
-        context.beginPath();
-        context.moveTo(branchBaseX, branchBaseY);
-        context.lineTo(
-          branchBaseX + (Math.cos(leftAngle) * branchLength),
-          branchBaseY + (Math.sin(leftAngle) * branchLength),
-        );
-        context.moveTo(branchBaseX, branchBaseY);
-        context.lineTo(
-          branchBaseX + (Math.cos(rightAngle) * branchLength),
-          branchBaseY + (Math.sin(rightAngle) * branchLength),
-        );
-        context.stroke();
-      }
-
-      context.restore();
+    const disableAllEffectAttributes = () => {
+      gl.disableVertexAttribArray(particlePositionLocation);
+      gl.disableVertexAttribArray(particleSizeLocation);
+      gl.disableVertexAttribArray(particleAlphaLocation);
+      gl.disableVertexAttribArray(particleRotationLocation);
+      gl.disableVertexAttribArray(linePositionLocation);
+      gl.disableVertexAttribArray(lineAlphaLocation);
+      gl.disableVertexAttribArray(mistPositionLocation);
     };
 
-    const drawParticle = (particle: Particle) => {
-      context.save();
-      context.globalAlpha = particle.alpha;
-
-      if (effectType === "lines") {
-        context.fillStyle = fillColor;
-        context.beginPath();
-        context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
-        context.fill();
-      } else if (effectType === "dots") {
-        context.fillStyle = fillColor;
-        context.beginPath();
-        context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
-        context.fill();
-      } else if (effectType === "snow") {
-        drawSnowflake(particle);
-      } else {
-        context.translate(particle.x, particle.y);
-        context.rotate(particle.rotation);
-        context.fillStyle = petalColor;
-        context.beginPath();
-        context.moveTo(0, -particle.size * 0.72);
-        context.bezierCurveTo(
-          particle.size * 0.68,
-          -particle.size * 0.96,
-          particle.size * 0.96,
-          particle.size * 0.18,
-          0,
-          particle.size,
-        );
-        context.bezierCurveTo(
-          -particle.size * 0.94,
-          particle.size * 0.12,
-          -particle.size * 0.62,
-          -particle.size * 0.94,
-          0,
-          -particle.size * 0.72,
-        );
-        context.fill();
+    const uploadParticleData = () => {
+      for (let index = 0; index < particles.length; index += 1) {
+        const particle = particles[index];
+        particlePositions[(index * 2)] = particle.x;
+        particlePositions[(index * 2) + 1] = particle.y;
+        particleSizes[index] = particle.size;
+        particleAlphas[index] = particle.alpha;
+        particleRotations[index] = particle.rotation;
       }
 
-      context.restore();
+      gl.bindBuffer(gl.ARRAY_BUFFER, particlePositionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, particlePositions, gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, particleSizeBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, particleSizes, gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, particleAlphaBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, particleAlphas, gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, particleRotationBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, particleRotations, gl.DYNAMIC_DRAW);
+    };
+
+    const drawParticles = () => {
+      disableAllEffectAttributes();
+      gl.useProgram(particleProgram);
+      gl.uniform2f(particleResolutionLocation, width, height);
+      gl.uniform1f(particlePixelRatioLocation, dpr);
+      gl.uniform3f(particleColorLocation, fillColor[0], fillColor[1], fillColor[2]);
+      gl.uniform1f(particleEffectModeLocation, effectMode);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, particlePositionBuffer);
+      gl.enableVertexAttribArray(particlePositionLocation);
+      gl.vertexAttribPointer(particlePositionLocation, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, particleSizeBuffer);
+      gl.enableVertexAttribArray(particleSizeLocation);
+      gl.vertexAttribPointer(particleSizeLocation, 1, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, particleAlphaBuffer);
+      gl.enableVertexAttribArray(particleAlphaLocation);
+      gl.vertexAttribPointer(particleAlphaLocation, 1, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, particleRotationBuffer);
+      gl.enableVertexAttribArray(particleRotationLocation);
+      gl.vertexAttribPointer(particleRotationLocation, 1, gl.FLOAT, false, 0, 0);
+
+      gl.drawArrays(gl.POINTS, 0, particles.length);
     };
 
     const drawConnections = () => {
@@ -25792,6 +26333,7 @@ function GlobalParticleCanvas({
         return;
       }
 
+      let segmentCount = 0;
       for (let index = 0; index < particles.length; index += 1) {
         for (let nextIndex = index + 1; nextIndex < particles.length; nextIndex += 1) {
           const from = particles[index];
@@ -25803,23 +26345,72 @@ function GlobalParticleCanvas({
             continue;
           }
 
-          context.save();
-          context.globalAlpha = (1 - (distance / 160)) * 0.22 * opacityScale;
-          context.strokeStyle = strokeColor;
-          context.lineWidth = 0.8;
-          context.beginPath();
-          context.moveTo(from.x, from.y);
-          context.lineTo(to.x, to.y);
-          context.stroke();
-          context.restore();
+          const alpha = (1 - (distance / 160)) * 0.22 * opacityScale;
+          const offset = segmentCount * 4;
+          const alphaOffset = segmentCount * 2;
+          linePositions[offset] = from.x;
+          linePositions[offset + 1] = from.y;
+          linePositions[offset + 2] = to.x;
+          linePositions[offset + 3] = to.y;
+          lineAlphas[alphaOffset] = alpha;
+          lineAlphas[alphaOffset + 1] = alpha;
+          segmentCount += 1;
         }
       }
+
+      if (segmentCount === 0) {
+        return;
+      }
+
+      disableAllEffectAttributes();
+      gl.useProgram(lineProgram);
+      gl.uniform2f(lineResolutionLocation, width, height);
+      gl.uniform3f(lineColorLocation, strokeColor[0], strokeColor[1], strokeColor[2]);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, linePositions.subarray(0, segmentCount * 4), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(linePositionLocation);
+      gl.vertexAttribPointer(linePositionLocation, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, lineAlphaBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, lineAlphas.subarray(0, segmentCount * 2), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(lineAlphaLocation);
+      gl.vertexAttribPointer(lineAlphaLocation, 1, gl.FLOAT, false, 0, 0);
+
+      gl.lineWidth(1);
+      gl.drawArrays(gl.LINES, 0, segmentCount * 2);
+    };
+
+    const drawMist = (time: number) => {
+      disableAllEffectAttributes();
+      gl.useProgram(mistProgram);
+      gl.uniform2f(mistResolutionLocation, width * dpr, height * dpr);
+      gl.uniform1f(mistTimeLocation, time * 0.001);
+      gl.uniform1f(mistIntensityLocation, filterIntensityScale);
+      gl.uniform1f(mistSpeedLocation, filterSpeedScale);
+      gl.uniform1f(mistRangeLocation, filterRangeScale);
+      gl.uniform3f(mistTintALocation, mistTintA[0], mistTintA[1], mistTintA[2]);
+      gl.uniform3f(mistTintBLocation, mistTintB[0], mistTintB[1], mistTintB[2]);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, mistPositionBuffer);
+      gl.enableVertexAttribArray(mistPositionLocation);
+      gl.vertexAttribPointer(mistPositionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
 
     const render = (time: number) => {
       const delta = Math.min(32, lastTime ? time - lastTime : 16.67);
       lastTime = time;
-      context.clearRect(0, 0, width, height);
+      gl.viewport(0, 0, Math.max(1, Math.round(width * dpr)), Math.max(1, Math.round(height * dpr)));
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      if (isMist) {
+        drawMist(time);
+        frameId = window.requestAnimationFrame(render);
+        return;
+      }
+
       const windVelocity = 0.08 + (windScale * 1.18);
       const fallVelocity = 0.06 + (fallScale * 1.12);
       const rotationVelocity = 0.24 + ((windScale + fallScale) * 0.48);
@@ -25838,10 +26429,17 @@ function GlobalParticleCanvas({
         }
       });
 
+      uploadParticleData();
       drawConnections();
-      particles.forEach(drawParticle);
+      drawParticles();
+
       frameId = window.requestAnimationFrame(render);
     };
+
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     resize();
     frameId = window.requestAnimationFrame(render);
@@ -25850,6 +26448,16 @@ function GlobalParticleCanvas({
     return () => {
       window.cancelAnimationFrame(frameId);
       window.removeEventListener("resize", resize);
+      gl.deleteBuffer(particlePositionBuffer);
+      gl.deleteBuffer(particleSizeBuffer);
+      gl.deleteBuffer(particleAlphaBuffer);
+      gl.deleteBuffer(particleRotationBuffer);
+      gl.deleteBuffer(linePositionBuffer);
+      gl.deleteBuffer(lineAlphaBuffer);
+      gl.deleteBuffer(mistPositionBuffer);
+      gl.deleteProgram(particleProgram);
+      gl.deleteProgram(lineProgram);
+      gl.deleteProgram(mistProgram);
     };
   }, [colorScheme, count, effectType, enabled, fallSpeed, opacity, size, windSpeed]);
 
@@ -25863,6 +26471,239 @@ function GlobalParticleCanvas({
       ].filter(Boolean).join(" ")}
       aria-hidden="true"
     />
+  );
+}
+
+function buildGlobalAnalogFilterSurfaceStyle(
+  filterId: string,
+  intensity: number,
+  range: number,
+): CSSProperties {
+  const intensityScale = clampNumber(intensity / 100, 0, 1);
+  const rangeScale = clampNumber(range / 100, 0, 1);
+  const zoom = 1 + (intensityScale * 0.006) + (rangeScale * 0.01);
+
+  return {
+    filter: `url(#${filterId})`,
+    transform: `scale(${zoom.toFixed(4)})`,
+    transformOrigin: "center",
+  };
+}
+
+function buildGlobalBloomFilterSurfaceStyle(
+  filterId: string,
+  intensity: number,
+  range: number,
+): CSSProperties | undefined {
+  const intensityScale = clampNumber(intensity / 100, 0, 1);
+  const rangeScale = clampNumber(range / 100, 0, 1);
+  const easedIntensity = intensityScale * intensityScale;
+  const easedRange = rangeScale * rangeScale;
+  const glowLevel = Math.max(easedIntensity, easedRange);
+
+  if (glowLevel <= 0.0001) {
+    return undefined;
+  }
+
+  return {
+    filter: `url(#${filterId}) saturate(${(1 + (easedIntensity * 0.08)).toFixed(3)}) brightness(${(1 + (easedRange * 0.025)).toFixed(3)})`,
+    transform: "translateZ(0)",
+    transformOrigin: "center",
+  };
+}
+
+function GlobalAnalogFilterOverlay({
+  enabled,
+  filterId,
+  intensity,
+  speed,
+  range,
+  colorScheme,
+  className,
+}: {
+  enabled: boolean;
+  filterId: string;
+  intensity: number;
+  speed: number;
+  range: number;
+  colorScheme: AppSettings["appearance"]["colorScheme"];
+  className?: string;
+}) {
+  const turbulenceRef = useRef<SVGFETurbulenceElement | null>(null);
+  const displacementRef = useRef<SVGFEDisplacementMapElement | null>(null);
+  const intensityScale = clampNumber(intensity / 100, 0, 1);
+  const speedScale = clampNumber(speed / 100, 0, 1);
+  const rangeScale = clampNumber(range / 100, 0, 1);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const turbulenceNode = turbulenceRef.current;
+    const displacementNode = displacementRef.current;
+    if (!turbulenceNode || !displacementNode) {
+      return;
+    }
+
+    let frameId = 0;
+    const animate = (time: number) => {
+      const elapsed = time * 0.001;
+      const motion = elapsed * (0.28 + (speedScale * 1.9));
+      const freqX = 0.0012 + (rangeScale * 0.0015) + (Math.sin(motion * 1.2) * 0.00035 * intensityScale);
+      const freqY = 0.008 + (rangeScale * 0.018) + (Math.cos(motion * 0.9) * 0.0022 * intensityScale);
+      const scale = (2 + (intensityScale * 13) + (rangeScale * 10)) * (0.84 + ((Math.sin(motion * 2.4) * 0.5 + 0.5) * 0.34));
+
+      turbulenceNode.setAttribute("baseFrequency", `${freqX.toFixed(4)} ${freqY.toFixed(4)}`);
+      displacementNode.setAttribute("scale", scale.toFixed(2));
+      frameId = window.requestAnimationFrame(animate);
+    };
+
+    frameId = window.requestAnimationFrame(animate);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [enabled, intensityScale, rangeScale, speedScale]);
+
+  const overlayStyle = {
+    "--global-tv-vignette-stop": `${(78 - (rangeScale * 36)).toFixed(1)}%`,
+    "--global-tv-vignette-alpha": (0.24 + (intensityScale * 0.56)).toFixed(3),
+    "--global-tv-edge-alpha": (0.36 + (intensityScale * 0.4)).toFixed(3),
+    "--global-tv-scan-alpha": (0.035 + (intensityScale * 0.08)).toFixed(3),
+    "--global-tv-scan-size": `${Math.max(2, 5 - (speedScale * 2.2)).toFixed(2)}px`,
+    "--global-tv-glow-alpha": (colorScheme === "dark" ? 0.12 : 0.08 + (intensityScale * 0.04)).toFixed(3),
+    "--global-tv-shift-distance": `${(2 + (intensityScale * 6)).toFixed(2)}px`,
+    "--global-tv-roll-duration": `${(3600 - (speedScale * 2600)).toFixed(0)}ms`,
+  } as CSSProperties;
+
+  return (
+    <>
+      <svg
+        width="0"
+        height="0"
+        aria-hidden="true"
+        focusable="false"
+        style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", pointerEvents: "none" }}
+      >
+        <filter id={filterId} x="-8%" y="-8%" width="116%" height="116%" colorInterpolationFilters="sRGB">
+          <feTurbulence
+            ref={turbulenceRef}
+            type="fractalNoise"
+            baseFrequency="0.0012 0.0100"
+            numOctaves={1}
+            seed={7}
+            result="noise"
+          />
+          <feDisplacementMap
+            ref={displacementRef}
+            in="SourceGraphic"
+            in2="noise"
+            scale={0}
+            xChannelSelector="R"
+            yChannelSelector="G"
+          />
+        </filter>
+      </svg>
+      <div
+        className={["global-render-filter-overlay", className ?? ""].filter(Boolean).join(" ")}
+        style={overlayStyle}
+        aria-hidden="true"
+      />
+    </>
+  );
+}
+
+function GlobalBloomFilterOverlay({
+  enabled,
+  filterId,
+  intensity,
+  speed,
+  range,
+  colorScheme,
+  className,
+}: {
+  enabled: boolean;
+  filterId: string;
+  intensity: number;
+  speed: number;
+  range: number;
+  colorScheme: AppSettings["appearance"]["colorScheme"];
+  className?: string;
+}) {
+  const blurRef = useRef<SVGFEGaussianBlurElement | null>(null);
+  const intensityScale = clampNumber(intensity / 100, 0, 1);
+  const speedScale = clampNumber(speed / 100, 0, 1);
+  const rangeScale = clampNumber(range / 100, 0, 1);
+  const easedIntensity = intensityScale * intensityScale;
+  const easedRange = rangeScale * rangeScale;
+  const glowLevel = Math.max(easedIntensity, easedRange);
+
+  useEffect(() => {
+    if (!enabled || glowLevel <= 0.0001) {
+      return;
+    }
+
+    const blurNode = blurRef.current;
+    if (!blurNode) {
+      return;
+    }
+
+    let frameId = 0;
+    const animate = (time: number) => {
+      const t = time * 0.001;
+      const pulse = (Math.sin(t * (0.35 + (speedScale * 1.8))) * 0.5) + 0.5;
+      const deviation = (0.05 + (easedRange * 1.6) + (easedIntensity * 1.4)) * (0.94 + (pulse * 0.12));
+      blurNode.setAttribute("stdDeviation", deviation.toFixed(2));
+      frameId = window.requestAnimationFrame(animate);
+    };
+
+    frameId = window.requestAnimationFrame(animate);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [easedIntensity, easedRange, enabled, glowLevel, speedScale]);
+
+  const overlayStyle = {
+    "--global-bloom-opacity": (0.006 + (easedIntensity * 0.075)).toFixed(3),
+    "--global-bloom-halo-opacity": (0.01 + (easedRange * 0.06)).toFixed(3),
+    "--global-bloom-pulse-duration": `${(5200 - (speedScale * 3200)).toFixed(0)}ms`,
+    "--global-bloom-tint": colorScheme === "dark" ? "255, 244, 214" : "255, 248, 236",
+  } as CSSProperties;
+
+  if (glowLevel <= 0.0001) {
+    return null;
+  }
+
+  return (
+    <>
+      <svg
+        width="0"
+        height="0"
+        aria-hidden="true"
+        focusable="false"
+        style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", pointerEvents: "none" }}
+      >
+        <filter id={filterId} x="-12%" y="-12%" width="124%" height="124%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur ref={blurRef} in="SourceGraphic" stdDeviation="0" result="bloomBlur" />
+          <feColorMatrix
+            in="bloomBlur"
+            type="matrix"
+            values="
+              1.12 0    0    0 0
+              0    1.12 0    0 0
+              0    0    1.12 0 0
+              0    0    0    1 0"
+            result="bloomBoost"
+          />
+          <feBlend in="SourceGraphic" in2="bloomBoost" mode="screen" />
+        </filter>
+      </svg>
+      <div
+        className={["global-render-bloom-overlay", className ?? ""].filter(Boolean).join(" ")}
+        style={overlayStyle}
+        aria-hidden="true"
+      />
+    </>
   );
 }
 

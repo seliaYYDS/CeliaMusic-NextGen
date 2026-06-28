@@ -116,6 +116,12 @@ pub struct AppearanceSettings {
     pub global_particle_effect_fall_speed: u8,
     pub global_particle_effect_count: u8,
     pub global_particle_effect_size: u8,
+    pub global_filter_effect_intensity: u8,
+    pub global_filter_effect_speed: u8,
+    pub global_filter_effect_range: u8,
+    pub global_bloom_effect_intensity: u8,
+    pub global_bloom_effect_speed: u8,
+    pub global_bloom_effect_range: u8,
     pub immersive_background_mode: String,
     pub immersive_background_animated: bool,
     pub immersive_background_resolution: u8,
@@ -163,6 +169,12 @@ impl Default for AppearanceSettings {
             global_particle_effect_fall_speed: 66,
             global_particle_effect_count: 52,
             global_particle_effect_size: 100,
+            global_filter_effect_intensity: 72,
+            global_filter_effect_speed: 54,
+            global_filter_effect_range: 62,
+            global_bloom_effect_intensity: 32,
+            global_bloom_effect_speed: 24,
+            global_bloom_effect_range: 36,
             immersive_background_mode: "flow".to_string(),
             immersive_background_animated: true,
             immersive_background_resolution: 72,
@@ -614,7 +626,7 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     );
     settings.appearance.global_particle_effect_type = sanitize_limited_value(
         settings.appearance.global_particle_effect_type,
-        &["lines", "dots", "snow", "sakura"],
+        &["lines", "dots", "snow", "sakura", "mist", "bloom"],
         "lines",
     );
     settings.appearance.global_particle_effect_layer = sanitize_limited_value(
@@ -632,6 +644,18 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         settings.appearance.global_particle_effect_count.clamp(8, 160);
     settings.appearance.global_particle_effect_size =
         settings.appearance.global_particle_effect_size.clamp(40, 220);
+    settings.appearance.global_filter_effect_intensity =
+        settings.appearance.global_filter_effect_intensity.clamp(0, 100);
+    settings.appearance.global_filter_effect_speed =
+        settings.appearance.global_filter_effect_speed.clamp(0, 100);
+    settings.appearance.global_filter_effect_range =
+        settings.appearance.global_filter_effect_range.clamp(0, 100);
+    settings.appearance.global_bloom_effect_intensity =
+        settings.appearance.global_bloom_effect_intensity.clamp(0, 100);
+    settings.appearance.global_bloom_effect_speed =
+        settings.appearance.global_bloom_effect_speed.clamp(0, 100);
+    settings.appearance.global_bloom_effect_range =
+        settings.appearance.global_bloom_effect_range.clamp(0, 100);
     settings.appearance.immersive_background_mode = sanitize_limited_value(
         settings.appearance.immersive_background_mode,
         &[
