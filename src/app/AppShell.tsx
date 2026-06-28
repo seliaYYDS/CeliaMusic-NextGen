@@ -20,6 +20,7 @@ import {
   register as registerGlobalShortcut,
   unregisterAll as unregisterAllGlobalShortcuts,
 } from "@tauri-apps/plugin-global-shortcut";
+import { Kawarp } from "@kawarp/core";
 
 import {
   UIButton,
@@ -1685,15 +1686,17 @@ function getThemeEditorCopy(locale: string) {
       immersiveBackgroundModeCoverBlur: "Blurred Artwork",
       immersiveBackgroundModeFlow: "Fluid",
       immersiveBackgroundAnimatedLabel: "Dynamic Fluid",
-      immersiveBackgroundAnimatedDescription:
-        "Turn this off to keep the fluid look but freeze it as a static frame.",
-      immersiveBackgroundResolutionLabel: "Render Precision",
-      immersiveBackgroundResolutionHelper: "Higher precision improves detail but costs more performance.",
+      immersiveBackgroundAnimatedDescription: "Turn motion on or off.",
+      immersiveBackgroundResolutionLabel: "Precision",
+      immersiveBackgroundResolutionHelper: "Higher is sharper.",
       immersiveBackgroundSpeedLabel: "Animation Speed",
-      immersiveBackgroundSpeedHelper: "Controls how quickly the fluid background flows and cycles through its motion. 100% is the default pace.",
-      immersiveBackgroundSoftnessLabel: "Fluid Softness",
-      immersiveBackgroundSoftnessHelper:
-        "Lower values keep color boundaries firmer, while higher values make the fluid blend more softly.",
+      immersiveBackgroundSpeedHelper: "How fast it moves.",
+      immersiveBackgroundSoftnessLabel: "Softness",
+      immersiveBackgroundSoftnessHelper: "How much colors blend.",
+      immersiveBackgroundBlurLabel: "Blur",
+      immersiveBackgroundBlurHelper: "How soft the source looks.",
+      immersiveBackgroundDimLabel: "Darken",
+      immersiveBackgroundDimHelper: "How dark the fluid appears.",
       immersiveBackgroundMvBlurLabel: "Background MV Blur",
       immersiveBackgroundMvBlurHelper: "Controls how much the MV background is blurred in the immersive player.",
       immersiveBackgroundMvDimLabel: "Background MV Darken",
@@ -1764,13 +1767,17 @@ function getThemeEditorCopy(locale: string) {
     immersiveBackgroundModeCoverBlur: "封面模糊",
     immersiveBackgroundModeFlow: "流体",
     immersiveBackgroundAnimatedLabel: "动态流体",
-    immersiveBackgroundAnimatedDescription: "关闭后保留流体质感，但停止动画并改为静态流体。",
-    immersiveBackgroundResolutionLabel: "渲染精度",
-    immersiveBackgroundResolutionHelper: "精度越高细节越完整，但性能开销也会更高。",
+    immersiveBackgroundAnimatedDescription: "控制是否运动。",
+    immersiveBackgroundResolutionLabel: "精度",
+    immersiveBackgroundResolutionHelper: "越高越清晰。",
     immersiveBackgroundSpeedLabel: "动画速度",
-    immersiveBackgroundSpeedHelper: "控制流体背景流动与循环推进的速度，100% 为默认节奏。",
-    immersiveBackgroundSoftnessLabel: "流体柔和度",
-    immersiveBackgroundSoftnessHelper: "数值越低，流体中不同颜色的边界越硬；数值越高，混合越柔和。",
+    immersiveBackgroundSpeedHelper: "控制流动速度。",
+    immersiveBackgroundSoftnessLabel: "柔和度",
+    immersiveBackgroundSoftnessHelper: "控制颜色混合程度。",
+    immersiveBackgroundBlurLabel: "模糊",
+    immersiveBackgroundBlurHelper: "控制流体的柔化程度。",
+    immersiveBackgroundDimLabel: "暗化",
+    immersiveBackgroundDimHelper: "控制流体的整体明暗。",
     immersiveBackgroundMvBlurLabel: "背景 MV 模糊",
     immersiveBackgroundMvBlurHelper: "控制沉浸式播放页中背景 MV 的模糊强度。",
     immersiveBackgroundMvDimLabel: "背景 MV 暗化",
@@ -16608,6 +16615,50 @@ function SettingsScreen({
                       {themeEditorCopy.immersiveBackgroundSoftnessHelper}
                     </span>
                   </div>
+                  <div>
+                    <UISlider
+                      label={themeEditorCopy.immersiveBackgroundBlurLabel}
+                      value={settings.appearance.immersiveBackgroundBlur ?? 36}
+                      min={0}
+                      max={100}
+                      step={1}
+                      valueSuffix="%"
+                      onChange={(value) =>
+                        onUpdate((current) => ({
+                          ...current,
+                          appearance: {
+                            ...current.appearance,
+                            immersiveBackgroundBlur: value,
+                          },
+                        }))
+                      }
+                    />
+                    <span className="ui-field__helper">
+                      {themeEditorCopy.immersiveBackgroundBlurHelper}
+                    </span>
+                  </div>
+                  <div>
+                    <UISlider
+                      label={themeEditorCopy.immersiveBackgroundDimLabel}
+                      value={settings.appearance.immersiveBackgroundDim ?? 18}
+                      min={0}
+                      max={100}
+                      step={1}
+                      valueSuffix="%"
+                      onChange={(value) =>
+                        onUpdate((current) => ({
+                          ...current,
+                          appearance: {
+                            ...current.appearance,
+                            immersiveBackgroundDim: value,
+                          },
+                        }))
+                      }
+                    />
+                    <span className="ui-field__helper">
+                      {themeEditorCopy.immersiveBackgroundDimHelper}
+                    </span>
+                  </div>
                 </div>
                 </>
               ) : settings.appearance.immersiveBackgroundMode === "background-mv" ? (
@@ -25236,149 +25287,169 @@ function ImmersiveFluidCanvas({
       return;
     }
 
-    const context = canvas.getContext("2d", { alpha: true });
-    if (!context) {
-      return;
-    }
-
-    type FlowLobe = {
-      angle: number;
-      distance: number;
-      scaleX: number;
-      scaleY: number;
-      alpha: number;
-      rotationOffset: number;
-    };
-
-    type FlowNode = {
-      anchorX: number;
-      anchorY: number;
-      orbitX: number;
-      orbitY: number;
-      radius: number;
-      stretch: number;
-      color: string;
-      alpha: number;
-      phase: number;
-      speed: number;
-      rotation: number;
-      weight: number;
-      lobes: FlowLobe[];
-    };
-
     const precisionScale = clampNumber(appearanceSettings.immersiveBackgroundResolution / 100, 0.45, 1);
     const speedScale = clampNumber((appearanceSettings.immersiveBackgroundSpeed / 100) * 2, 0.8, 5);
     const softnessScale = clampNumber(appearanceSettings.immersiveBackgroundSoftness / 100, 0, 1);
+    const blurScale = clampNumber((appearanceSettings.immersiveBackgroundBlur ?? 36) / 100, 0, 1);
+    const dimScale = clampNumber((appearanceSettings.immersiveBackgroundDim ?? 18) / 100, 0, 1);
     const isAnimated = appearanceSettings.immersiveBackgroundAnimated;
-    const targetFrameIntervalMs = precisionScale >= 0.76 ? 20 : 16;
     const overscanRatio = 0.14;
-    const samplePool = palette.samples.length
+    const samplePool = (palette.samples.length
       ? palette.samples
       : [
         { color: palette.base, x: 0.22, y: 0.22, weight: 0.88 },
         { color: palette.secondary, x: 0.74, y: 0.26, weight: 0.9 },
         { color: palette.glow, x: 0.68, y: 0.72, weight: 0.82 },
         { color: palette.edge, x: 0.3, y: 0.8, weight: 0.76 },
-      ];
-    const colorPool = Array.from(
-      new Set([
-        ...samplePool.map((sample) => sample.color),
-        palette.base,
-        palette.secondary,
-        palette.glow,
-        palette.edge,
-      ]),
-    );
+      ]).slice(0, 6);
 
-    let width = 0;
-    let height = 0;
-    let renderWidth = 0;
-    let renderHeight = 0;
-    let flowNodes: FlowNode[] = [];
-    let frameId = 0;
-    let resizeFrameId = 0;
-    const fieldCanvas = document.createElement("canvas");
-    const meshCanvas = document.createElement("canvas");
-    const backdropCanvas = document.createElement("canvas");
-    const fieldContext = fieldCanvas.getContext("2d", { alpha: true });
-    const meshContext = meshCanvas.getContext("2d", { alpha: true });
-    const backdropContext = backdropCanvas.getContext("2d", { alpha: true });
-    if (!fieldContext || !meshContext || !backdropContext) {
-      return;
-    }
-    let lastRenderTimeMs = 0;
-
-    const createSeededRandom = (seed: number) => {
-      let state = seed;
-      return () => {
-        const value = Math.sin(state) * 10000;
-        state += 1;
-        return value - Math.floor(value);
-      };
+    const toColorTriplet = (color: string): [number, number, number] => {
+      const { r, g, b } = parseHexColor(color);
+      return [r / 255, g / 255, b / 255];
     };
 
-    const buildFlowNodes = (canvasWidth: number, canvasHeight: number) => {
-      const minDimension = Math.min(canvasWidth, canvasHeight);
-      const baseSeed =
-        (canvasWidth * 0.017) +
-        (canvasHeight * 0.013) +
-        colorPool.reduce((sum, color, index) => sum + ((parseInt(color.slice(1), 16) % 97) * (index + 1)), 0);
-      const random = createSeededRandom(baseSeed);
-      const generatedNodes: FlowNode[] = [];
-      const createBlobLobes = (count: number, spread = 1) =>
-        Array.from({ length: count }, (_, index) => {
-          const distribution = count === 1 ? 0 : index / count;
-          return {
-            angle: (distribution * Math.PI * 2) + (random() * 0.76),
-            distance: (0.24 + (random() * 0.22)) * spread,
-            scaleX: 0.52 + (random() * 0.34),
-            scaleY: 0.54 + (random() * 0.38),
-            alpha: 0.42 + (random() * 0.26),
-            rotationOffset: (random() - 0.5) * 0.85,
-          };
-        });
-
-      samplePool.forEach((sample, index) => {
-        generatedNodes.push({
-          anchorX: canvasWidth * sample.x,
-          anchorY: canvasHeight * sample.y,
-          orbitX: minDimension * (0.082 + (sample.weight * 0.072)),
-          orbitY: minDimension * (0.074 + (sample.weight * 0.064)),
-          radius: minDimension * (0.32 + (sample.weight * (0.16 + (softnessScale * 0.08)))),
-          stretch: 1.02 + (random() * 0.44),
-          color: sample.color,
-          alpha: 0.42 + (sample.weight * 0.16),
-          phase: random() * Math.PI * 2,
-          speed: 0.46 + (random() * 0.22) + (index * 0.03),
-          rotation: random() * Math.PI * 2,
-          weight: sample.weight,
-          lobes: createBlobLobes(3 + (index % 2), 1 + (sample.weight * 0.12)),
-        });
-      });
-
-      const sortedSamples = [...samplePool].sort((left, right) => (left.x + left.y) - (right.x + right.y));
-      for (let index = 0; index < sortedSamples.length; index += 2) {
-        const from = sortedSamples[index];
-        const to = sortedSamples[(index + 1) % sortedSamples.length];
-        generatedNodes.push({
-          anchorX: canvasWidth * ((from.x + to.x) * 0.5),
-          anchorY: canvasHeight * ((from.y + to.y) * 0.5),
-          orbitX: minDimension * (0.058 + (((from.weight + to.weight) * 0.5) * 0.036)),
-          orbitY: minDimension * (0.05 + (((from.weight + to.weight) * 0.5) * 0.032)),
-          radius: minDimension * (0.22 + (((from.weight + to.weight) * 0.5) * (0.1 + (softnessScale * 0.05)))),
-          stretch: 0.96 + (random() * 0.28),
-          color: mixHexColors(from.color, to.color, 0.5),
-          alpha: 0.22 + (((from.weight + to.weight) * 0.5) * 0.1),
-          phase: random() * Math.PI * 2,
-          speed: 0.36 + (random() * 0.18) + (index * 0.02),
-          rotation: random() * Math.PI * 2,
-          weight: (from.weight + to.weight) * 0.5,
-          lobes: createBlobLobes(2, 0.76),
-        });
+    const resolveStaticFrameTimeSeconds = () => {
+      let hash = 0;
+      for (let index = 0; index < sampleSignature.length; index += 1) {
+        hash = ((hash * 31) + sampleSignature.charCodeAt(index)) >>> 0;
       }
 
-      return generatedNodes;
+      const normalized = (hash % 1000) / 1000;
+      return 6 + (normalized * 18);
     };
+
+    const buildFluidSourceCanvas = () => {
+      const sourceCanvas = document.createElement("canvas");
+      sourceCanvas.width = 720;
+      sourceCanvas.height = 720;
+      const context = sourceCanvas.getContext("2d");
+      if (!context) {
+        return null;
+      }
+
+      const sortedSamples = [...samplePool].sort((left, right) => (left.x + left.y) - (right.x + right.y));
+      const baseGradient = context.createLinearGradient(64, 48, 656, 672);
+      const gradientStops = [
+        isAnimated
+          ? mixHexColors(palette.edge, "#081018", 0.18 + (dimScale * 0.22))
+          : mixHexColors(palette.edge, palette.base, 0.32 + (dimScale * 0.18)),
+        isAnimated
+          ? mixHexColors(palette.base, "#05070d", dimScale * 0.28)
+          : mixHexColors(palette.base, "#ffffff", 0.06 - (dimScale * 0.04)),
+        isAnimated
+          ? mixHexColors(palette.secondary, "#060910", dimScale * 0.22)
+          : mixHexColors(palette.secondary, "#ffffff", 0.1 - (dimScale * 0.06)),
+        isAnimated
+          ? mixHexColors(palette.glow, "#0b1018", dimScale * 0.24)
+          : mixHexColors(palette.glow, "#ffffff", 0.14 - (dimScale * 0.08)),
+      ];
+      gradientStops.forEach((color, index) => {
+        const stop = gradientStops.length === 1 ? 0 : index / (gradientStops.length - 1);
+        baseGradient.addColorStop(stop, color);
+      });
+      context.fillStyle = baseGradient;
+      context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+
+      const haloGradient = context.createRadialGradient(360, 180, 0, 360, 180, 420);
+      haloGradient.addColorStop(
+        0,
+        withHexAlpha(
+          mixHexColors(palette.glow, "#ffffff", 0.22),
+          (isAnimated ? 0.28 : 0.38) * (1 - (dimScale * 0.45)),
+        ),
+      );
+      haloGradient.addColorStop(0.52, withHexAlpha(palette.secondary, (isAnimated ? 0.1 : 0.16) * (1 - (dimScale * 0.35))));
+      haloGradient.addColorStop(1, "rgba(0,0,0,0)");
+      context.globalCompositeOperation = "screen";
+      context.fillStyle = haloGradient;
+      context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+
+      sortedSamples.forEach((sample, index) => {
+        const x = sourceCanvas.width * sample.x;
+        const y = sourceCanvas.height * sample.y;
+        const radius = sourceCanvas.width * (0.18 + (sample.weight * 0.14) + ((index % 2) * 0.03));
+        const glow = context.createRadialGradient(x, y, 0, x, y, radius);
+        glow.addColorStop(
+          0,
+          withHexAlpha(
+            mixHexColors(sample.color, "#ffffff", 0.08),
+            (isAnimated ? 0.98 : 1) * (1 - (dimScale * 0.28)),
+          ),
+        );
+        glow.addColorStop(0.28, withHexAlpha(sample.color, (isAnimated ? 0.86 : 0.94) * (1 - (dimScale * 0.24))));
+        glow.addColorStop(
+          0.56,
+          withHexAlpha(
+            mixHexColors(sample.color, palette.secondary, 0.18),
+            (isAnimated ? 0.42 : 0.56) * (1 - (dimScale * 0.22)),
+          ),
+        );
+        glow.addColorStop(1, "rgba(0,0,0,0)");
+        context.globalCompositeOperation = index % 2 === 0 ? "screen" : "lighter";
+        context.fillStyle = glow;
+        context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+      });
+
+      context.globalCompositeOperation = "soft-light";
+      sortedSamples.forEach((sample, index) => {
+        const offsetX = (sample.x - 0.5) * sourceCanvas.width * 0.18;
+        const offsetY = (sample.y - 0.5) * sourceCanvas.height * 0.18;
+        const streak = context.createRadialGradient(
+          (sourceCanvas.width * 0.5) + offsetX,
+          (sourceCanvas.height * 0.5) + offsetY,
+          0,
+          (sourceCanvas.width * 0.5) + offsetX,
+          (sourceCanvas.height * 0.5) + offsetY,
+          sourceCanvas.width * (0.34 + (index * 0.03)),
+        );
+        streak.addColorStop(0, withHexAlpha(sample.color, (isAnimated ? 0.2 : 0.28) * (1 - (dimScale * 0.3))));
+        streak.addColorStop(
+          0.42,
+          withHexAlpha(
+            mixHexColors(sample.color, palette.base, 0.22),
+            (isAnimated ? 0.08 : 0.14) * (1 - (dimScale * 0.25)),
+          ),
+        );
+        streak.addColorStop(1, "rgba(0,0,0,0)");
+        context.fillStyle = streak;
+        context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+      });
+
+      if (dimScale > 0.001) {
+        context.globalCompositeOperation = "multiply";
+        context.fillStyle = withHexAlpha("#06080d", 0.12 + (dimScale * 0.52));
+        context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+
+        context.globalCompositeOperation = "source-over";
+        context.fillStyle = withHexAlpha("#020308", dimScale * 0.22);
+        context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+      }
+
+      context.globalCompositeOperation = "source-over";
+      return sourceCanvas;
+    };
+
+    const tintColor = toColorTriplet(
+      isAnimated
+        ? mixHexColors(mixHexColors(palette.base, palette.edge, 0.18), "#04070d", dimScale * 0.3)
+        : mixHexColors(mixHexColors(palette.base, "#ffffff", 0.14), "#121821", dimScale * 0.18),
+    );
+    const warpIntensity = clampNumber(0.42 + (softnessScale * 0.3), 0.3, 0.92);
+    const blurPasses = Math.max(1, Math.min(10, Math.round((1 + (blurScale * 6)) + ((1 - precisionScale) * 2))));
+    const animationSpeed = clampNumber(speedScale * 0.92, 0.55, 3.2);
+    const saturation = clampNumber((isAnimated ? 1.32 : 1.46) + (softnessScale * 0.54), 1.15, 2.7);
+    const tintIntensity = clampNumber(
+      isAnimated ? (0.04 + (softnessScale * 0.08)) : (0.01 + (blurScale * 0.04)),
+      0,
+      0.18,
+    );
+    const dithering = clampNumber(0.006 + ((1 - precisionScale) * 0.003), 0.003, 0.02);
+    const scale = clampNumber((isAnimated ? 1.1 : 1.06) + (softnessScale * 0.14), 1.02, 1.36);
+    const staticFrameTimeSeconds = resolveStaticFrameTimeSeconds();
+
+    let frameId = 0;
+    let resizeFrameId = 0;
+    let kawarp: Kawarp | null = null;
 
     const resize = () => {
       const rect = canvas.parentElement?.getBoundingClientRect() ?? canvas.getBoundingClientRect();
@@ -25386,363 +25457,42 @@ function ImmersiveFluidCanvas({
         return;
       }
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.18);
-      width = rect.width;
-      height = rect.height;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.2);
+      const width = rect.width;
+      const height = rect.height;
       const overscanX = width * overscanRatio;
       const overscanY = height * overscanRatio;
       const expandedWidth = width + (overscanX * 2);
       const expandedHeight = height + (overscanY * 2);
-      renderWidth = Math.max(96, Math.round(expandedWidth * dpr * clampNumber(precisionScale, 0.42, 0.92)));
-      renderHeight = Math.max(96, Math.round(expandedHeight * dpr * clampNumber(precisionScale, 0.42, 0.92)));
+      const renderWidth = Math.max(160, Math.round(expandedWidth * dpr * clampNumber(precisionScale, 0.42, 0.94)));
+      const renderHeight = Math.max(160, Math.round(expandedHeight * dpr * clampNumber(precisionScale, 0.42, 0.94)));
       canvas.width = renderWidth;
       canvas.height = renderHeight;
-      fieldCanvas.width = renderWidth;
-      fieldCanvas.height = renderHeight;
-      meshCanvas.width = renderWidth;
-      meshCanvas.height = renderHeight;
-      backdropCanvas.width = renderWidth;
-      backdropCanvas.height = renderHeight;
       canvas.style.width = `${expandedWidth}px`;
       canvas.style.height = `${expandedHeight}px`;
       canvas.style.transform = `translate3d(${-overscanX.toFixed(2)}px, ${-overscanY.toFixed(2)}px, 0)`;
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.imageSmoothingEnabled = true;
-      context.imageSmoothingQuality = "high";
-      fieldContext.setTransform(1, 0, 0, 1, 0, 0);
-      fieldContext.imageSmoothingEnabled = true;
-      fieldContext.imageSmoothingQuality = "high";
-      meshContext.setTransform(1, 0, 0, 1, 0, 0);
-      meshContext.imageSmoothingEnabled = true;
-      meshContext.imageSmoothingQuality = "high";
-      backdropContext.setTransform(1, 0, 0, 1, 0, 0);
-      backdropContext.imageSmoothingEnabled = true;
-      backdropContext.imageSmoothingQuality = "high";
-      flowNodes = buildFlowNodes(renderWidth, renderHeight);
     };
 
-    const drawBackdrop = () => {
-      backdropContext.clearRect(0, 0, renderWidth, renderHeight);
-
-      const baseGradient = backdropContext.createLinearGradient(0, 0, renderWidth, renderHeight);
-      const backdropStops = [...samplePool].sort((left, right) => (left.x + left.y) - (right.x + right.y));
-      backdropStops.forEach((sample, index) => {
-        const stop = backdropStops.length === 1 ? 0 : index / (backdropStops.length - 1);
-        baseGradient.addColorStop(stop, sample.color);
-      });
-      backdropContext.fillStyle = baseGradient;
-      backdropContext.fillRect(0, 0, renderWidth, renderHeight);
-
-      samplePool.forEach((sample, index) => {
-        const radius = Math.max(renderWidth, renderHeight) * (0.44 + (sample.weight * (0.2 + (softnessScale * 0.08))));
-        const glow = backdropContext.createRadialGradient(
-          renderWidth * sample.x,
-          renderHeight * sample.y,
-          0,
-          renderWidth * sample.x,
-          renderHeight * sample.y,
-          radius,
-        );
-        glow.addColorStop(0, withHexAlpha(mixHexColors(sample.color, "#ffffff", 0.04), 0.14 + (sample.weight * 0.06)));
-        glow.addColorStop(0.42, withHexAlpha(sample.color, 0.08 + (sample.weight * 0.03)));
-        glow.addColorStop(1, "rgba(0, 0, 0, 0)");
-        backdropContext.globalCompositeOperation = index % 2 === 0 ? "soft-light" : "source-over";
-        backdropContext.fillStyle = glow;
-        backdropContext.fillRect(0, 0, renderWidth, renderHeight);
-      });
-
-      const diagonalWash = backdropContext.createLinearGradient(renderWidth * 0.12, 0, renderWidth, renderHeight);
-      diagonalWash.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.08), 0.06));
-      diagonalWash.addColorStop(0.48, "rgba(255, 255, 255, 0)");
-      diagonalWash.addColorStop(1, withHexAlpha(palette.base, 0.1));
-      backdropContext.globalCompositeOperation = "soft-light";
-      backdropContext.fillStyle = diagonalWash;
-      backdropContext.fillRect(0, 0, renderWidth, renderHeight);
-      backdropContext.globalCompositeOperation = "source-over";
-    };
-
-    const renderBackdropSnapshot = () => {
-      drawBackdrop();
-    };
-
-    const drawSoftEllipse = (
-      targetContext: CanvasRenderingContext2D,
-      x: number,
-      y: number,
-      radiusX: number,
-      radiusY: number,
-      color: string,
-      alpha: number,
-      rotation: number,
-      innerMix = 0.14,
-    ) => {
-      const edgeSoftness = 0.14 + (softnessScale * 0.3);
-      const midSoftness = 0.44 + (softnessScale * 0.18);
-      const outerSoftness = 0.72 + (softnessScale * 0.12);
-      targetContext.save();
-      targetContext.translate(x, y);
-      targetContext.rotate(rotation);
-      targetContext.scale(1, radiusY / Math.max(radiusX, 1));
-      const gradient = targetContext.createRadialGradient(0, 0, 0, 0, 0, radiusX);
-      gradient.addColorStop(0, withHexAlpha(mixHexColors(color, "#ffffff", innerMix), alpha));
-      gradient.addColorStop(midSoftness, withHexAlpha(color, alpha * (0.62 + (softnessScale * 0.12))));
-      gradient.addColorStop(outerSoftness, withHexAlpha(color, alpha * (0.12 + (softnessScale * 0.12))));
-      gradient.addColorStop(Math.min(0.98, edgeSoftness + 0.72), withHexAlpha(color, alpha * 0.04));
-      gradient.addColorStop(1, withHexAlpha(color, 0));
-      targetContext.fillStyle = gradient;
-      targetContext.beginPath();
-      targetContext.arc(0, 0, radiusX, 0, Math.PI * 2);
-      targetContext.fill();
-      targetContext.restore();
-    };
-
-    const drawSoftBlob = (
-      targetContext: CanvasRenderingContext2D,
-      node: ReturnType<typeof resolveAnimatedNodes>[number],
-      color: string,
-      alphaScale: number,
-      innerMix = 0.14,
-    ) => {
-      drawSoftEllipse(
-        targetContext,
-        node.x,
-        node.y,
-        node.radiusX,
-        node.radiusY,
-        color,
-        node.alpha * alphaScale,
-        node.rotation,
-        innerMix,
-      );
-
-      node.lobes.forEach((lobe, index) => {
-        const lobeAngle = node.rotation + lobe.angle + (Math.sin(node.phase + index) * 0.16);
-        const offsetX = Math.cos(lobeAngle) * node.radiusX * lobe.distance;
-        const offsetY = Math.sin(lobeAngle) * node.radiusY * lobe.distance;
-        drawSoftEllipse(
-          targetContext,
-          node.x + offsetX,
-          node.y + offsetY,
-          node.radiusX * lobe.scaleX,
-          node.radiusY * lobe.scaleY,
-          color,
-          node.alpha * alphaScale * lobe.alpha,
-          node.rotation + lobe.rotationOffset,
-          innerMix,
-        );
-      });
-    };
-
-    const resolveAnimatedNodes = (timeMs: number) =>
-      flowNodes.map((node, index) => {
-        const localTime = timeMs * 0.00028 * speedScale;
-        const orbitPhase = node.phase + (index * 0.58);
-        const animatedX =
-          node.anchorX +
-          (Math.sin((localTime * node.speed) + orbitPhase) * node.orbitX) +
-          (Math.cos((localTime * (node.speed * 0.42)) + (orbitPhase * 0.74)) * node.orbitX * 0.44);
-        const animatedY =
-          node.anchorY +
-          (Math.cos((localTime * (node.speed * 0.7)) + (orbitPhase * 1.08)) * node.orbitY) +
-          (Math.sin((localTime * (node.speed * 0.36)) + (orbitPhase * 0.54)) * node.orbitY * 0.42);
-        const pulse = Math.sin((localTime * (node.speed * 0.72)) + orbitPhase);
-        const secondaryPulse = Math.cos((localTime * (node.speed * 0.46)) + (orbitPhase * 0.62));
-        return {
-          ...node,
-          x: animatedX,
-          y: animatedY,
-          radiusX: node.radius * (1 + (pulse * (0.09 + (softnessScale * 0.06)))),
-          radiusY: node.radius * node.stretch * (1 + (secondaryPulse * (0.08 + (softnessScale * 0.05)))),
-          rotation: node.rotation + (pulse * 0.18),
-        };
-      });
-
-    const drawFieldMask = (nodes: ReturnType<typeof resolveAnimatedNodes>) => {
-      const fieldBlur =
-        (2.4 + (softnessScale * 8.6)) * (0.88 + (precisionScale * 0.26));
-      fieldContext.clearRect(0, 0, renderWidth, renderHeight);
-      fieldContext.save();
-      fieldContext.filter = fieldBlur > 0 ? `blur(${fieldBlur.toFixed(1)}px)` : "none";
-      fieldContext.globalCompositeOperation = "source-over";
-
-      nodes.forEach((node) => {
-        drawSoftBlob(fieldContext, node, "#ffffff", 0.84 + (node.weight * 0.08), 0);
-      });
-
-      fieldContext.restore();
-    };
-
-    const drawColorMesh = (nodes: ReturnType<typeof resolveAnimatedNodes>) => {
-      meshContext.clearRect(0, 0, renderWidth, renderHeight);
-
-      const baseGradient = meshContext.createLinearGradient(
-        renderWidth * 0.06,
-        renderHeight * 0.04,
-        renderWidth * 0.94,
-        renderHeight * 0.96,
-      );
-      const orderedSamples = [...samplePool].sort((left, right) => (left.x + left.y) - (right.x + right.y));
-      orderedSamples.forEach((sample, index) => {
-        const stop = orderedSamples.length === 1 ? 0 : index / (orderedSamples.length - 1);
-        baseGradient.addColorStop(stop, mixHexColors(sample.color, palette.base, 0.08));
-      });
-      meshContext.fillStyle = baseGradient;
-      meshContext.fillRect(0, 0, renderWidth, renderHeight);
-
-      nodes.forEach((node, index) => {
-        const radius = Math.max(node.radiusX, node.radiusY) * (1.82 + (node.weight * 0.26));
-        const glow = meshContext.createRadialGradient(node.x, node.y, 0, node.x, node.y, radius);
-        glow.addColorStop(0, withHexAlpha(mixHexColors(node.color, "#ffffff", 0.03), 0.26 + (node.weight * 0.05)));
-        glow.addColorStop(0.3, withHexAlpha(node.color, 0.26 + (node.weight * 0.06)));
-        glow.addColorStop(0.68, withHexAlpha(mixHexColors(node.color, palette.secondary, 0.3), 0.12));
-        glow.addColorStop(1, "rgba(0, 0, 0, 0)");
-        meshContext.globalCompositeOperation = index % 2 === 0 ? "soft-light" : "lighten";
-        meshContext.fillStyle = glow;
-        meshContext.fillRect(0, 0, renderWidth, renderHeight);
-      });
-
-      meshContext.globalCompositeOperation = "soft-light";
-      const lightSheet = meshContext.createLinearGradient(
-        renderWidth * 0.08,
-        renderHeight * 0.12,
-        renderWidth,
-        renderHeight * 0.84,
-      );
-      lightSheet.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.1), 0.12));
-      lightSheet.addColorStop(0.52, "rgba(255, 255, 255, 0)");
-      lightSheet.addColorStop(1, withHexAlpha(mixHexColors(palette.edge, palette.base, 0.42), 0.12));
-      meshContext.fillStyle = lightSheet;
-      meshContext.fillRect(0, 0, renderWidth, renderHeight);
-
-      meshContext.globalCompositeOperation = "source-over";
-    };
-
-    const drawFluidLayers = (nodes: ReturnType<typeof resolveAnimatedNodes>) => {
-      const baseBlur =
-        (4.2 + (softnessScale * 12.4)) * (0.86 + (precisionScale * 0.24));
-
-      drawFieldMask(nodes);
-      drawColorMesh(nodes);
-
-      fieldContext.save();
-      fieldContext.globalCompositeOperation = "source-in";
-      fieldContext.drawImage(meshCanvas, 0, 0);
-      fieldContext.restore();
-
-      context.save();
-      context.filter =
-        baseBlur > 0
-          ? `blur(${baseBlur.toFixed(1)}px) saturate(${(118 + (softnessScale * 14)).toFixed(0)}%) brightness(92%)`
-          : `saturate(${(118 + (softnessScale * 14)).toFixed(0)}%) brightness(92%)`;
-      context.globalCompositeOperation = "source-over";
-      context.globalAlpha = 0.88;
-      context.drawImage(fieldCanvas, 0, 0, renderWidth, renderHeight);
-      context.restore();
-
-      context.save();
-      context.filter =
-        baseBlur > 0
-          ? `blur(${(baseBlur * 0.4).toFixed(1)}px) saturate(${(122 + (softnessScale * 14)).toFixed(0)}%) brightness(88%)`
-          : `saturate(${(122 + (softnessScale * 14)).toFixed(0)}%) brightness(88%)`;
-      context.globalCompositeOperation = "soft-light";
-      context.globalAlpha = 0.14 + (softnessScale * 0.05);
-      context.drawImage(fieldCanvas, 0, 0, renderWidth, renderHeight);
-      context.restore();
-    };
-
-    const applyBlendingEffect = () => {
-      context.save();
-
-      context.globalCompositeOperation = "overlay";
-      context.globalAlpha = 0.08;
-      const balanceGradient = context.createLinearGradient(0, 0, renderWidth, renderHeight);
-      colorPool.forEach((color, index) => {
-        const stop = colorPool.length === 1 ? 0 : index / (colorPool.length - 1);
-        balanceGradient.addColorStop(stop, color);
-      });
-      context.fillStyle = balanceGradient;
-      context.fillRect(0, 0, renderWidth, renderHeight);
-
-      context.globalCompositeOperation = "soft-light";
-      context.globalAlpha = 0.1;
-      const softGradient = context.createRadialGradient(
-        renderWidth * 0.5,
-        renderHeight * 0.5,
-        0,
-        renderWidth * 0.5,
-        renderHeight * 0.5,
-        Math.max(renderWidth, renderHeight) * 0.72,
-      );
-      softGradient.addColorStop(0, withHexAlpha(palette.base, 0.24));
-      softGradient.addColorStop(0.5, withHexAlpha(palette.secondary, 0.16));
-      softGradient.addColorStop(1, withHexAlpha(palette.glow, 0.08));
-      context.fillStyle = softGradient;
-      context.fillRect(0, 0, renderWidth, renderHeight);
-
-      const finalGlowBlur =
-        (1.8 + (softnessScale * 4.8)) * (0.9 + (precisionScale * 0.16));
-      context.filter = finalGlowBlur > 0 ? `blur(${finalGlowBlur.toFixed(1)}px)` : "none";
-      context.globalCompositeOperation = "soft-light";
-      context.globalAlpha = 0.04;
-      const finalGradient = context.createLinearGradient(renderWidth, 0, 0, renderHeight);
-      finalGradient.addColorStop(0, withHexAlpha(palette.glow, 0.18));
-      finalGradient.addColorStop(1, withHexAlpha(palette.base, 0.12));
-      context.fillStyle = finalGradient;
-      context.fillRect(0, 0, renderWidth, renderHeight);
-
-      const causticBlur =
-        (2.2 + (softnessScale * 5.4)) * (0.88 + (precisionScale * 0.18));
-      context.filter = causticBlur > 0 ? `blur(${causticBlur.toFixed(1)}px)` : "none";
-      context.globalCompositeOperation = "soft-light";
-      context.globalAlpha = 0.07;
-      const causticGradient = context.createRadialGradient(
-        renderWidth * 0.5,
-        renderHeight * 0.24,
-        0,
-        renderWidth * 0.5,
-        renderHeight * 0.24,
-        Math.max(renderWidth, renderHeight) * 0.76,
-      );
-      causticGradient.addColorStop(0, withHexAlpha(mixHexColors(palette.glow, "#ffffff", 0.08), 0.1));
-      causticGradient.addColorStop(0.42, withHexAlpha(palette.secondary, 0.06));
-      causticGradient.addColorStop(1, "rgba(0, 0, 0, 0)");
-      context.fillStyle = causticGradient;
-      context.fillRect(0, 0, renderWidth, renderHeight);
-
-      context.restore();
-    };
-
-    const renderFrame = (timeMs: number) => {
-      context.clearRect(0, 0, renderWidth, renderHeight);
-      context.drawImage(backdropCanvas, 0, 0, renderWidth, renderHeight);
-      const animatedNodes = resolveAnimatedNodes(timeMs);
-      drawFluidLayers(animatedNodes);
-      applyBlendingEffect();
-    };
-
-    const drawLoop = (timeMs: number) => {
-      if (!isAnimated) {
-        renderFrame(0);
+    const applyPlaybackState = () => {
+      if (!kawarp) {
         return;
       }
-
-      if (timeMs - lastRenderTimeMs < targetFrameIntervalMs) {
-        frameId = window.requestAnimationFrame(drawLoop);
-        return;
-      }
-
-      lastRenderTimeMs = timeMs;
-      renderFrame(timeMs);
       if (isActive && isAnimated) {
-        frameId = window.requestAnimationFrame(drawLoop);
+        kawarp.start();
+      } else {
+        kawarp.stop();
+        kawarp.renderFrame(staticFrameTimeSeconds);
       }
     };
 
     const rerenderForResize = () => {
       resize();
-      if (renderWidth && renderHeight) {
-        renderBackdropSnapshot();
-        renderFrame(isAnimated ? performance.now() : 0);
+      if (!kawarp) {
+        return;
+      }
+      kawarp.resize();
+      if (!isAnimated || !isActive) {
+        kawarp.renderFrame(staticFrameTimeSeconds);
       }
     };
 
@@ -25758,22 +25508,39 @@ function ImmersiveFluidCanvas({
     };
 
     resize();
-    renderBackdropSnapshot();
+    try {
+      kawarp = new Kawarp(canvas, {
+        warpIntensity,
+        blurPasses,
+        animationSpeed,
+        transitionDuration: isAnimated ? 800 : 0,
+        saturation,
+        tintColor,
+        tintIntensity,
+        dithering,
+        scale,
+      });
+    } catch (error) {
+      console.error("[immersive-player] failed to initialize Kawarp", error);
+      return;
+    }
+
+    const sourceCanvas = buildFluidSourceCanvas();
+    if (sourceCanvas) {
+      kawarp.loadImageElement(sourceCanvas);
+    } else {
+      kawarp.loadGradient(
+        [palette.edge, palette.base, palette.secondary, palette.glow],
+        140,
+      );
+    }
     const resizeTarget = canvas.parentElement ?? canvas;
     const resizeObserver = new ResizeObserver(() => {
       scheduleResize();
     });
     resizeObserver.observe(resizeTarget);
     window.addEventListener("resize", scheduleResize);
-
-    if (renderWidth && renderHeight) {
-      if (isActive && isAnimated) {
-        lastRenderTimeMs = 0;
-        frameId = window.requestAnimationFrame(drawLoop);
-      } else {
-        renderFrame(0);
-      }
-    }
+    applyPlaybackState();
 
     return () => {
       if (frameId) {
@@ -25784,12 +25551,16 @@ function ImmersiveFluidCanvas({
       }
       window.removeEventListener("resize", scheduleResize);
       resizeObserver.disconnect();
+      kawarp?.stop();
+      kawarp?.dispose();
     };
   }, [
     appearanceSettings.immersiveBackgroundAnimated,
     appearanceSettings.immersiveBackgroundResolution,
     appearanceSettings.immersiveBackgroundSpeed,
     appearanceSettings.immersiveBackgroundSoftness,
+    appearanceSettings.immersiveBackgroundBlur,
+    appearanceSettings.immersiveBackgroundDim,
     isActive,
     palette.base,
     palette.edge,

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { SHORTCUT_ACTION_IDS, type AppSettings, type AppSettingsSnapshot } from "./types";
+import { createDefaultAppSettings, SHORTCUT_ACTION_IDS, type AppSettings, type AppSettingsSnapshot } from "./types";
 
 export type LocalNeteaseApiServerStatus = {
   enabled: boolean;
@@ -37,6 +37,7 @@ function normalizeShortcutKeys(keys: string[]) {
 }
 
 function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
+  const defaultSettings = createDefaultAppSettings();
   const normalizedShortcuts = SHORTCUT_ACTION_IDS.reduce(
     (result, actionId) => ({
       ...result,
@@ -81,6 +82,16 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       immersiveBackgroundResolution: clampInteger(settings.appearance.immersiveBackgroundResolution, 45, 100),
       immersiveBackgroundSpeed: clampInteger(settings.appearance.immersiveBackgroundSpeed, 40, 250),
       immersiveBackgroundSoftness: clampInteger(settings.appearance.immersiveBackgroundSoftness, 0, 100),
+      immersiveBackgroundBlur: clampInteger(
+        settings.appearance.immersiveBackgroundBlur ?? defaultSettings.appearance.immersiveBackgroundBlur,
+        0,
+        100,
+      ),
+      immersiveBackgroundDim: clampInteger(
+        settings.appearance.immersiveBackgroundDim ?? defaultSettings.appearance.immersiveBackgroundDim,
+        0,
+        100,
+      ),
       immersiveBackgroundMvBlur: clampInteger(settings.appearance.immersiveBackgroundMvBlur, 0, 48),
       immersiveBackgroundMvDim: clampInteger(settings.appearance.immersiveBackgroundMvDim, 0, 100),
     },

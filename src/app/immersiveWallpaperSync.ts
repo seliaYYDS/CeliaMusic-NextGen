@@ -95,6 +95,8 @@ const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   immersiveBackgroundResolution: 72,
   immersiveBackgroundSpeed: 112,
   immersiveBackgroundSoftness: 58,
+  immersiveBackgroundBlur: 36,
+  immersiveBackgroundDim: 18,
   immersiveBackgroundMvBlur: 18,
   immersiveBackgroundMvDim: 28,
 };
@@ -315,6 +317,14 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
     immersiveBackgroundSoftness: normalizeNumber(
       value.immersiveBackgroundSoftness,
       DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundSoftness,
+    ),
+    immersiveBackgroundBlur: normalizeNumber(
+      value.immersiveBackgroundBlur,
+      DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundBlur,
+    ),
+    immersiveBackgroundDim: normalizeNumber(
+      value.immersiveBackgroundDim,
+      DEFAULT_APPEARANCE_SETTINGS.immersiveBackgroundDim,
     ),
     immersiveBackgroundMvBlur: normalizeNumber(
       value.immersiveBackgroundMvBlur,

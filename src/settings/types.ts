@@ -70,6 +70,8 @@ export type AppearanceSettings = {
   immersiveBackgroundResolution: number;
   immersiveBackgroundSpeed: number;
   immersiveBackgroundSoftness: number;
+  immersiveBackgroundBlur: number;
+  immersiveBackgroundDim: number;
   immersiveBackgroundMvBlur: number;
   immersiveBackgroundMvDim: number;
 };
@@ -202,6 +204,8 @@ export const createDefaultAppSettings = (): AppSettings => ({
     immersiveBackgroundResolution: 72,
     immersiveBackgroundSpeed: 112,
     immersiveBackgroundSoftness: 58,
+    immersiveBackgroundBlur: 36,
+    immersiveBackgroundDim: 18,
     immersiveBackgroundMvBlur: 18,
     immersiveBackgroundMvDim: 28,
   },
