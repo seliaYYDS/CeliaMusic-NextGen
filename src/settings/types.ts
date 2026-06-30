@@ -87,6 +87,7 @@ export type PlaybackSettings = {
   muted: boolean;
   playbackMode: PlaybackModeOption;
   cacheMode: PlaybackCacheMode;
+  systemMediaInfoSync: boolean;
   rememberQueue: boolean;
   songTransitionEnabled: boolean;
   songTransitionMode: SongTransitionMode;
@@ -223,6 +224,7 @@ export const createDefaultAppSettings = (): AppSettings => ({
     muted: false,
     playbackMode: "ordered",
     cacheMode: "stream",
+    systemMediaInfoSync: true,
     rememberQueue: true,
     songTransitionEnabled: false,
     songTransitionMode: "simple-mix",

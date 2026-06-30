@@ -162,6 +162,9 @@ import { ExploreScreen, clearExploreMemoryCaches } from "./ExploreScreen";
 import playerIcon from "../../icon.png";
 import "./styles.css";
 
+const APP_DOCUMENT_TITLE = "Celia Music Next Gen";
+const SYSTEM_MEDIA_SYNC_SEEK_STEP_SECONDS = 5;
+
 const navItemIds = ["home", "explore", "favorites", "playlist", "library", "tools", "settings"] as const;
 const MIN_WINDOW_WIDTH = 800;
 const MIN_WINDOW_HEIGHT = 500;
@@ -776,6 +779,8 @@ const UI_COPY = {
           qualityLabel: "音质偏好",
           cacheModeLabel: "缓存类型",
           cacheModeDescription: "选择缓存后播放或边播边缓存。",
+          systemMediaInfoSyncLabel: "开启系统媒体信息同步",
+          systemMediaInfoSyncDescription: "将当前歌曲信息、播放状态和系统媒体控制同步到 Windows。",
           preferRemoteLabel: "优先网络播放",
           preferRemoteDescription: "优先使用在线音源。",
           songTransitionLabel: "歌曲过渡",
@@ -1145,6 +1150,9 @@ const UI_COPY = {
           qualityLabel: "Preferred Quality",
           cacheModeLabel: "Cache Mode",
           cacheModeDescription: "Choose whether playback should wait for the full track cache.",
+          systemMediaInfoSyncLabel: "Enable System Media Sync",
+          systemMediaInfoSyncDescription:
+            "Sync current track info, playback state, and media controls with Windows.",
           preferRemoteLabel: "Prefer Online Playback",
           preferRemoteDescription: "Prefer network streams when both local and remote sources exist.",
           songTransitionLabel: "Song Transition",
@@ -8945,6 +8953,17 @@ export function AppShell() {
   }, [playbarDisplayTrackId]);
 
   useEffect(() => {
+    const title = playbarDisplayTrack?.title?.trim();
+    const artist = playbarDisplayTrack?.artist?.trim();
+    document.title =
+      title && artist
+        ? `${title} - ${artist}`
+        : title
+          ? title
+          : APP_DOCUMENT_TITLE;
+  }, [playbarDisplayTrack]);
+
+  useEffect(() => {
     playbarDisplayTimeSecondsRef.current = playbarDisplayTimeSeconds;
   }, [playbarDisplayTimeSeconds]);
 
@@ -12069,6 +12088,28 @@ export function AppShell() {
     await pauseActiveTrackWithFade();
   };
 
+  const handleSystemMediaStopPlayback = async () => {
+    const audio = getActiveAudioElement();
+    if (!audio) {
+      clearPlaybackState();
+      return;
+    }
+
+    pauseActiveTrackForTransition(audio);
+    audio.currentTime = 0;
+    setCurrentTimeSeconds(0);
+    setVisualCurrentTimeSeconds(0);
+    setDurationSeconds(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : durationSecondsRef.current);
+    syncPlaybarDisplayState({
+      trackId: playbarDisplayTrackIdRef.current,
+      currentTimeSeconds: 0,
+      visualTimeSeconds: 0,
+      durationSeconds:
+        Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : durationSecondsRef.current,
+    });
+    setIsPlaying(false);
+  };
+
   const handleSeek = (nextProgress: number) => {
     const audio = getPlaybarDisplayAudioElement();
     const nextDuration = Number.isFinite(audio?.duration) ? (audio?.duration ?? 0) : effectiveDurationSeconds;
@@ -12698,6 +12739,121 @@ export function AppShell() {
       announceNotice: false,
     });
   };
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) {
+      return;
+    }
+
+    const mediaSession = navigator.mediaSession;
+    if (!settings.playback.systemMediaInfoSync) {
+      mediaSession.metadata = null;
+      mediaSession.playbackState = "none";
+      mediaSession.setActionHandler("play", null);
+      mediaSession.setActionHandler("pause", null);
+      mediaSession.setActionHandler("previoustrack", null);
+      mediaSession.setActionHandler("nexttrack", null);
+      mediaSession.setActionHandler("stop", null);
+      mediaSession.setActionHandler("seekbackward", null);
+      mediaSession.setActionHandler("seekforward", null);
+      mediaSession.setActionHandler("seekto", null);
+      return;
+    }
+
+    const title = playbarDisplayTrack?.title?.trim();
+    const artist = playbarDisplayTrack?.artist?.trim();
+    const album = playbarDisplayTrack?.album?.trim();
+    const artworkUrl = activeTrackArtworkUrl ?? undefined;
+
+    mediaSession.metadata = title
+      ? new MediaMetadata({
+          title,
+          artist: artist || APP_DOCUMENT_TITLE,
+          album: album || APP_DOCUMENT_TITLE,
+          artwork: artworkUrl
+            ? [
+                {
+                  src: artworkUrl,
+                  sizes: "512x512",
+                  type: "image/png",
+                },
+              ]
+            : [],
+        })
+      : null;
+    mediaSession.playbackState = playbarDisplayTrack ? (isPlaying ? "playing" : "paused") : "none";
+
+    mediaSession.setActionHandler("play", () => {
+      void handleTogglePlayback();
+    });
+    mediaSession.setActionHandler("pause", () => {
+      void handleTogglePlayback();
+    });
+    mediaSession.setActionHandler("previoustrack", () => {
+      void handleSkipToAdjacentTrack(-1);
+    });
+    mediaSession.setActionHandler("nexttrack", () => {
+      void handleSkipToAdjacentTrack(1);
+    });
+    mediaSession.setActionHandler("stop", () => {
+      void handleSystemMediaStopPlayback();
+    });
+    mediaSession.setActionHandler("seekbackward", (details) => {
+      const seekOffset = details.seekOffset ?? SYSTEM_MEDIA_SYNC_SEEK_STEP_SECONDS;
+      const currentDuration = effectiveDurationSeconds > 0 ? effectiveDurationSeconds : durationSecondsRef.current;
+      if (currentDuration <= 0) {
+        return;
+      }
+      const currentSeconds = playbarDisplayVisualTimeSecondsRef.current;
+      handleSeek((Math.max(0, currentSeconds - seekOffset) / currentDuration) * 100);
+    });
+    mediaSession.setActionHandler("seekforward", (details) => {
+      const seekOffset = details.seekOffset ?? SYSTEM_MEDIA_SYNC_SEEK_STEP_SECONDS;
+      const currentDuration = effectiveDurationSeconds > 0 ? effectiveDurationSeconds : durationSecondsRef.current;
+      if (currentDuration <= 0) {
+        return;
+      }
+      const currentSeconds = playbarDisplayVisualTimeSecondsRef.current;
+      handleSeek((Math.min(currentDuration, currentSeconds + seekOffset) / currentDuration) * 100);
+    });
+    mediaSession.setActionHandler("seekto", (details) => {
+      const currentDuration = effectiveDurationSeconds > 0 ? effectiveDurationSeconds : durationSecondsRef.current;
+      if (!details.seekTime || currentDuration <= 0) {
+        return;
+      }
+      handleSeek((Math.min(currentDuration, Math.max(0, details.seekTime)) / currentDuration) * 100);
+    });
+
+    if (typeof mediaSession.setPositionState === "function" && playbarDisplayTrack && effectiveDurationSeconds > 0) {
+      try {
+        mediaSession.setPositionState({
+          duration: effectiveDurationSeconds,
+          playbackRate: getPlaybarDisplayAudioElement()?.playbackRate ?? 1,
+          position: Math.min(effectiveDurationSeconds, Math.max(0, playbarDisplayVisualTimeSeconds)),
+        });
+      } catch (error) {
+        console.error("[media-session] failed to update position state", error);
+      }
+    }
+
+    return () => {
+      mediaSession.setActionHandler("play", null);
+      mediaSession.setActionHandler("pause", null);
+      mediaSession.setActionHandler("previoustrack", null);
+      mediaSession.setActionHandler("nexttrack", null);
+      mediaSession.setActionHandler("stop", null);
+      mediaSession.setActionHandler("seekbackward", null);
+      mediaSession.setActionHandler("seekforward", null);
+      mediaSession.setActionHandler("seekto", null);
+    };
+  }, [
+    activeTrackArtworkUrl,
+    effectiveDurationSeconds,
+    isPlaying,
+    playbarDisplayTrack,
+    playbarDisplayVisualTimeSeconds,
+    settings.playback.systemMediaInfoSync,
+  ]);
 
   const handleClearPlaybackQueue = () => {
     pauseActiveTrackForTransition();
@@ -16276,6 +16432,7 @@ function SettingsScreen({
     copy.settings.sections.playback.title,
     copy.settings.sections.playback.qualityLabel,
     copy.settings.sections.playback.cacheModeLabel,
+    copy.settings.sections.playback.systemMediaInfoSyncLabel,
     copy.settings.sections.playback.preferRemoteLabel,
     copy.settings.sections.playback.songTransitionLabel,
     copy.settings.sections.playback.songTransitionModeLabel,
@@ -18220,6 +18377,20 @@ function SettingsScreen({
                 </span>
               </>
             ) : null}
+            <UISwitch
+              label={copy.settings.sections.playback.systemMediaInfoSyncLabel}
+              description={copy.settings.sections.playback.systemMediaInfoSyncDescription}
+              checked={settings.playback.systemMediaInfoSync}
+              onChange={(checked) =>
+                onUpdate((current) => ({
+                  ...current,
+                  playback: {
+                    ...current.playback,
+                    systemMediaInfoSync: checked,
+                  },
+                }))
+              }
+            />
             {isNeteaseEnabled ? (
               <UISwitch
                 label={copy.settings.sections.playback.preferRemoteLabel}

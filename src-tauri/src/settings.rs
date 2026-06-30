@@ -10,7 +10,7 @@ use fontdb::Database;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 9;
+const SETTINGS_SCHEMA_VERSION: u32 = 10;
 const DEFAULT_SETTINGS_FILE: &str = "app-settings.json";
 pub const DEFAULT_WINDOW_WIDTH: u32 = 960;
 pub const DEFAULT_WINDOW_HEIGHT: u32 = 600;
@@ -195,6 +195,7 @@ pub struct PlaybackSettings {
     pub muted: bool,
     pub playback_mode: String,
     pub cache_mode: String,
+    pub system_media_info_sync: bool,
     pub remember_queue: bool,
     pub remember_playback_position: bool,
     pub autoplay_on_launch: bool,
@@ -222,6 +223,7 @@ impl Default for PlaybackSettings {
             muted: false,
             playback_mode: "ordered".to_string(),
             cache_mode: "stream".to_string(),
+            system_media_info_sync: true,
             remember_queue: true,
             remember_playback_position: true,
             autoplay_on_launch: false,

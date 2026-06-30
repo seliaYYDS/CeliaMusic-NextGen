@@ -39,6 +39,7 @@ use windows::{
     Win32::{
         Foundation::RECT,
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST},
+        UI::Shell::SetCurrentProcessExplicitAppUserModelID,
         UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MBUTTON},
         UI::WindowsAndMessaging::{
             GetClassNameW, GetForegroundWindow, GetWindowRect, IsWindowVisible, SetWindowPos,
@@ -46,6 +47,7 @@ use windows::{
             SWP_SHOWWINDOW,
         },
     },
+    core::PCWSTR,
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -86,6 +88,8 @@ const COMPONENT_DYNAMIC_ISLAND_INIT_SCRIPT: &str =
 const COMPONENT_SONG_INFO_CARD_INIT_SCRIPT: &str =
     "window.__CELIA_WINDOW_KIND__ = 'component-song-info-card';";
 const MAIN_WINDOW_VISIBILITY_EVENT: &str = "app-window-visibility";
+#[cfg(windows)]
+const WINDOWS_APP_USER_MODEL_ID: &str = "com.xchzq.celiamusicnextgen";
 
 #[derive(Default)]
 struct AppRuntimeState {
@@ -530,6 +534,18 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
     Ok(())
 }
 
+#[cfg(windows)]
+fn set_windows_app_user_model_id() {
+    let mut app_id_wide: Vec<u16> = WINDOWS_APP_USER_MODEL_ID.encode_utf16().collect();
+    app_id_wide.push(0);
+
+    unsafe {
+        if let Err(error) = SetCurrentProcessExplicitAppUserModelID(PCWSTR(app_id_wide.as_ptr())) {
+            eprintln!("[windows] failed to set AppUserModelID: {error}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -579,6 +595,9 @@ pub fn run() {
         .setup(|app| {
             let app_handle = app.handle().clone();
             let start_hidden_to_tray = should_start_hidden_to_tray();
+
+            #[cfg(windows)]
+            set_windows_app_user_model_id();
 
             wallpaper::set_log_app_handle(app_handle.clone());
             build_tray(&app_handle)?;

@@ -130,6 +130,7 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
     playback: {
       ...settings.playback,
       defaultVolume: clampInteger(settings.playback.defaultVolume, 0, 100),
+      systemMediaInfoSync: Boolean(settings.playback.systemMediaInfoSync),
       songTransitionStartMs: clampInteger(settings.playback.songTransitionStartMs, 1000, 12000),
     },
     network: {
