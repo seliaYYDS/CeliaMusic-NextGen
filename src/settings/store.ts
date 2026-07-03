@@ -56,12 +56,23 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       componentBackdropBlur: clampInteger(settings.appearance.componentBackdropBlur, 0, 32),
       backgroundDim: clampInteger(settings.appearance.backgroundDim, 0, 100),
       backgroundImageOpacity: clampInteger(settings.appearance.backgroundImageOpacity, 0, 100),
+      startupAnimation:
+        settings.appearance.startupAnimation === "none" ||
+        settings.appearance.startupAnimation === "glitch"
+          ? settings.appearance.startupAnimation
+          : "default",
+      startupAnimationDurationMs: clampInteger(
+        settings.appearance.startupAnimationDurationMs ?? defaultSettings.appearance.startupAnimationDurationMs,
+        800,
+        5000,
+      ),
       globalParticleEffectEnabled: Boolean(settings.appearance.globalParticleEffectEnabled),
       globalParticleEffectType:
         settings.appearance.globalParticleEffectType === "dots" ||
         settings.appearance.globalParticleEffectType === "snow" ||
         settings.appearance.globalParticleEffectType === "sakura" ||
         settings.appearance.globalParticleEffectType === "mist" ||
+        settings.appearance.globalParticleEffectType === "rain" ||
         settings.appearance.globalParticleEffectType === "bloom"
           ? settings.appearance.globalParticleEffectType
           : "lines",
@@ -99,6 +110,26 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       ),
       globalBloomEffectRange: clampInteger(
         settings.appearance.globalBloomEffectRange ?? defaultSettings.appearance.globalBloomEffectRange,
+        0,
+        100,
+      ),
+      globalRainEffectIntensity: clampInteger(
+        settings.appearance.globalRainEffectIntensity ?? defaultSettings.appearance.globalRainEffectIntensity,
+        0,
+        100,
+      ),
+      globalRainEffectSpeed: clampInteger(
+        settings.appearance.globalRainEffectSpeed ?? defaultSettings.appearance.globalRainEffectSpeed,
+        0,
+        100,
+      ),
+      globalRainEffectRange: clampInteger(
+        settings.appearance.globalRainEffectRange ?? defaultSettings.appearance.globalRainEffectRange,
+        0,
+        100,
+      ),
+      globalRainEffectOpacity: clampInteger(
+        settings.appearance.globalRainEffectOpacity ?? defaultSettings.appearance.globalRainEffectOpacity,
         0,
         100,
       ),

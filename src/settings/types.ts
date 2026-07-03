@@ -1,10 +1,14 @@
 export type AppearanceColorScheme = "light" | "dark";
 export type AppearanceBackgroundMode = "theme" | "custom";
+export type StartupAnimationMode =
+  | "none"
+  | "default"
+  | "glitch";
 export type DynamicIslandStyle = "default" | "soft" | "solid";
 export type DynamicIslandColorMode = "follow-theme" | "primary" | "secondary";
 export type DynamicIslandDefaultContent = "time" | "date" | "datetime";
 export type DynamicIslandPosition = "center" | "left" | "right";
-export type GlobalParticleEffectType = "lines" | "dots" | "snow" | "sakura" | "mist" | "bloom";
+export type GlobalParticleEffectType = "lines" | "dots" | "snow" | "sakura" | "mist" | "bloom" | "rain";
 export type GlobalParticleLayer = "top" | "background";
 export type ImmersiveBackgroundMode =
   | "palette-solid"
@@ -47,6 +51,8 @@ export type AppearanceSettings = {
   backgroundDim: number;
   backgroundImagePath: string;
   backgroundImageOpacity: number;
+  startupAnimation: StartupAnimationMode;
+  startupAnimationDurationMs: number;
   useCompactMode: boolean;
   showAlbumArtwork: boolean;
   customThemePrimary: string;
@@ -71,6 +77,10 @@ export type AppearanceSettings = {
   globalBloomEffectIntensity: number;
   globalBloomEffectSpeed: number;
   globalBloomEffectRange: number;
+  globalRainEffectIntensity: number;
+  globalRainEffectSpeed: number;
+  globalRainEffectRange: number;
+  globalRainEffectOpacity: number;
   immersiveBackgroundMode: ImmersiveBackgroundMode;
   immersiveBackgroundAnimated: boolean;
   immersiveBackgroundResolution: number;
@@ -185,6 +195,8 @@ export const createDefaultAppSettings = (): AppSettings => ({
     backgroundDim: 18,
     backgroundImagePath: "",
     backgroundImageOpacity: 82,
+    startupAnimation: "default",
+    startupAnimationDurationMs: 2000,
     useCompactMode: false,
     showAlbumArtwork: true,
     customThemePrimary: "#7aa2d6",
@@ -209,6 +221,10 @@ export const createDefaultAppSettings = (): AppSettings => ({
     globalBloomEffectIntensity: 32,
     globalBloomEffectSpeed: 24,
     globalBloomEffectRange: 36,
+    globalRainEffectIntensity: 80,
+    globalRainEffectSpeed: 50,
+    globalRainEffectRange: 72,
+    globalRainEffectOpacity: 42,
     immersiveBackgroundMode: "flow",
     immersiveBackgroundAnimated: true,
     immersiveBackgroundResolution: 72,

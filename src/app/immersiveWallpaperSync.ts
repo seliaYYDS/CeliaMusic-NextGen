@@ -72,6 +72,8 @@ const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   backgroundDim: 18,
   backgroundImagePath: "",
   backgroundImageOpacity: 82,
+  startupAnimation: "default",
+  startupAnimationDurationMs: 2000,
   useCompactMode: false,
   showAlbumArtwork: true,
   customThemePrimary: "#7aa2d6",
@@ -96,6 +98,10 @@ const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   globalBloomEffectIntensity: 32,
   globalBloomEffectSpeed: 24,
   globalBloomEffectRange: 36,
+  globalRainEffectIntensity: 80,
+  globalRainEffectSpeed: 50,
+  globalRainEffectRange: 72,
+  globalRainEffectOpacity: 42,
   immersiveBackgroundMode: "flow",
   immersiveBackgroundAnimated: true,
   immersiveBackgroundResolution: 72,
@@ -226,6 +232,16 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
       value.backgroundImageOpacity,
       DEFAULT_APPEARANCE_SETTINGS.backgroundImageOpacity,
     ),
+    startupAnimation:
+      value.startupAnimation === "none" ||
+      value.startupAnimation === "default" ||
+      value.startupAnimation === "glitch"
+        ? value.startupAnimation
+        : DEFAULT_APPEARANCE_SETTINGS.startupAnimation,
+    startupAnimationDurationMs: normalizeNumber(
+      value.startupAnimationDurationMs,
+      DEFAULT_APPEARANCE_SETTINGS.startupAnimationDurationMs,
+    ),
     useCompactMode: normalizeBoolean(value.useCompactMode, DEFAULT_APPEARANCE_SETTINGS.useCompactMode),
     showAlbumArtwork: normalizeBoolean(value.showAlbumArtwork, DEFAULT_APPEARANCE_SETTINGS.showAlbumArtwork),
     customThemePrimary: normalizeString(
@@ -274,6 +290,7 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
       value.globalParticleEffectType === "dots" ||
       value.globalParticleEffectType === "bloom" ||
       value.globalParticleEffectType === "mist" ||
+      value.globalParticleEffectType === "rain" ||
       value.globalParticleEffectType === "snow" ||
       value.globalParticleEffectType === "sakura" ||
       value.globalParticleEffectType === "lines"
@@ -324,6 +341,22 @@ function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
     globalBloomEffectRange: normalizeNumber(
       value.globalBloomEffectRange,
       DEFAULT_APPEARANCE_SETTINGS.globalBloomEffectRange,
+    ),
+    globalRainEffectIntensity: normalizeNumber(
+      value.globalRainEffectIntensity,
+      DEFAULT_APPEARANCE_SETTINGS.globalRainEffectIntensity,
+    ),
+    globalRainEffectSpeed: normalizeNumber(
+      value.globalRainEffectSpeed,
+      DEFAULT_APPEARANCE_SETTINGS.globalRainEffectSpeed,
+    ),
+    globalRainEffectRange: normalizeNumber(
+      value.globalRainEffectRange,
+      DEFAULT_APPEARANCE_SETTINGS.globalRainEffectRange,
+    ),
+    globalRainEffectOpacity: normalizeNumber(
+      value.globalRainEffectOpacity,
+      DEFAULT_APPEARANCE_SETTINGS.globalRainEffectOpacity,
     ),
     immersiveBackgroundMode:
       value.immersiveBackgroundMode === "palette-solid" ||

@@ -152,10 +152,10 @@ select {
   opacity: 1;
   filter: blur(0);
   transition:
-    transform 560ms var(--app-greeting-ease),
-    opacity 360ms var(--app-greeting-ease-soft),
-    filter 360ms var(--app-greeting-ease-soft),
-    letter-spacing 420ms var(--app-greeting-ease-soft);
+    transform var(--startup-enter-ms, 560ms) var(--app-greeting-ease),
+    opacity var(--startup-soft-ms, 360ms) var(--app-greeting-ease-soft),
+    filter var(--startup-soft-ms, 360ms) var(--app-greeting-ease-soft),
+    letter-spacing var(--startup-soft-ms, 420ms) var(--app-greeting-ease-soft);
 }
 
 .app-greeting__line--secondary {
@@ -166,10 +166,10 @@ select {
   transform-origin: top center;
   font-size: clamp(1.05rem, 2vw, 1.6rem);
   transition:
-    max-height 560ms var(--app-greeting-ease),
-    opacity 360ms var(--app-greeting-ease-soft),
-    filter 420ms var(--app-greeting-ease-soft),
-    transform 560ms var(--app-greeting-ease);
+    max-height var(--startup-enter-ms, 560ms) var(--app-greeting-ease),
+    opacity var(--startup-soft-ms, 360ms) var(--app-greeting-ease-soft),
+    filter var(--startup-soft-ms, 420ms) var(--app-greeting-ease-soft),
+    transform var(--startup-enter-ms, 560ms) var(--app-greeting-ease);
   overflow: visible;
 }
 
@@ -200,9 +200,207 @@ select {
 }
 
 .app-greeting--exit {
-  transition: opacity 560ms var(--app-greeting-ease-soft);
+  transition: opacity var(--startup-exit-ms, 560ms) var(--app-greeting-ease-soft);
   opacity: 0;
 }
+
+.app-greeting--glitch {
+  overflow: hidden;
+}
+
+
+
+.startup-glitch {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.04), transparent 42%),
+    #000;
+}
+
+.startup-glitch__fx {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.startup-glitch__webgl,
+.startup-glitch__scanlines,
+.startup-glitch__vignette {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.startup-glitch__webgl {
+  opacity: 0.52;
+}
+
+.startup-glitch__scanlines {
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.055) 0,
+      rgba(255, 255, 255, 0.055) 1px,
+      rgba(0, 0, 0, 0) 1px,
+      rgba(0, 0, 0, 0) 4px
+    );
+  mix-blend-mode: screen;
+  opacity: 0.22;
+}
+
+.startup-glitch__vignette {
+  background:
+    radial-gradient(circle at center, transparent 0%, transparent 44%, rgba(0, 0, 0, 0.34) 74%, rgba(0, 0, 0, 0.82) 100%);
+}
+
+.startup-glitch__mark {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  padding: 1rem 1.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+}
+
+.startup-glitch__line {
+  position: relative;
+  display: block;
+  color: rgba(255, 255, 255, 0.94);
+  text-shadow:
+    0 0 14px rgba(255, 255, 255, 0.1);
+  font-size: clamp(1.38rem, 2.7vw, 2.3rem);
+  opacity: 0;
+  filter: blur(10px);
+  transform: translateY(8px) scale(0.985);
+  transition:
+    opacity var(--startup-soft-ms, 280ms) ease-out,
+    filter var(--startup-soft-ms, 280ms) ease-out,
+    transform var(--startup-enter-ms, 420ms) cubic-bezier(0.22, 1, 0.36, 1),
+    letter-spacing var(--startup-soft-ms, 260ms) ease-out;
+}
+
+.app-greeting--hold .startup-glitch__line {
+  opacity: 0.92;
+  filter: blur(0);
+  transform: translateY(0) scale(1);
+}
+
+.app-greeting--expand .startup-glitch__line,
+.app-greeting--exit .startup-glitch__line {
+  opacity: 0.96;
+  filter: blur(0);
+  transform: translateY(-0.08em) scale(1.01);
+  letter-spacing: 0.34em;
+}
+
+.app-greeting--glitch .startup-glitch__line {
+  animation: startup-glitch-jitter var(--startup-jitter-ms, 260ms) steps(2, end) infinite;
+}
+
+.startup-glitch__line--burst {
+  animation:
+    startup-glitch-text-burst var(--startup-burst-ms, 200ms) steps(2, end) 1,
+    startup-glitch-jitter var(--startup-jitter-ms, 260ms) steps(2, end) infinite;
+}
+
+.startup-glitch__cutoff {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(42vw, 420px);
+  height: 0.42em;
+  background: #000;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  animation: startup-glitch-cutoff var(--startup-cutoff-ms, 160ms) steps(2, end) 1;
+  pointer-events: none;
+  z-index: 2;
+}
+
+
+
+.app-greeting--exit .startup-glitch__line {
+  opacity: 0;
+  filter: blur(12px);
+  transform: translateY(-0.42em) scale(0.972);
+}
+
+@keyframes startup-glitch-jitter {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  20% {
+    transform: translate3d(1px, 0, 0);
+  }
+  40% {
+    transform: translate3d(-1px, 0, 0);
+  }
+  60% {
+    transform: translate3d(2px, -1px, 0);
+  }
+  80% {
+    transform: translate3d(-2px, 1px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes startup-glitch-text-burst {
+  0% {
+    opacity: 0.2;
+    filter: blur(6px);
+    transform: translate3d(0, 0, 0) scaleX(1);
+  }
+  25% {
+    opacity: 0.98;
+    filter: blur(0);
+    transform: translate3d(-10px, 0, 0) scaleX(1.03);
+  }
+  50% {
+    opacity: 0.18;
+    filter: blur(2px);
+    transform: translate3d(12px, 0, 0) scaleX(0.98);
+  }
+  75% {
+    opacity: 0.96;
+    filter: blur(0);
+    transform: translate3d(-4px, 0, 0) scaleX(1.01);
+  }
+  100% {
+    opacity: 0.96;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scaleX(1);
+  }
+}
+
+@keyframes startup-glitch-cutoff {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scaleX(0.28);
+  }
+  35% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scaleX(1.08);
+  }
+  70% {
+    opacity: 0.88;
+    transform: translate(-50%, calc(-50% + 4px)) scaleX(0.82);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scaleX(0.16);
+  }
+}
+
+
 
 .app-shell__surface {
   display: grid;
@@ -839,6 +1037,10 @@ select {
   min-width: 0;
   animation: workspace-page-enter 320ms cubic-bezier(0.22, 1, 0.36, 1);
   will-change: opacity, transform, filter;
+}
+
+.workspace__page--startup-static {
+  animation: none;
 }
 
 .workspace-placeholder,

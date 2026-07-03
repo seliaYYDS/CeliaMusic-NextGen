@@ -97,6 +97,8 @@ pub struct AppearanceSettings {
     pub background_dim: u8,
     pub background_image_path: String,
     pub background_image_opacity: u8,
+    pub startup_animation: String,
+    pub startup_animation_duration_ms: u16,
     pub use_compact_mode: bool,
     pub show_album_artwork: bool,
     pub show_dynamic_island: bool,
@@ -122,6 +124,10 @@ pub struct AppearanceSettings {
     pub global_bloom_effect_intensity: u8,
     pub global_bloom_effect_speed: u8,
     pub global_bloom_effect_range: u8,
+    pub global_rain_effect_intensity: u8,
+    pub global_rain_effect_speed: u8,
+    pub global_rain_effect_range: u8,
+    pub global_rain_effect_opacity: u8,
     pub immersive_background_mode: String,
     pub immersive_background_animated: bool,
     pub immersive_background_resolution: u8,
@@ -150,6 +156,8 @@ impl Default for AppearanceSettings {
             background_dim: 18,
             background_image_path: String::new(),
             background_image_opacity: 82,
+            startup_animation: "default".to_string(),
+            startup_animation_duration_ms: 2000,
             use_compact_mode: false,
             show_album_artwork: true,
             show_dynamic_island: false,
@@ -175,6 +183,10 @@ impl Default for AppearanceSettings {
             global_bloom_effect_intensity: 32,
             global_bloom_effect_speed: 24,
             global_bloom_effect_range: 36,
+            global_rain_effect_intensity: 80,
+            global_rain_effect_speed: 50,
+            global_rain_effect_range: 72,
+            global_rain_effect_opacity: 42,
             immersive_background_mode: "flow".to_string(),
             immersive_background_animated: true,
             immersive_background_resolution: 72,
@@ -594,6 +606,13 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         sanitize_non_empty_or_empty(settings.appearance.background_image_path);
     settings.appearance.background_image_opacity =
         settings.appearance.background_image_opacity.min(100);
+    settings.appearance.startup_animation = sanitize_limited_value(
+        settings.appearance.startup_animation,
+        &["none", "default", "glitch"],
+        "default",
+    );
+    settings.appearance.startup_animation_duration_ms =
+        settings.appearance.startup_animation_duration_ms.clamp(800, 5000);
     settings.appearance.custom_theme_primary =
         sanitize_hex_color(settings.appearance.custom_theme_primary, "#7aa2d6");
     settings.appearance.custom_theme_secondary =
@@ -622,7 +641,7 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     );
     settings.appearance.global_particle_effect_type = sanitize_limited_value(
         settings.appearance.global_particle_effect_type,
-        &["lines", "dots", "snow", "sakura", "mist", "bloom"],
+        &["lines", "dots", "snow", "sakura", "mist", "bloom", "rain"],
         "lines",
     );
     settings.appearance.global_particle_effect_layer = sanitize_limited_value(
@@ -652,6 +671,14 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         settings.appearance.global_bloom_effect_speed.clamp(0, 100);
     settings.appearance.global_bloom_effect_range =
         settings.appearance.global_bloom_effect_range.clamp(0, 100);
+    settings.appearance.global_rain_effect_intensity =
+        settings.appearance.global_rain_effect_intensity.clamp(0, 100);
+    settings.appearance.global_rain_effect_speed =
+        settings.appearance.global_rain_effect_speed.clamp(0, 100);
+    settings.appearance.global_rain_effect_range =
+        settings.appearance.global_rain_effect_range.clamp(0, 100);
+    settings.appearance.global_rain_effect_opacity =
+        settings.appearance.global_rain_effect_opacity.clamp(0, 100);
     settings.appearance.immersive_background_mode = sanitize_limited_value(
         settings.appearance.immersive_background_mode,
         &[

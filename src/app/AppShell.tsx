@@ -174,9 +174,8 @@ const SHORTCUT_EDITOR_CLOSE_DURATION_MS = 180;
 const IMMERSIVE_PLAYER_CLOSE_DURATION_MS = 560;
 const IMMERSIVE_TRACK_TRANSITION_DURATION_MS = 860;
 const IMMERSIVE_INSTRUMENTAL_PANEL_COLLAPSE_DURATION_MS = 420;
-const APP_GREETING_HOLD_MS = 500;
-const APP_GREETING_VISIBLE_MS = 1000;
-const APP_GREETING_EXIT_MS = 520;
+const STARTUP_ANIMATION_DURATION_MIN_MS = 800;
+const STARTUP_ANIMATION_DURATION_MAX_MS = 5000;
 const PAUSE_FADE_DURATION_MS = 220;
 const SONG_TRANSITION_MIN_MS = 1000;
 const SONG_TRANSITION_MAX_MS = 12000;
@@ -685,6 +684,12 @@ const UI_COPY = {
           fontSearchPlaceholder: "搜索字体名称",
           fontSearchEmpty: "没有找到匹配的字体。",
           themeLabel: "主题风格",
+          startupAnimationLabel: "启动动画",
+          startupAnimationDurationLabel: "动画持续时间",
+          startupAnimationDurationHelper: "所有启动动画共享这个总时长，系统会自动分配各阶段时间。",
+          startupAnimationNone: "无",
+          startupAnimationDefault: "默认",
+          startupAnimationGlitch: "故障",
           followArtworkThemeLabel: "主题跟随歌曲封面",
           followArtworkThemeDescription: "播放时临时跟随封面配色。",
           compactLabel: "紧凑布局",
@@ -1053,6 +1058,13 @@ const UI_COPY = {
           fontSearchPlaceholder: "Search fonts",
           fontSearchEmpty: "No matching fonts found.",
           themeLabel: "Theme Style",
+          startupAnimationLabel: "Startup Animation",
+          startupAnimationDurationLabel: "Animation Duration",
+          startupAnimationDurationHelper:
+            "All startup animations use this total duration, and each phase is allocated automatically.",
+          startupAnimationNone: "None",
+          startupAnimationDefault: "Default",
+          startupAnimationGlitch: "Glitch",
           followArtworkThemeLabel: "Follow Song Artwork",
           followArtworkThemeDescription:
             "Temporarily recolor the app from the current cover art while a song is playing without changing the saved theme.",
@@ -1685,12 +1697,17 @@ function getThemeEditorCopy(locale: string) {
       globalBloomIntensityLabel: "Glow Intensity",
       globalBloomSpeedLabel: "Pulse Speed",
       globalBloomRangeLabel: "Glow Radius",
+      globalRainIntensityLabel: "Rain Density",
+      globalRainOpacityLabel: "Rain Opacity",
+      globalRainSpeedLabel: "Rain Speed",
+      globalRainRangeLabel: "Blur Radius",
       globalParticleTypeLines: "Lines",
       globalParticleTypeDots: "Dots",
       globalParticleTypeSnow: "Snow",
       globalParticleTypeSakura: "Sakura",
       globalParticleTypeMist: "Old TV",
       globalParticleTypeBloom: "Bloom",
+      globalParticleTypeRain: "Rain",
       immersiveBackgroundTitle: "Immersive Background",
       immersiveBackgroundDescription: "Choose the background style for the immersive player.",
       immersiveBackgroundModeLabel: "Immersive Background",
@@ -1774,12 +1791,17 @@ function getThemeEditorCopy(locale: string) {
     globalBloomIntensityLabel: "发光强度",
     globalBloomSpeedLabel: "呼吸速度",
     globalBloomRangeLabel: "发光范围",
+    globalRainIntensityLabel: "雨量密度",
+    globalRainOpacityLabel: "雨滴透明度",
+    globalRainSpeedLabel: "下雨速度",
+    globalRainRangeLabel: "模糊范围",
     globalParticleTypeLines: "连线",
     globalParticleTypeDots: "散点",
     globalParticleTypeSnow: "雪花",
     globalParticleTypeSakura: "樱花",
     globalParticleTypeMist: "老电视",
     globalParticleTypeBloom: "Bloom",
+    globalParticleTypeRain: "雨天",
     immersiveBackgroundTitle: "沉浸式背景",
     immersiveBackgroundDescription: "选择沉浸式播放页的背景样式。",
     immersiveBackgroundModeLabel: "沉浸式背景",
@@ -2696,6 +2718,11 @@ function resolveBackgroundMediaSrc(path: string) {
     console.error("[theme] failed to resolve background media", error);
     return null;
   }
+}
+
+function extractBackgroundImageUrl(backgroundImageStyle: string) {
+  const match = backgroundImageStyle.match(/url\((['"]?)(.*?)\1\)/i);
+  return match?.[2] || null;
 }
 
 function getPathExtension(path: string) {
@@ -3863,7 +3890,13 @@ function getLibrarySongBrowserCopy(locale: string) {
   };
 }
 
-export function AppShell() {
+export function AppShell({
+  initialStartupAnimationMode,
+  initialStartupAnimationDurationMs,
+}: {
+  initialStartupAnimationMode: AppSettings["appearance"]["startupAnimation"];
+  initialStartupAnimationDurationMs: number;
+}) {
   const [isMaximized, setIsMaximized] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeNav, setActiveNav] = useState<NavId>("home");
@@ -3980,11 +4013,19 @@ export function AppShell() {
     useState<LocalNeteaseApiServerStatus | null>(null);
   const localNeteaseApiStatusRef = useRef<LocalNeteaseApiServerStatus | null>(null);
   const [appGreetingPhase, setAppGreetingPhase] = useState<"hold" | "expand" | "exit" | "hidden">(
-    "hold",
+    initialStartupAnimationMode === "none" ? "hidden" : "hold",
   );
   const [isAppWindowVisible, setIsAppWindowVisible] = useState(true);
   const [isDocumentVisible, setIsDocumentVisible] = useState(() =>
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
+  );
+  const startupAnimationTiming = useMemo(
+    () =>
+      resolveStartupAnimationTiming(
+        initialStartupAnimationMode,
+        initialStartupAnimationDurationMs,
+      ),
+    [initialStartupAnimationDurationMs, initialStartupAnimationMode],
   );
   const [currentTimeLabel, setCurrentTimeLabel] = useState(() =>
     formatDynamicIslandPrimaryLabel(
@@ -4162,6 +4203,10 @@ export function AppShell() {
     backgroundMediaKind === "image"
       ? resolveBackgroundImageStyle(settings.appearance.backgroundImagePath)
       : "none";
+  const backgroundImageSrc =
+    backgroundMediaKind === "image"
+      ? resolveBackgroundMediaSrc(settings.appearance.backgroundImagePath)
+      : null;
   const backgroundVideoSrc =
     backgroundMediaKind === "video"
       ? resolveBackgroundMediaSrc(settings.appearance.backgroundImagePath)
@@ -4214,6 +4259,13 @@ export function AppShell() {
   const isGlobalContainerFilterEnabled =
     settings.appearance.globalParticleEffectEnabled &&
     (globalFilterType === "mist" || globalFilterType === "bloom");
+  const isGlobalRainCanvasEnabled =
+    settings.appearance.globalParticleEffectEnabled &&
+    globalFilterType === "rain";
+  const showAppShellRainBackgroundLayer =
+    isGlobalRainCanvasEnabled && settings.appearance.globalParticleEffectLayer === "background";
+  const showAppShellRainTopLayer =
+    isGlobalRainCanvasEnabled && settings.appearance.globalParticleEffectLayer === "top";
   const appShellAnalogFilterStyle = !isGlobalContainerFilterEnabled
     ? undefined
     : globalFilterType === "bloom"
@@ -4229,6 +4281,30 @@ export function AppShell() {
           settings.appearance.globalFilterEffectRange,
         )
         : undefined;
+
+  useEffect(() => {
+    if (settings.appearance.globalParticleEffectEnabled && settings.appearance.globalParticleEffectType === "rain") {
+      console.debug("[rain-effect] app-shell enabled", {
+        layer: settings.appearance.globalParticleEffectLayer,
+        intensity: settings.appearance.globalRainEffectIntensity,
+        opacity: settings.appearance.globalRainEffectOpacity,
+        speed: settings.appearance.globalRainEffectSpeed,
+        range: settings.appearance.globalRainEffectRange,
+        backgroundImageSrc,
+        backgroundVideoSrc: effectiveBackgroundVideoSrc,
+      });
+    }
+  }, [
+    backgroundImageSrc,
+    effectiveBackgroundVideoSrc,
+    settings.appearance.globalParticleEffectEnabled,
+    settings.appearance.globalParticleEffectLayer,
+    settings.appearance.globalParticleEffectType,
+    settings.appearance.globalRainEffectIntensity,
+    settings.appearance.globalRainEffectOpacity,
+    settings.appearance.globalRainEffectRange,
+    settings.appearance.globalRainEffectSpeed,
+  ]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--app-font-family", configuredAppFontFamily);
@@ -6474,24 +6550,29 @@ export function AppShell() {
   }, [copy.locale]);
 
   useEffect(() => {
+    if (initialStartupAnimationMode === "none") {
+      setAppGreetingPhase("hidden");
+      return;
+    }
+
     const expandTimer = window.setTimeout(() => {
       setAppGreetingPhase("expand");
-    }, APP_GREETING_HOLD_MS);
+    }, startupAnimationTiming.holdMs);
 
     const exitTimer = window.setTimeout(() => {
       setAppGreetingPhase("exit");
-    }, APP_GREETING_HOLD_MS + APP_GREETING_VISIBLE_MS);
+    }, startupAnimationTiming.holdMs + startupAnimationTiming.mainMs);
 
     const hideTimer = window.setTimeout(() => {
       setAppGreetingPhase("hidden");
-    }, APP_GREETING_HOLD_MS + APP_GREETING_VISIBLE_MS + APP_GREETING_EXIT_MS);
+    }, startupAnimationTiming.totalMs);
 
     return () => {
       window.clearTimeout(expandTimer);
       window.clearTimeout(exitTimer);
       window.clearTimeout(hideTimer);
     };
-  }, []);
+  }, [initialStartupAnimationMode, startupAnimationTiming]);
 
   useEffect(() => {
     if (isSettingsLoading) {
@@ -14055,6 +14136,17 @@ export function AppShell() {
     </button>
   );
 
+  const appGreetingStyle = {
+    "--startup-total-ms": `${startupAnimationTiming.totalMs}ms`,
+    "--startup-main-ms": `${startupAnimationTiming.mainMs}ms`,
+    "--startup-enter-ms": `${startupAnimationTiming.enterTransitionMs}ms`,
+    "--startup-soft-ms": `${startupAnimationTiming.softTransitionMs}ms`,
+    "--startup-exit-ms": `${startupAnimationTiming.exitMs}ms`,
+    "--startup-jitter-ms": `${startupAnimationTiming.jitterMs}ms`,
+    "--startup-burst-ms": `${startupAnimationTiming.burstMs}ms`,
+    "--startup-cutoff-ms": `${startupAnimationTiming.cutoffMs}ms`,
+  } as CSSProperties;
+
   return (
     <div
       className={[
@@ -14072,20 +14164,32 @@ export function AppShell() {
         <div
           className={[
             "app-greeting",
+            initialStartupAnimationMode === "glitch" ? "app-greeting--glitch" : "",
             `app-greeting--${appGreetingPhase}`,
           ].join(" ")}
+          style={appGreetingStyle}
           aria-hidden="true"
         >
-          <div className="app-greeting__mark">
-            <span className="app-greeting__line app-greeting__line--primary">CELIA MUSIC</span>
-            <span className="app-greeting__line app-greeting__line--secondary">NEXT GEN</span>
-          </div>
+          {renderStartupGreeting(initialStartupAnimationMode, appGreetingPhase)}
         </div>
+      ) : null}
+      {showAppShellRainTopLayer ? (
+        <GlobalRainCanvas
+          enabled={true}
+          layer="top"
+          intensity={settings.appearance.globalRainEffectIntensity}
+          opacity={settings.appearance.globalRainEffectOpacity}
+          speed={settings.appearance.globalRainEffectSpeed}
+          range={settings.appearance.globalRainEffectRange}
+          colorScheme={settings.appearance.colorScheme}
+          imageSrc={backgroundImageSrc}
+        />
       ) : null}
       {settings.appearance.globalParticleEffectEnabled &&
       settings.appearance.globalParticleEffectLayer === "top" &&
       settings.appearance.globalParticleEffectType !== "mist" &&
-      settings.appearance.globalParticleEffectType !== "bloom" ? (
+      settings.appearance.globalParticleEffectType !== "bloom" &&
+      settings.appearance.globalParticleEffectType !== "rain" ? (
         <GlobalParticleCanvas
           enabled={true}
           effectType={settings.appearance.globalParticleEffectType}
@@ -14125,10 +14229,23 @@ export function AppShell() {
             />
           )
         ) : null}
+        {showAppShellRainBackgroundLayer ? (
+          <GlobalRainCanvas
+            enabled={true}
+            layer="background"
+            intensity={settings.appearance.globalRainEffectIntensity}
+            opacity={settings.appearance.globalRainEffectOpacity}
+            speed={settings.appearance.globalRainEffectSpeed}
+            range={settings.appearance.globalRainEffectRange}
+            colorScheme={settings.appearance.colorScheme}
+            imageSrc={backgroundImageSrc}
+          />
+        ) : null}
         {settings.appearance.globalParticleEffectEnabled &&
         settings.appearance.globalParticleEffectLayer === "background" &&
         settings.appearance.globalParticleEffectType !== "mist" &&
-        settings.appearance.globalParticleEffectType !== "bloom" ? (
+        settings.appearance.globalParticleEffectType !== "bloom" &&
+        settings.appearance.globalParticleEffectType !== "rain" ? (
           <GlobalParticleCanvas
             enabled={true}
             effectType={settings.appearance.globalParticleEffectType}
@@ -14368,7 +14485,15 @@ export function AppShell() {
           ) : null}
 
           <div className="workspace__canvas">
-            <div key={workspaceTransitionKey} className="workspace__page">
+            <div
+              key={workspaceTransitionKey}
+              className={[
+                "workspace__page",
+                initialStartupAnimationMode === "none" ? "workspace__page--startup-static" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
               {workspaceScreen}
             </div>
             {workspaceLoadingMessage ? (
@@ -15991,6 +16116,10 @@ function SettingsScreen({
       label: themeEditorCopy.globalParticleTypeBloom,
       value: "bloom",
     },
+    {
+      label: themeEditorCopy.globalParticleTypeRain,
+      value: "rain",
+    },
   ];
 
   useEffect(() => {
@@ -16094,13 +16223,20 @@ function SettingsScreen({
   ];
   const isGlobalOldTvEffect = settings.appearance.globalParticleEffectType === "mist";
   const isGlobalBloomEffect = settings.appearance.globalParticleEffectType === "bloom";
-  const isGlobalFilterEffect = isGlobalOldTvEffect || isGlobalBloomEffect;
+  const isGlobalRainEffect = settings.appearance.globalParticleEffectType === "rain";
+  const isGlobalFilterEffect = isGlobalOldTvEffect || isGlobalBloomEffect || isGlobalRainEffect;
   const globalFilterControlLabels = isGlobalBloomEffect
       ? {
         intensity: themeEditorCopy.globalBloomIntensityLabel,
         speed: themeEditorCopy.globalBloomSpeedLabel,
         range: themeEditorCopy.globalBloomRangeLabel,
       }
+      : isGlobalRainEffect
+        ? {
+          intensity: themeEditorCopy.globalRainIntensityLabel,
+          speed: themeEditorCopy.globalRainSpeedLabel,
+          range: themeEditorCopy.globalRainRangeLabel,
+        }
       : {
         intensity: themeEditorCopy.globalFilterIntensityLabel,
         speed: themeEditorCopy.globalFilterSpeedLabel,
@@ -16112,6 +16248,12 @@ function SettingsScreen({
         speed: settings.appearance.globalBloomEffectSpeed,
         range: settings.appearance.globalBloomEffectRange,
       }
+      : isGlobalRainEffect
+        ? {
+          intensity: settings.appearance.globalRainEffectIntensity,
+          speed: settings.appearance.globalRainEffectSpeed,
+          range: settings.appearance.globalRainEffectRange,
+        }
       : {
         intensity: settings.appearance.globalFilterEffectIntensity,
         speed: settings.appearance.globalFilterEffectSpeed,
@@ -16197,6 +16339,20 @@ function SettingsScreen({
     {
       label: copy.settings.sections.dynamicIsland.positionRight,
       value: "right",
+    },
+  ];
+  const startupAnimationOptions: UISelectOption[] = [
+    {
+      label: copy.settings.sections.appearance.startupAnimationNone,
+      value: "none",
+    },
+    {
+      label: copy.settings.sections.appearance.startupAnimationDefault,
+      value: "default",
+    },
+    {
+      label: copy.settings.sections.appearance.startupAnimationGlitch,
+      value: "glitch",
     },
   ];
   const appFontOptions: UISelectOption[] = [
@@ -16327,6 +16483,16 @@ function SettingsScreen({
     themeEditorCopy.globalParticleFallSpeedLabel,
     themeEditorCopy.globalParticleCountLabel,
     themeEditorCopy.globalParticleSizeLabel,
+    themeEditorCopy.globalFilterIntensityLabel,
+    themeEditorCopy.globalFilterSpeedLabel,
+    themeEditorCopy.globalFilterRangeLabel,
+    themeEditorCopy.globalBloomIntensityLabel,
+    themeEditorCopy.globalBloomSpeedLabel,
+    themeEditorCopy.globalBloomRangeLabel,
+    themeEditorCopy.globalRainIntensityLabel,
+    themeEditorCopy.globalRainOpacityLabel,
+    themeEditorCopy.globalRainSpeedLabel,
+    themeEditorCopy.globalRainRangeLabel,
     themeEditorCopy.immersiveBackgroundModeLabel,
     themeEditorCopy.immersiveBackgroundDescription,
     themeEditorCopy.immersiveBackgroundAnimatedLabel,
@@ -16358,6 +16524,10 @@ function SettingsScreen({
     settings.appearance.globalBloomEffectIntensity,
     settings.appearance.globalBloomEffectSpeed,
     settings.appearance.globalBloomEffectRange,
+    settings.appearance.globalRainEffectIntensity,
+    settings.appearance.globalRainEffectOpacity,
+    settings.appearance.globalRainEffectSpeed,
+    settings.appearance.globalRainEffectRange,
     settings.appearance.immersiveBackgroundMode,
     settings.appearance.immersiveBackgroundAnimated,
     settings.appearance.immersiveBackgroundResolution,
@@ -16372,9 +16542,13 @@ function SettingsScreen({
     copy.settings.sections.appearance.title,
     copy.settings.sections.appearance.languageLabel,
     copy.settings.sections.appearance.themeLabel,
+    copy.settings.sections.appearance.startupAnimationLabel,
+    copy.settings.sections.appearance.startupAnimationDurationLabel,
     copy.settings.sections.appearance.fontLabel,
     copy.settings.sections.appearance.fontWeightLabel,
     settings.appearance.language,
+    settings.appearance.startupAnimation,
+    settings.appearance.startupAnimationDurationMs,
     settings.appearance.themeMode,
     settings.appearance.fontFamily,
     settings.appearance.fontWeight,
@@ -17319,11 +17493,32 @@ function SettingsScreen({
                               ...current.appearance,
                               ...(isGlobalBloomEffect
                                 ? { globalBloomEffectIntensity: value }
+                                : isGlobalRainEffect
+                                  ? { globalRainEffectIntensity: value }
                                 : { globalFilterEffectIntensity: value }),
                             },
                           }))
                         }
                       />
+                      {isGlobalRainEffect ? (
+                        <UISlider
+                          label={themeEditorCopy.globalRainOpacityLabel}
+                          value={settings.appearance.globalRainEffectOpacity}
+                          min={0}
+                          max={100}
+                          step={1}
+                          valueSuffix="%"
+                          onChange={(value) =>
+                            onUpdate((current) => ({
+                              ...current,
+                              appearance: {
+                                ...current.appearance,
+                                globalRainEffectOpacity: value,
+                              },
+                            }))
+                          }
+                        />
+                      ) : null}
                       <UISlider
                         label={globalFilterControlLabels.speed}
                         value={globalFilterControlValues.speed}
@@ -17338,6 +17533,8 @@ function SettingsScreen({
                               ...current.appearance,
                               ...(isGlobalBloomEffect
                                 ? { globalBloomEffectSpeed: value }
+                                : isGlobalRainEffect
+                                  ? { globalRainEffectSpeed: value }
                                 : { globalFilterEffectSpeed: value }),
                             },
                           }))
@@ -17357,6 +17554,8 @@ function SettingsScreen({
                               ...current.appearance,
                               ...(isGlobalBloomEffect
                                 ? { globalBloomEffectRange: value }
+                                : isGlobalRainEffect
+                                  ? { globalRainEffectRange: value }
                                 : { globalFilterEffectRange: value }),
                             },
                           }))
@@ -17751,6 +17950,67 @@ function SettingsScreen({
                   }))
                 }
               />
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="appearance-startup-animation"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("appearance-startup-animation")}
+              searchParts={[
+                copy.settings.sections.appearance.startupAnimationLabel,
+                settings.appearance.startupAnimation,
+                ...getSearchableOptions(startupAnimationOptions),
+              ]}
+            >
+              <UISelect
+                label={copy.settings.sections.appearance.startupAnimationLabel}
+                value={settings.appearance.startupAnimation}
+                options={startupAnimationOptions}
+                onChange={(value) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    appearance: {
+                      ...current.appearance,
+                      startupAnimation: value as AppSettings["appearance"]["startupAnimation"],
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="appearance-startup-animation-duration"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("appearance-startup-animation-duration")}
+              searchParts={[
+                copy.settings.sections.appearance.startupAnimationDurationLabel,
+                copy.settings.sections.appearance.startupAnimationDurationHelper,
+                settings.appearance.startupAnimationDurationMs,
+              ]}
+            >
+              <>
+                <UISlider
+                  label={copy.settings.sections.appearance.startupAnimationDurationLabel}
+                  value={settings.appearance.startupAnimationDurationMs}
+                  min={STARTUP_ANIMATION_DURATION_MIN_MS}
+                  max={STARTUP_ANIMATION_DURATION_MAX_MS}
+                  step={100}
+                  onChange={(value) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      appearance: {
+                        ...current.appearance,
+                        startupAnimationDurationMs: clampNumber(
+                          Math.round(value / 100) * 100,
+                          STARTUP_ANIMATION_DURATION_MIN_MS,
+                          STARTUP_ANIMATION_DURATION_MAX_MS,
+                        ),
+                      },
+                    }))
+                  }
+                />
+                <span className="ui-field__helper">
+                  {copy.settings.sections.appearance.startupAnimationDurationHelper}
+                </span>
+              </>
             </SettingsSearchItem>
             <SettingsSearchItem
               itemKey="appearance-font"
@@ -19046,6 +19306,68 @@ function SettingsScreen({
       </div>
     </section>
   );
+}
+
+function resolveStartupAnimationTiming(
+  mode: AppSettings["appearance"]["startupAnimation"],
+  totalDurationMs: number,
+) {
+  const totalMs = clampNumber(
+    totalDurationMs,
+    STARTUP_ANIMATION_DURATION_MIN_MS,
+    STARTUP_ANIMATION_DURATION_MAX_MS,
+  );
+
+  if (mode === "glitch") {
+    const holdMs = Math.round(totalMs * 0.24);
+    const exitMs = Math.round(totalMs * 0.22);
+    const mainMs = Math.max(200, totalMs - holdMs - exitMs);
+
+    return {
+      totalMs,
+      holdMs,
+      mainMs,
+      exitMs,
+      enterTransitionMs: Math.max(180, Math.round(mainMs * 0.52)),
+      softTransitionMs: Math.max(140, Math.round(mainMs * 0.36)),
+      jitterMs: Math.max(140, Math.round(mainMs * 0.26)),
+      burstMs: Math.max(120, Math.round(mainMs * 0.2)),
+      cutoffMs: Math.max(110, Math.round(mainMs * 0.16)),
+    };
+  }
+
+  const holdMs = Math.round(totalMs * 0.25);
+  const exitMs = Math.round(totalMs * 0.24);
+  const mainMs = Math.max(220, totalMs - holdMs - exitMs);
+
+  return {
+    totalMs,
+    holdMs,
+    mainMs,
+    exitMs,
+    enterTransitionMs: Math.max(200, Math.round(mainMs * 0.54)),
+    softTransitionMs: Math.max(150, Math.round(mainMs * 0.4)),
+    jitterMs: 0,
+    burstMs: 0,
+    cutoffMs: 0,
+  };
+}
+
+function renderStartupGreeting(
+  mode: AppSettings["appearance"]["startupAnimation"],
+  phase: "hold" | "expand" | "exit" | "hidden",
+) {
+  switch (mode) {
+    case "glitch":
+      return <StartupGlitchGreeting phase={phase} />;
+    default:
+      return (
+        <div className="app-greeting__mark">
+          <span className="app-greeting__line app-greeting__line--primary">CELIA MUSIC</span>
+          <span className="app-greeting__line app-greeting__line--secondary">NEXT GEN</span>
+        </div>
+      );
+  }
 }
 
 function ThemePreviewCard({ settings }: { settings: AppSettings }) {
@@ -24625,16 +24947,25 @@ export function ImmersivePlayerOverlay({
   const showGlobalAnalogFilter =
     appearanceSettings.globalParticleEffectEnabled &&
     (globalImmersiveFilterType === "mist" || globalImmersiveFilterType === "bloom");
+  const showGlobalRainCanvas =
+    appearanceSettings.globalParticleEffectEnabled &&
+    globalImmersiveFilterType === "rain";
+  const showGlobalRainBackgroundLayer =
+    showGlobalRainCanvas && appearanceSettings.globalParticleEffectLayer === "background";
+  const showGlobalRainTopLayer =
+    showGlobalRainCanvas && appearanceSettings.globalParticleEffectLayer === "top";
   const showGlobalParticleBackgroundLayer =
     appearanceSettings.globalParticleEffectEnabled &&
     appearanceSettings.globalParticleEffectLayer === "background" &&
     appearanceSettings.globalParticleEffectType !== "mist" &&
-    appearanceSettings.globalParticleEffectType !== "bloom";
+    appearanceSettings.globalParticleEffectType !== "bloom" &&
+    appearanceSettings.globalParticleEffectType !== "rain";
   const showGlobalParticleTopLayer =
     appearanceSettings.globalParticleEffectEnabled &&
     appearanceSettings.globalParticleEffectLayer === "top" &&
     appearanceSettings.globalParticleEffectType !== "mist" &&
-    appearanceSettings.globalParticleEffectType !== "bloom";
+    appearanceSettings.globalParticleEffectType !== "bloom" &&
+    appearanceSettings.globalParticleEffectType !== "rain";
   const immersiveAnalogFilterStyle = showGlobalAnalogFilter
     ? globalImmersiveFilterType === "bloom"
       ? buildGlobalBloomFilterSurfaceStyle(
@@ -24660,8 +24991,37 @@ export function ImmersivePlayerOverlay({
   const showAppBackgroundVideo = showAppBackground && Boolean(appBackgroundVideoSrc);
   const showAppBackgroundImage =
     showAppBackground && !showAppBackgroundVideo && appBackgroundImageStyle !== "none";
+  const appBackgroundImageSrc = showAppBackgroundImage ? extractBackgroundImageUrl(appBackgroundImageStyle) : null;
   const shouldSyncAppBackgroundMv = showAppBackgroundVideo && !appBackgroundVideoLoop;
   const shouldSyncImmersiveBackgroundMv = showBackgroundMvVideo;
+
+  useEffect(() => {
+    if (appearanceSettings.globalParticleEffectEnabled && appearanceSettings.globalParticleEffectType === "rain") {
+      console.debug("[rain-effect] immersive enabled", {
+        layer: appearanceSettings.globalParticleEffectLayer,
+        intensity: appearanceSettings.globalRainEffectIntensity,
+        opacity: appearanceSettings.globalRainEffectOpacity,
+        speed: appearanceSettings.globalRainEffectSpeed,
+        range: appearanceSettings.globalRainEffectRange,
+        appBackgroundImageSrc,
+        immersiveBackgroundVideoSrc,
+        artworkUrl,
+        showArtworkBlurBackground,
+      });
+    }
+  }, [
+    appBackgroundImageSrc,
+    appearanceSettings.globalParticleEffectEnabled,
+    appearanceSettings.globalParticleEffectLayer,
+    appearanceSettings.globalParticleEffectType,
+    appearanceSettings.globalRainEffectIntensity,
+    appearanceSettings.globalRainEffectOpacity,
+    appearanceSettings.globalRainEffectRange,
+    appearanceSettings.globalRainEffectSpeed,
+    artworkUrl,
+    immersiveBackgroundVideoSrc,
+    showArtworkBlurBackground,
+  ]);
   const backgroundMvBlurPx = clampNumber(appearanceSettings.immersiveBackgroundMvBlur ?? 18, 0, 48);
   const backgroundMvDimOpacity = clamp01((appearanceSettings.immersiveBackgroundMvDim ?? 28) / 100);
   const immersiveVeilBlurPx = showAppBackground
@@ -25000,6 +25360,19 @@ export function ImmersivePlayerOverlay({
             appearanceSettings={appearanceSettings}
           />
         ) : null}
+        {showGlobalRainBackgroundLayer ? (
+          <GlobalRainCanvas
+            enabled={true}
+            layer="background"
+            intensity={appearanceSettings.globalRainEffectIntensity}
+            opacity={appearanceSettings.globalRainEffectOpacity}
+            speed={appearanceSettings.globalRainEffectSpeed}
+            range={appearanceSettings.globalRainEffectRange}
+            colorScheme={appearanceSettings.colorScheme}
+            imageSrc={showArtworkBlurBackground ? artworkUrl : appBackgroundImageSrc}
+            className="immersive-player__global-particles"
+          />
+        ) : null}
         {showGlobalParticleBackgroundLayer ? (
           <GlobalParticleCanvas
             enabled={true}
@@ -25018,6 +25391,19 @@ export function ImmersivePlayerOverlay({
         />
         ) : null}
       </div>
+      {showGlobalRainTopLayer ? (
+        <GlobalRainCanvas
+          enabled={true}
+          layer="top"
+          intensity={appearanceSettings.globalRainEffectIntensity}
+          opacity={appearanceSettings.globalRainEffectOpacity}
+          speed={appearanceSettings.globalRainEffectSpeed}
+          range={appearanceSettings.globalRainEffectRange}
+          colorScheme={appearanceSettings.colorScheme}
+          imageSrc={showArtworkBlurBackground ? artworkUrl : appBackgroundImageSrc}
+          className="immersive-player__global-particles"
+        />
+      ) : null}
       {showGlobalParticleTopLayer ? (
         <GlobalParticleCanvas
           enabled={true}
@@ -27074,6 +27460,539 @@ function ImmersiveFluidCanvas({
   return <canvas ref={canvasRef} className="immersive-player__fluid-canvas" />;
 }
 
+function GlobalRainCanvas({
+  enabled,
+  layer,
+  intensity,
+  speed,
+  range,
+  opacity,
+  colorScheme,
+  imageSrc,
+  className,
+}: {
+  enabled: boolean;
+  layer: AppSettings["appearance"]["globalParticleEffectLayer"];
+  intensity: number;
+  speed: number;
+  range: number;
+  opacity: number;
+  colorScheme: AppSettings["appearance"]["colorScheme"];
+  imageSrc?: string | null;
+  className?: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !enabled) {
+      console.debug("[rain-effect] skipped init", {
+        enabled,
+        hasCanvas: Boolean(canvas),
+        layer,
+        imageSrc: imageSrc ?? null,
+      });
+      return;
+    }
+
+    console.debug("[rain-effect] init", {
+      layer,
+      intensity,
+      speed,
+      range,
+      opacity,
+      colorScheme,
+      imageSrc: imageSrc ?? null,
+    });
+
+    const context = canvas.getContext("webgl", {
+      alpha: true,
+      antialias: true,
+      depth: false,
+      stencil: false,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
+    });
+    if (!context) {
+      console.error("[rain-effect] failed to acquire webgl context");
+      return;
+    }
+
+    const gl = context;
+    let width = 0;
+    let height = 0;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let frameId = 0;
+    let activeImage: HTMLImageElement | null = null;
+    let textureReady = false;
+    let renderCount = 0;
+    let lastTextureMode = "fallback";
+    const isDark = colorScheme === "dark";
+
+    const compileShader = (shaderType: number, source: string) => {
+      const shader = gl.createShader(shaderType);
+      if (!shader) {
+        return null;
+      }
+
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const infoLog = gl.getShaderInfoLog(shader);
+        const numberedSource = source
+          .split("\n")
+          .map((line, index) => `${index + 1}: ${line}`)
+          .join("\n");
+        console.error("[rain-effect] shader compile log", {
+          shaderType: shaderType === gl.VERTEX_SHADER ? "vertex" : "fragment",
+          infoLog,
+          source: numberedSource,
+        });
+        gl.deleteShader(shader);
+        return null;
+      }
+
+      return shader;
+    };
+
+    const vertexShader = compileShader(
+      gl.VERTEX_SHADER,
+      `
+        attribute vec2 aClipPosition;
+
+        varying vec2 vUv;
+
+        void main() {
+          vUv = (aClipPosition * 0.5) + 0.5;
+          gl_Position = vec4(aClipPosition, 0.0, 1.0);
+        }
+      `,
+    );
+    const fragmentShader = compileShader(
+      gl.FRAGMENT_SHADER,
+      `
+        precision highp float;
+
+        varying vec2 vUv;
+
+        uniform vec2 uResolution;
+        uniform float uTime;
+        uniform float uIntensity;
+        uniform float uSpeed;
+        uniform float uRange;
+        uniform float uOpacity;
+        uniform float uLayerMode;
+        uniform bool uHasTexture;
+        uniform sampler2D uTexture;
+        uniform vec3 uFallbackA;
+        uniform vec3 uFallbackB;
+
+        #define S(a, b, t) smoothstep(a, b, t)
+        #define size 0.2
+
+        vec3 N13(float p) {
+          vec3 p3 = fract(vec3(p) * vec3(.1031, .11369, .13787));
+          p3 += dot(p3, p3.yzx + 19.19);
+          return fract(vec3((p3.x + p3.y) * p3.z, (p3.x + p3.z) * p3.y, (p3.y + p3.z) * p3.x));
+        }
+
+        vec4 N14(float t) {
+          return fract(sin(t * vec4(123., 1024., 1456., 264.)) * vec4(6547., 345., 8799., 1564.));
+        }
+
+        float N(float t) {
+          return fract(sin(t * 12345.564) * 7658.76);
+        }
+
+        float Saw(float b, float t) {
+          return S(0., b, t) * S(1., b, t);
+        }
+
+        vec2 Drops(vec2 uv, float t) {
+          vec2 UV = uv;
+
+          uv.y += t * 0.8;
+          vec2 a = vec2(6., 1.);
+          vec2 grid = a * 2.;
+          vec2 id = floor(uv * grid);
+
+          float colShift = N(id.x);
+          uv.y += colShift;
+
+          id = floor(uv * grid);
+          vec3 n = N13(id.x * 35.2 + id.y * 2376.1);
+          vec2 st = fract(uv * grid) - vec2(.5, 0.);
+
+          float x = n.x - .5;
+          float y = UV.y * 20.;
+          float distort = sin(y + sin(y));
+          x += distort * (.5 - abs(x)) * (n.z - .5);
+          x *= .7;
+          float ti = fract(t + n.z);
+          y = (Saw(.85, ti) - .5) * .9 + .5;
+          vec2 p = vec2(x, y);
+
+          float d = length((st - p) * a.yx);
+          float dSize = size;
+          float drop = S(dSize, .0, d);
+
+          float r = sqrt(S(1., y, st.y));
+          float cd = abs(st.x - x);
+          float trail = S((dSize * .5 + .03) * r, (dSize * .5 - .05) * r, cd);
+          float trailFront = S(-.02, .02, st.y - y);
+          trail *= trailFront;
+
+          y = UV.y;
+          y += N(id.x);
+          float trail2 = S(dSize * r, .0, cd);
+          float droplets = max(0., (sin(y * (1. - y) * 120.) - st.y)) * trail2 * trailFront * n.z;
+          y = fract(y * 10.) + (st.y - .5);
+          float dd = length(st - vec2(x, y));
+          droplets = S(dSize * N(id.x), 0., dd);
+          float m = drop + droplets * r * trailFront;
+
+          return vec2(m, trail);
+        }
+
+        float StaticDrops(vec2 uv, float t) {
+          uv *= 30.;
+          vec2 id = floor(uv);
+          uv = fract(uv) - .5;
+          vec3 n = N13(id.x * 107.45 + id.y * 3543.654);
+          vec2 p = (n.xy - .5) * 0.5;
+          float d = length(uv - p);
+          float fade = Saw(.025, fract(t + n.z));
+          float c = S(size, 0., d) * fract(n.z * 10.) * fade;
+
+          return c;
+        }
+
+        vec2 Rain(vec2 uv, float t, float rainAmount) {
+          float staticLayer = S(-0.2, 0.35, rainAmount);
+          float secondaryLayer = S(0.15, 0.75, rainAmount);
+          float primaryBoost = mix(0.55, 1.0, rainAmount);
+          float s = StaticDrops(uv, t) * staticLayer;
+          vec2 r1 = Drops(uv, t);
+          vec2 r2 = Drops(uv * 1.8, t);
+
+          float c = s + (r1.x * primaryBoost) + (r2.x * secondaryLayer);
+          c = S(.3, 1., c);
+
+          return vec2(c, max(r1.y * primaryBoost, r2.y * secondaryLayer));
+        }
+
+        vec3 sampleScene(vec2 uv) {
+          vec2 clampedUv = clamp(uv, 0.0, 1.0);
+          if (uHasTexture) {
+            return texture2D(uTexture, clampedUv).rgb;
+          }
+
+          float bands = sin((clampedUv.y * 12.0) + (uTime * 0.35)) * 0.04;
+          float ripples = sin((clampedUv.x * 18.0) - (uTime * 0.22)) * 0.025;
+          float haze = sin(((clampedUv.x + clampedUv.y) * 9.0) + (uTime * 0.18)) * 0.02;
+          vec3 base = mix(uFallbackA, uFallbackB, clampedUv.y);
+          return base + vec3(bands + ripples + haze);
+        }
+
+        void main() {
+          vec2 fragCoord = vUv * uResolution;
+          vec2 uv = (fragCoord - .5 * uResolution.xy) / uResolution.y;
+          vec2 UV = fragCoord / uResolution.xy;
+          float T = uTime;
+          float t = T * mix(0.08, 0.2, uSpeed);
+          float rainAmount = clamp(uIntensity, 0.0, 1.0);
+          float isTopLayer = step(0.5, uLayerMode);
+
+          UV = (UV - .5) * .9 + .5;
+
+          vec2 c = Rain(uv, t, rainAmount);
+          vec2 e = vec2(.001, 0.);
+          float cx = Rain(uv + e, t, rainAmount).x;
+          float cy = Rain(uv + e.yx, t, rainAmount).x;
+          vec2 n = vec2(cx - c.x, cy - c.x);
+
+          const int DIRECTIONS = 32;
+          const int QUALITY = 8;
+          float Pi = 6.28318530718;
+          float blurSize = mix(10.0, 32.0, uRange);
+          vec2 Radius = blurSize / uResolution.xy;
+
+          vec3 scene = sampleScene(UV);
+          vec3 col = scene;
+          for (int directionIndex = 0; directionIndex < DIRECTIONS; directionIndex += 1) {
+            float d = (float(directionIndex) / float(DIRECTIONS)) * Pi;
+            for (int qualityIndex = 1; qualityIndex <= QUALITY; qualityIndex += 1) {
+              float sampleStep = float(qualityIndex) / float(QUALITY);
+              vec3 tex = sampleScene(UV + n + (vec2(cos(d), sin(d)) * Radius * sampleStep));
+              col += tex;
+            }
+          }
+
+          col /= float(DIRECTIONS * QUALITY);
+
+          vec3 tex = sampleScene(UV + n);
+          c.y = clamp(c.y, 0.0, 1.0);
+          col -= c.y * mix(0.2, 1.0, uIntensity);
+          col += c.y * (tex + 0.6);
+
+          float dropMask = clamp(c.x, 0.0, 1.0);
+          float trailMask = clamp(c.y, 0.0, 1.0);
+          float effectMask = clamp((dropMask * 0.9) + (trailMask * 0.85), 0.0, 1.0);
+          float alpha = effectMask * mix(0.42, 0.08, isTopLayer) * uOpacity;
+          vec3 finalColor = mix(scene, col, effectMask);
+
+          if (alpha <= 0.002) {
+            discard;
+          }
+
+          gl_FragColor = vec4(finalColor, alpha);
+        }
+      `,
+    );
+
+    if (!vertexShader || !fragmentShader) {
+      console.error("[rain-effect] shader compilation failed", {
+        hasVertexShader: Boolean(vertexShader),
+        hasFragmentShader: Boolean(fragmentShader),
+      });
+      if (vertexShader) {
+        gl.deleteShader(vertexShader);
+      }
+      if (fragmentShader) {
+        gl.deleteShader(fragmentShader);
+      }
+      return;
+    }
+
+    const program = gl.createProgram();
+    if (!program) {
+      console.error("[rain-effect] failed to create shader program");
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return;
+    }
+
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    gl.deleteShader(vertexShader);
+    gl.deleteShader(fragmentShader);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error("[rain-effect] failed to link shader program");
+      gl.deleteProgram(program);
+      return;
+    }
+
+    const positionLocation = gl.getAttribLocation(program, "aClipPosition");
+    const resolutionLocation = gl.getUniformLocation(program, "uResolution");
+    const timeLocation = gl.getUniformLocation(program, "uTime");
+    const intensityLocation = gl.getUniformLocation(program, "uIntensity");
+    const speedLocation = gl.getUniformLocation(program, "uSpeed");
+    const rangeLocation = gl.getUniformLocation(program, "uRange");
+    const opacityLocation = gl.getUniformLocation(program, "uOpacity");
+    const hasTextureLocation = gl.getUniformLocation(program, "uHasTexture");
+    const textureLocation = gl.getUniformLocation(program, "uTexture");
+    const layerModeLocation = gl.getUniformLocation(program, "uLayerMode");
+    const fallbackALocation = gl.getUniformLocation(program, "uFallbackA");
+    const fallbackBLocation = gl.getUniformLocation(program, "uFallbackB");
+
+    const positionBuffer = gl.createBuffer();
+    const sceneTexture = gl.createTexture();
+    if (!positionBuffer || !sceneTexture) {
+      console.error("[rain-effect] failed to allocate webgl buffers", {
+        hasPositionBuffer: Boolean(positionBuffer),
+        hasSceneTexture: Boolean(sceneTexture),
+      });
+      if (positionBuffer) {
+        gl.deleteBuffer(positionBuffer);
+      }
+      if (sceneTexture) {
+        gl.deleteTexture(sceneTexture);
+      }
+      gl.deleteProgram(program);
+      return;
+    }
+
+    const quad = new Float32Array([
+      -1, -1,
+      1, -1,
+      -1, 1,
+      1, 1,
+    ]);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sceneTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      1,
+      1,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      new Uint8Array(isDark ? [18, 24, 34, 255] : [183, 203, 230, 255]),
+    );
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      width = rect.width;
+      height = rect.height;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(width * dpr));
+      canvas.height = Math.max(1, Math.round(height * dpr));
+      console.debug("[rain-effect] resize", {
+        layer,
+        width,
+        height,
+        dpr,
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+      });
+    };
+
+    if (imageSrc) {
+      const image = new Image();
+      image.decoding = "async";
+      image.onload = () => {
+        activeImage = image;
+        textureReady = true;
+        console.debug("[rain-effect] image texture ready", {
+          layer,
+          imageSrc,
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+        });
+      };
+      image.onerror = () => {
+        console.error("[rain-effect] image texture failed", {
+          layer,
+          imageSrc,
+        });
+      };
+      image.src = imageSrc;
+    } else {
+      console.debug("[rain-effect] no image source provided", { layer });
+    }
+
+    const updateTexture = () => {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sceneTexture);
+
+      if (activeImage && activeImage.complete && activeImage.naturalWidth > 0 && activeImage.naturalHeight > 0) {
+        textureReady = true;
+        if (lastTextureMode !== "image") {
+          console.debug("[rain-effect] using image texture", {
+            layer,
+            width: activeImage.naturalWidth,
+            height: activeImage.naturalHeight,
+          });
+          lastTextureMode = "image";
+        }
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, activeImage);
+        return;
+      }
+
+      if (lastTextureMode !== "fallback") {
+        console.debug("[rain-effect] using fallback texture", {
+          layer,
+          hasActiveImage: Boolean(activeImage),
+        });
+        lastTextureMode = "fallback";
+      }
+    };
+
+    const render = (time: number) => {
+      updateTexture();
+      renderCount += 1;
+
+      if (renderCount <= 5 || renderCount % 180 === 0) {
+        console.debug("[rain-effect] render", {
+          layer,
+          frame: renderCount,
+          width,
+          height,
+          dpr,
+          textureReady,
+          textureMode: lastTextureMode,
+          intensity,
+          speed,
+          range,
+          opacity,
+        });
+      }
+
+      gl.viewport(0, 0, Math.max(1, Math.round(width * dpr)), Math.max(1, Math.round(height * dpr)));
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform2f(resolutionLocation, width * dpr, height * dpr);
+      gl.uniform1f(timeLocation, time * 0.001);
+      gl.uniform1f(intensityLocation, clampNumber(intensity / 100, 0, 1));
+      gl.uniform1f(speedLocation, clampNumber(speed / 100, 0, 1));
+      gl.uniform1f(rangeLocation, clampNumber(range / 100, 0, 1));
+      gl.uniform1f(opacityLocation, clampNumber(opacity / 100, 0, 1));
+      gl.uniform1f(layerModeLocation, layer === "top" ? 1 : 0);
+      gl.uniform1i(hasTextureLocation, textureReady ? 1 : 0);
+      gl.uniform1i(textureLocation, 0);
+      if (isDark) {
+        gl.uniform3f(fallbackALocation, 0.05, 0.09, 0.13);
+        gl.uniform3f(fallbackBLocation, 0.14, 0.18, 0.24);
+      } else {
+        gl.uniform3f(fallbackALocation, 0.72, 0.81, 0.9);
+        gl.uniform3f(fallbackBLocation, 0.56, 0.67, 0.82);
+      }
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.enableVertexAttribArray(positionLocation);
+      gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      frameId = window.requestAnimationFrame(render);
+    };
+
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    resize();
+    frameId = window.requestAnimationFrame(render);
+    window.addEventListener("resize", resize);
+
+    return () => {
+      console.debug("[rain-effect] dispose", {
+        layer,
+        framesRendered: renderCount,
+      });
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", resize);
+      gl.deleteBuffer(positionBuffer);
+      gl.deleteTexture(sceneTexture);
+      gl.deleteProgram(program);
+    };
+  }, [className, colorScheme, enabled, imageSrc, intensity, layer, opacity, range, speed]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className={[
+        className ?? "app-shell__global-particles",
+        layer === "background" ? "app-shell__global-particles--background" : "app-shell__global-particles--top",
+        enabled ? "app-shell__global-particles--active" : "",
+      ].filter(Boolean).join(" ")}
+      aria-hidden="true"
+    />
+  );
+}
+
 function GlobalParticleCanvas({
   enabled,
   effectType,
@@ -27989,6 +28908,237 @@ function GlobalBloomFilterOverlay({
       />
     </>
   );
+}
+
+function StartupGlitchGreeting({
+  phase,
+}: {
+  phase: "hold" | "expand" | "exit" | "hidden";
+}) {
+  const activeText = phase === "hold" ? "Celia Music" : "Next Gen";
+  const isBurst = phase === "expand";
+
+  return (
+    <div className="startup-glitch">
+      <div className="startup-glitch__fx">
+        <StartupGlitchWebGl enabled={phase !== "hidden"} burst={phase === "expand"} />
+        <div className="startup-glitch__scanlines" />
+        <div className="startup-glitch__vignette" />
+      </div>
+      <div className="startup-glitch__mark">
+        <span
+          className={[
+            "startup-glitch__line",
+            isBurst ? "startup-glitch__line--burst" : "",
+          ].join(" ")}
+          data-text={activeText}
+        >
+          {activeText}
+        </span>
+        {isBurst ? <span className="startup-glitch__cutoff" aria-hidden="true" /> : null}
+      </div>
+    </div>
+  );
+}
+
+function StartupGlitchWebGl({
+  enabled,
+  burst,
+}: {
+  enabled: boolean;
+  burst: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !enabled) {
+      return;
+    }
+
+    const context = canvas.getContext("webgl", {
+      alpha: true,
+      antialias: false,
+      depth: false,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
+    });
+    if (!context) {
+      return;
+    }
+
+    const gl = context;
+    const vertexShaderSource = `
+      attribute vec2 aPosition;
+      varying vec2 vUv;
+      void main() {
+        vUv = (aPosition + 1.0) * 0.5;
+        gl_Position = vec4(aPosition, 0.0, 1.0);
+      }
+    `;
+    const fragmentShaderSource = `
+      precision mediump float;
+      varying vec2 vUv;
+      uniform vec2 uResolution;
+      uniform float uTime;
+      uniform float uBurst;
+
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+      }
+
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+
+      float lineNoise(float y, float time) {
+        return noise(vec2(y * 42.0, floor(time * 18.0))) * 2.0 - 1.0;
+      }
+
+      void main() {
+        vec2 uv = vUv;
+        float aspect = uResolution.x / max(uResolution.y, 1.0);
+        vec2 centered = uv - 0.5;
+        centered.x *= aspect;
+
+        float jumpBand = smoothstep(0.16, 0.0, abs(fract((uv.y * 3.2) - (uTime * 0.42)) - 0.5));
+        float burstBand = smoothstep(0.42, 0.0, abs(uv.y - 0.5)) * uBurst;
+        float horizontalJitter = lineNoise(uv.y + (uTime * 0.08), uTime) * (0.008 + jumpBand * 0.014 + (uBurst * 0.018));
+        float tearing = step(0.9 - (uBurst * 0.08), noise(vec2(floor(uTime * 10.0), floor(uv.y * 22.0)))) * (0.014 + (uBurst * 0.025));
+        uv.x += horizontalJitter + tearing;
+
+        float scan = 0.78 + 0.22 * sin((uv.y * uResolution.y * (1.08 + (uBurst * 0.12))) + (uTime * (9.0 + (uBurst * 8.0))));
+        float staticField = noise((uv * vec2(150.0 + (uBurst * 60.0), 110.0 + (uBurst * 30.0))) + vec2(uTime * 14.0, uTime * 8.0));
+        float flicker = 0.94 + (0.06 + (uBurst * 0.08)) * sin(uTime * (14.0 + (uBurst * 10.0)) + uv.y * 18.0);
+        float bars = smoothstep(0.62 - (uBurst * 0.04), 1.0, sin((uv.y * (16.0 + (uBurst * 16.0))) - (uTime * (3.0 + (uBurst * 3.4)))) * 0.5 + 0.5) * (0.05 + (uBurst * 0.06));
+
+        vec3 base = vec3(0.02, 0.03, 0.04);
+        vec3 glow = vec3(0.45, 0.48, 0.5) * staticField * scan * flicker;
+        vec3 tint = vec3(
+          0.72 + sin(uTime * 0.7 + uv.y * 3.0) * 0.08,
+          0.78 + sin(uTime * 0.9 + uv.y * 5.0 + 1.4) * 0.08,
+          0.85 + sin(uTime * 0.8 + uv.y * 4.2 + 2.1) * 0.08
+        );
+        vec3 burstTint = vec3(0.95, 0.98, 1.0) * burstBand * 0.18;
+        vec3 color = base + (glow * tint) + bars + burstTint;
+
+        float vignette = smoothstep(0.92, 0.18, length(centered));
+        float alpha = clamp((0.12 + staticField * 0.34 + jumpBand * 0.1 + (uBurst * 0.08) + burstBand * 0.08) * vignette, 0.0, 0.42);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `;
+
+    const compileShader = (shaderType: number, source: string) => {
+      const shader = gl.createShader(shaderType);
+      if (!shader) {
+        return null;
+      }
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    };
+
+    const vertexShader = compileShader(gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+    if (!vertexShader || !fragmentShader) {
+      return;
+    }
+
+    const program = gl.createProgram();
+    if (!program) {
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return;
+    }
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      gl.deleteProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return;
+    }
+
+    const positionLocation = gl.getAttribLocation(program, "aPosition");
+    const resolutionLocation = gl.getUniformLocation(program, "uResolution");
+    const timeLocation = gl.getUniformLocation(program, "uTime");
+    const burstLocation = gl.getUniformLocation(program, "uBurst");
+    const positionBuffer = gl.createBuffer();
+    if (!positionBuffer || !resolutionLocation || !timeLocation || !burstLocation) {
+      gl.deleteBuffer(positionBuffer);
+      gl.deleteProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return;
+    }
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([
+        -1, -1,
+         1, -1,
+        -1,  1,
+         1,  1,
+      ]),
+      gl.STATIC_DRAW,
+    );
+
+    let frameId = 0;
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    };
+
+    const render = (time: number) => {
+      resize();
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.enableVertexAttribArray(positionLocation);
+      gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+      gl.uniform1f(timeLocation, time * 0.001);
+      gl.uniform1f(burstLocation, burst ? 1 : 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      frameId = window.requestAnimationFrame(render);
+    };
+
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    frameId = window.requestAnimationFrame(render);
+    window.addEventListener("resize", resize);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", resize);
+      gl.deleteBuffer(positionBuffer);
+      gl.deleteProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+    };
+  }, [burst, enabled]);
+
+  return <canvas ref={canvasRef} className="startup-glitch__webgl" aria-hidden="true" />;
 }
 
 function ImmersivePillSlider({

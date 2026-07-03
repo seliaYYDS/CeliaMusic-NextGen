@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { AppShell } from "./app/AppShell";
@@ -8,6 +8,8 @@ import { ComponentSongInfoCardWindow } from "./app/ComponentSongInfoCardWindow";
 import { ImmersiveWallpaperWindow } from "./app/ImmersiveWallpaperWindow";
 import { bootstrapMediaLibrary } from "./media/bootstrap";
 import { bootstrapAppSettings } from "./settings/bootstrap";
+import { createDefaultAppSettings } from "./settings/types";
+import { getAppSettings } from "./settings/store";
 
 const SPECIAL_WINDOW_KINDS = [
   "component-control",
@@ -62,12 +64,49 @@ const currentWindowKind = (() => {
 })();
 
 function App() {
+  const defaultStartupAppearance = createDefaultAppSettings().appearance;
+  const [startupAnimationMode, setStartupAnimationMode] = useState(
+    defaultStartupAppearance.startupAnimation,
+  );
+  const [startupAnimationDurationMs, setStartupAnimationDurationMs] = useState(
+    defaultStartupAppearance.startupAnimationDurationMs,
+  );
+  const [isStartupAnimationResolved, setIsStartupAnimationResolved] = useState(
+    currentWindowKind !== "main",
+  );
+
   useEffect(() => {
     document.body.style.overflow = "hidden";
 
     if (currentWindowKind === "main") {
       void bootstrapMediaLibrary();
       void bootstrapAppSettings();
+
+      let isMounted = true;
+
+      void getAppSettings()
+        .then((snapshot) => {
+          if (!isMounted) {
+            return;
+          }
+
+          setStartupAnimationMode(snapshot.settings.appearance.startupAnimation);
+          setStartupAnimationDurationMs(snapshot.settings.appearance.startupAnimationDurationMs);
+          setIsStartupAnimationResolved(true);
+        })
+        .catch(() => {
+          if (!isMounted) {
+            return;
+          }
+
+          setStartupAnimationMode(defaultStartupAppearance.startupAnimation);
+          setStartupAnimationDurationMs(defaultStartupAppearance.startupAnimationDurationMs);
+          setIsStartupAnimationResolved(true);
+        });
+
+      return () => {
+        isMounted = false;
+      };
     }
   }, []);
 
@@ -87,7 +126,16 @@ function App() {
     return <ImmersiveWallpaperWindow />;
   }
 
-  return <AppShell />;
+  if (!isStartupAnimationResolved) {
+    return null;
+  }
+
+  return (
+    <AppShell
+      initialStartupAnimationMode={startupAnimationMode}
+      initialStartupAnimationDurationMs={startupAnimationDurationMs}
+    />
+  );
 }
 
 export default App;
