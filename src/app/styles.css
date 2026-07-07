@@ -550,6 +550,13 @@ select {
   transform: translateY(0) scale(0.96);
 }
 
+.window-controls__button:disabled {
+  color: rgba(48, 65, 98, 0.38);
+  opacity: 0.45;
+  transform: none;
+  cursor: default;
+}
+
 .window-controls__button svg {
   width: 15px;
   height: 15px;
@@ -7201,6 +7208,12 @@ select {
 .immersive-player__chrome-button:active {
   opacity: 0.9;
   transform: translateY(0) scale(0.96);
+}
+
+.immersive-player__chrome-button:disabled {
+  opacity: 0.36;
+  transform: none;
+  cursor: default;
 }
 
 .immersive-player__chrome-button svg {

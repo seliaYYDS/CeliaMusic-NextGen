@@ -17,7 +17,8 @@ use media::{
     clear_media_library, delete_media_tracks, ensure_media_library, import_media_files,
     list_media_library, register_remote_track, save_song_config, cache_remote_audio_for_spectrum,
     clear_cached_spectrum_audio, analyze_local_audio_spectrum, analyze_local_audio_track,
-    analyze_audio_alignment, load_local_lyrics, save_local_lyrics,
+    analyze_audio_alignment, load_local_lyrics, load_local_lyrics_bundle, save_local_lyrics,
+    save_local_lyrics_bundle,
     MediaState,
 };
 use media_proxy::{
@@ -643,7 +644,9 @@ pub fn run() {
             analyze_local_audio_track,
             analyze_audio_alignment,
             load_local_lyrics,
+            load_local_lyrics_bundle,
             save_local_lyrics,
+            save_local_lyrics_bundle,
             ensure_app_settings,
             get_app_settings,
             save_app_settings,

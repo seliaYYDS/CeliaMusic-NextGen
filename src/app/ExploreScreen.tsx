@@ -53,6 +53,8 @@ import "./styles.css";
 type ExploreScreenProps = {
   locale: string;
   settings: AppSettings;
+  initialSnapshot?: ExploreScreenSnapshot | null;
+  onSnapshotChange?: (snapshot: ExploreScreenSnapshot) => void;
   externalDetailRequest?: {
     kind: "artist" | "album";
     id: number;
@@ -134,6 +136,43 @@ type ExploreSuggestionItem =
   | { kind: "playlist"; key: string; playlist: NeteasePlaylistRecommendation }
   | { kind: "album"; key: string; album: NeteaseAlbumSummary };
 
+export type ExploreScreenSnapshot = {
+  detailView: ExploreDetailView;
+  navigationStack: ExploreNavigationSnapshot[];
+  searchInput: string;
+  searchKeyword: string;
+  activeTab: ExploreTab;
+  searchSongPage: number;
+  searchPlaylistPage: number;
+  artistSongPage: number;
+  artistAlbumPage: number;
+  albumSongPage: number;
+  defaultKeyword: string;
+  hotKeywords: NeteaseSearchHotKeyword[];
+  categories: string[];
+  selectedCategory: string;
+  featuredSongs: NeteaseSongDetail[];
+  topPlaylists: NeteasePlaylistRecommendation[];
+  qualityPlaylists: NeteasePlaylistRecommendation[];
+  topArtists: NeteaseArtistSummary[];
+  newestAlbums: NeteaseAlbumSummary[];
+  songs: NeteaseSongDetail[];
+  songTotal: number;
+  artists: NeteaseArtistSummary[];
+  playlists: NeteasePlaylistRecommendation[];
+  playlistTotal: number;
+  albums: NeteaseAlbumSummary[];
+  artistDetail: NeteaseArtistDetail | null;
+  artistSongs: NeteaseSongDetail[];
+  artistSongTotal: number;
+  artistAlbums: NeteaseAlbumSummary[];
+  artistAlbumTotal: number;
+  albumDetail: NeteaseAlbumDetail | null;
+  discoveryError: string | null;
+  searchError: string | null;
+  detailError: string | null;
+};
+
 const ALL_CATEGORY_KEY = "__all__";
 const SEARCH_SONG_PAGE_SIZE = 30;
 const SEARCH_PLAYLIST_PAGE_SIZE = 12;
@@ -167,6 +206,45 @@ export function clearExploreMemoryCaches() {
   albumCache.clear();
   searchSuggestionCache.clear();
   return summary;
+}
+
+function createDefaultExploreScreenSnapshot(): ExploreScreenSnapshot {
+  return {
+    detailView: null,
+    navigationStack: [],
+    searchInput: "",
+    searchKeyword: "",
+    activeTab: "all",
+    searchSongPage: 1,
+    searchPlaylistPage: 1,
+    artistSongPage: 1,
+    artistAlbumPage: 1,
+    albumSongPage: 1,
+    defaultKeyword: "",
+    hotKeywords: [],
+    categories: [],
+    selectedCategory: ALL_CATEGORY_KEY,
+    featuredSongs: [],
+    topPlaylists: [],
+    qualityPlaylists: [],
+    topArtists: [],
+    newestAlbums: [],
+    songs: [],
+    songTotal: 0,
+    artists: [],
+    playlists: [],
+    playlistTotal: 0,
+    albums: [],
+    artistDetail: null,
+    artistSongs: [],
+    artistSongTotal: 0,
+    artistAlbums: [],
+    artistAlbumTotal: 0,
+    albumDetail: null,
+    discoveryError: null,
+    searchError: null,
+    detailError: null,
+  };
 }
 
 function getExploreCopy(locale: string) {
@@ -715,6 +793,8 @@ function DetailHero({
 export function ExploreScreen({
   locale,
   settings,
+  initialSnapshot,
+  onSnapshotChange,
   externalDetailRequest,
   externalBackLabel,
   onConsumeExternalDetailRequest,
@@ -726,11 +806,14 @@ export function ExploreScreen({
 }: ExploreScreenProps) {
   const copy = getExploreCopy(locale);
   const isEnabled = isNeteaseSourceEnabled(settings);
+  const initialState = initialSnapshot ?? createDefaultExploreScreenSnapshot();
 
-  const [detailView, setDetailView] = useState<ExploreDetailView>(null);
-  const [navigationStack, setNavigationStack] = useState<ExploreNavigationSnapshot[]>([]);
-  const [searchInput, setSearchInput] = useState("");
-  const [searchKeyword, setSearchKeyword] = useState("");
+  const [detailView, setDetailView] = useState<ExploreDetailView>(initialState.detailView);
+  const [navigationStack, setNavigationStack] = useState<ExploreNavigationSnapshot[]>(
+    initialState.navigationStack,
+  );
+  const [searchInput, setSearchInput] = useState(initialState.searchInput);
+  const [searchKeyword, setSearchKeyword] = useState(initialState.searchKeyword);
   const [searchSuggestions, setSearchSuggestions] = useState<NeteaseSearchSuggestions>({
     songs: [],
     artists: [],
@@ -740,35 +823,37 @@ export function ExploreScreen({
   const [isSearchSuggestionsLoading, setIsSearchSuggestionsLoading] = useState(false);
   const [isSearchSuggestionsOpen, setIsSearchSuggestionsOpen] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
-  const [activeTab, setActiveTab] = useState<ExploreTab>("all");
-  const [searchSongPage, setSearchSongPage] = useState(1);
-  const [searchPlaylistPage, setSearchPlaylistPage] = useState(1);
-  const [artistSongPage, setArtistSongPage] = useState(1);
-  const [artistAlbumPage, setArtistAlbumPage] = useState(1);
-  const [albumSongPage, setAlbumSongPage] = useState(1);
-  const [defaultKeyword, setDefaultKeyword] = useState("");
-  const [hotKeywords, setHotKeywords] = useState<NeteaseSearchHotKeyword[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORY_KEY);
-  const [featuredSongs, setFeaturedSongs] = useState<NeteaseSongDetail[]>([]);
-  const [topPlaylists, setTopPlaylists] = useState<NeteasePlaylistRecommendation[]>([]);
-  const [qualityPlaylists, setQualityPlaylists] = useState<NeteasePlaylistRecommendation[]>(
-    [],
+  const [activeTab, setActiveTab] = useState<ExploreTab>(initialState.activeTab);
+  const [searchSongPage, setSearchSongPage] = useState(initialState.searchSongPage);
+  const [searchPlaylistPage, setSearchPlaylistPage] = useState(initialState.searchPlaylistPage);
+  const [artistSongPage, setArtistSongPage] = useState(initialState.artistSongPage);
+  const [artistAlbumPage, setArtistAlbumPage] = useState(initialState.artistAlbumPage);
+  const [albumSongPage, setAlbumSongPage] = useState(initialState.albumSongPage);
+  const [defaultKeyword, setDefaultKeyword] = useState(initialState.defaultKeyword);
+  const [hotKeywords, setHotKeywords] = useState<NeteaseSearchHotKeyword[]>(initialState.hotKeywords);
+  const [categories, setCategories] = useState<string[]>(initialState.categories);
+  const [selectedCategory, setSelectedCategory] = useState(initialState.selectedCategory);
+  const [featuredSongs, setFeaturedSongs] = useState<NeteaseSongDetail[]>(initialState.featuredSongs);
+  const [topPlaylists, setTopPlaylists] = useState<NeteasePlaylistRecommendation[]>(
+    initialState.topPlaylists,
   );
-  const [topArtists, setTopArtists] = useState<NeteaseArtistSummary[]>([]);
-  const [newestAlbums, setNewestAlbums] = useState<NeteaseAlbumSummary[]>([]);
-  const [songs, setSongs] = useState<NeteaseSongDetail[]>([]);
-  const [songTotal, setSongTotal] = useState(0);
-  const [artists, setArtists] = useState<NeteaseArtistSummary[]>([]);
-  const [playlists, setPlaylists] = useState<NeteasePlaylistRecommendation[]>([]);
-  const [playlistTotal, setPlaylistTotal] = useState(0);
-  const [albums, setAlbums] = useState<NeteaseAlbumSummary[]>([]);
-  const [artistDetail, setArtistDetail] = useState<NeteaseArtistDetail | null>(null);
-  const [artistSongs, setArtistSongs] = useState<NeteaseSongDetail[]>([]);
-  const [artistSongTotal, setArtistSongTotal] = useState(0);
-  const [artistAlbums, setArtistAlbums] = useState<NeteaseAlbumSummary[]>([]);
-  const [artistAlbumTotal, setArtistAlbumTotal] = useState(0);
-  const [albumDetail, setAlbumDetail] = useState<NeteaseAlbumDetail | null>(null);
+  const [qualityPlaylists, setQualityPlaylists] = useState<NeteasePlaylistRecommendation[]>(
+    initialState.qualityPlaylists,
+  );
+  const [topArtists, setTopArtists] = useState<NeteaseArtistSummary[]>(initialState.topArtists);
+  const [newestAlbums, setNewestAlbums] = useState<NeteaseAlbumSummary[]>(initialState.newestAlbums);
+  const [songs, setSongs] = useState<NeteaseSongDetail[]>(initialState.songs);
+  const [songTotal, setSongTotal] = useState(initialState.songTotal);
+  const [artists, setArtists] = useState<NeteaseArtistSummary[]>(initialState.artists);
+  const [playlists, setPlaylists] = useState<NeteasePlaylistRecommendation[]>(initialState.playlists);
+  const [playlistTotal, setPlaylistTotal] = useState(initialState.playlistTotal);
+  const [albums, setAlbums] = useState<NeteaseAlbumSummary[]>(initialState.albums);
+  const [artistDetail, setArtistDetail] = useState<NeteaseArtistDetail | null>(initialState.artistDetail);
+  const [artistSongs, setArtistSongs] = useState<NeteaseSongDetail[]>(initialState.artistSongs);
+  const [artistSongTotal, setArtistSongTotal] = useState(initialState.artistSongTotal);
+  const [artistAlbums, setArtistAlbums] = useState<NeteaseAlbumSummary[]>(initialState.artistAlbums);
+  const [artistAlbumTotal, setArtistAlbumTotal] = useState(initialState.artistAlbumTotal);
+  const [albumDetail, setAlbumDetail] = useState<NeteaseAlbumDetail | null>(initialState.albumDetail);
   const [isDiscoveryLoading, setIsDiscoveryLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isSearchSongsLoading, setIsSearchSongsLoading] = useState(false);
@@ -777,9 +862,9 @@ export function ExploreScreen({
   const [isSearchAlbumsLoading, setIsSearchAlbumsLoading] = useState(false);
   const [isArtistSongsLoading, setIsArtistSongsLoading] = useState(false);
   const [isArtistAlbumsLoading, setIsArtistAlbumsLoading] = useState(false);
-  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(initialState.discoveryError);
+  const [searchError, setSearchError] = useState<string | null>(initialState.searchError);
+  const [detailError, setDetailError] = useState<string | null>(initialState.detailError);
   const searchFieldRef = useRef<HTMLFormElement | null>(null);
   const lastSearchKeywordRef = useRef("");
   const lastArtistDetailKeyRef = useRef<number | null>(null);
@@ -850,6 +935,80 @@ export function ExploreScreen({
     1,
     Math.ceil(artistAlbumTotal / DETAIL_ALBUM_PAGE_SIZE),
   );
+  useEffect(() => {
+    onSnapshotChange?.({
+      detailView,
+      navigationStack,
+      searchInput,
+      searchKeyword,
+      activeTab,
+      searchSongPage,
+      searchPlaylistPage,
+      artistSongPage,
+      artistAlbumPage,
+      albumSongPage,
+      defaultKeyword,
+      hotKeywords,
+      categories,
+      selectedCategory,
+      featuredSongs,
+      topPlaylists,
+      qualityPlaylists,
+      topArtists,
+      newestAlbums,
+      songs,
+      songTotal,
+      artists,
+      playlists,
+      playlistTotal,
+      albums,
+      artistDetail,
+      artistSongs,
+      artistSongTotal,
+      artistAlbums,
+      artistAlbumTotal,
+      albumDetail,
+      discoveryError,
+      searchError,
+      detailError,
+    });
+  }, [
+    activeTab,
+    albumDetail,
+    albumSongPage,
+    albums,
+    artistAlbumPage,
+    artistAlbumTotal,
+    artistAlbums,
+    artistDetail,
+    artistSongPage,
+    artistSongTotal,
+    artistSongs,
+    artists,
+    categories,
+    defaultKeyword,
+    detailError,
+    detailView,
+    discoveryError,
+    featuredSongs,
+    hotKeywords,
+    navigationStack,
+    newestAlbums,
+    onSnapshotChange,
+    playlists,
+    playlistTotal,
+    qualityPlaylists,
+    searchError,
+    searchInput,
+    searchKeyword,
+    searchPlaylistPage,
+    searchSongPage,
+    selectedCategory,
+    songTotal,
+    songs,
+    topArtists,
+    topPlaylists,
+  ]);
   const visibleAlbumSongs = useMemo(() => {
     const start = (albumSongPage - 1) * DETAIL_SONG_PAGE_SIZE;
     return (albumDetail?.songs ?? []).slice(start, start + DETAIL_SONG_PAGE_SIZE);
@@ -2101,11 +2260,6 @@ export function ExploreScreen({
                       </div>
                     ) : null}
                   </div>
-                  <span className="ui-field__helper">
-                    {defaultKeyword
-                      ? `${copy.searchHelper} ${copy.labels.defaultKeyword}: ${defaultKeyword}`
-                      : copy.searchHelper}
-                  </span>
                 </label>
               </div>
               <div className="explore-search__action">

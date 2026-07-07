@@ -45,8 +45,8 @@ import {
   deleteMediaTracks,
   importMediaFiles,
   listMediaLibrary,
-  loadLocalLyrics,
-  saveLocalLyrics,
+  loadLocalLyricsBundle,
+  saveLocalLyricsBundle,
 } from "../media/library";
 import {
   createDefaultSongConfig,
@@ -158,7 +158,11 @@ import {
   setBoundedMapValue,
   setBoundedRecordValue,
 } from "./cache";
-import { ExploreScreen, clearExploreMemoryCaches } from "./ExploreScreen";
+import {
+  ExploreScreen,
+  clearExploreMemoryCaches,
+  type ExploreScreenSnapshot,
+} from "./ExploreScreen";
 import playerIcon from "../../icon.png";
 import "./styles.css";
 
@@ -794,8 +798,8 @@ const UI_COPY = {
           songTransitionModeDescription: "选择歌曲过渡的处理方式。",
           songTransitionModeSimpleMix: "简单混合",
           songTransitionModeAutoMix: "AutoMix",
-          songTransitionModeSimpleMixDescription: "使用当前已实现的渐出淡入过渡。",
-          songTransitionModeAutoMixDescription: "基于歌曲分析结果决定过渡起点，并复用当前的淡入淡出混音。",
+          songTransitionModeSimpleMixDescription: "通过简单的淡出淡入让歌曲衔接更平滑。",
+          songTransitionModeAutoMixDescription: "根据歌曲内容智能决定过渡时机并完成混合。",
           songTransitionTimingLabel: "过渡开始时间",
           songTransitionTimingHelper: "控制在歌曲结束前多久开始进行过渡。",
           rememberQueueLabel: "记住播放队列",
@@ -1170,11 +1174,11 @@ const UI_COPY = {
           songTransitionLabel: "Song Transition",
           songTransitionDescription: "Fade out the current song near the end and bring the next song in smoothly.",
           songTransitionModeLabel: "Transition Mode",
-          songTransitionModeDescription: "Simple Mix keeps the current fade-based transition. AutoMix prefers analysis results when choosing where the transition should begin.",
+          songTransitionModeDescription: "Choose how the app should blend from one song into the next.",
           songTransitionModeSimpleMix: "Simple Mix",
           songTransitionModeAutoMix: "AutoMix",
-          songTransitionModeSimpleMixDescription: "Use the current fade-out and fade-in transition.",
-          songTransitionModeAutoMixDescription: "Use analysis results to choose the transition entry point while keeping the current fade mix engine.",
+          songTransitionModeSimpleMixDescription: "Use a simple fade-out and fade-in between songs.",
+          songTransitionModeAutoMixDescription: "Use track analysis to choose a smarter transition point automatically.",
           songTransitionTimingLabel: "Transition Start",
           songTransitionTimingHelper: "Choose how long before the end of a song the transition should begin.",
           rememberQueueLabel: "Remember Queue",
@@ -1230,7 +1234,7 @@ const UI_COPY = {
           eyebrow: "Network",
           title: "Netease Online Service",
           sourceLabel: "Enable Netease Source",
-          sourceDescription: "Only NeteaseMusicAPI is connected for online features right now. Turning this off disables online search, resolving, and streaming.",
+          sourceDescription: "Enable Netease-powered online search, track resolving, and streaming features.",
           localApiLabel: "Use Local API Server",
           localApiDescription: "When enabled, the app starts a local NeteaseCloudMusicApi server through the system Node.js / npx environment on launch and prefers the local 127.0.0.1 endpoint.",
           localApiStatusTitle: "Local API Status",
@@ -1504,6 +1508,18 @@ function resolveInstrumentalLyricState(lyrics: NeteaseSongLyrics | null) {
     lyrics.romanizedLyric,
     ...lyrics.metadataEntries.map((entry) => entry.text),
   ].some((candidate) => isInstrumentalLyricText(candidate));
+}
+
+function parseStoredLocalLyrics(rawLyrics: {
+  lyric: string | null;
+  translatedLyric: string | null;
+  romanizedLyric: string | null;
+}) {
+  return parseRawLyrics({
+    rawLyric: rawLyrics.lyric,
+    rawTranslatedLyric: rawLyrics.translatedLyric,
+    rawRomanizedLyric: rawLyrics.romanizedLyric,
+  });
 }
 
 type QueueDragState = {
@@ -3906,6 +3922,7 @@ export function AppShell({
     useState<AppNavigationSnapshot | null>(null);
   const [exploreReturnSnapshot, setExploreReturnSnapshot] =
     useState<AppNavigationSnapshot | null>(null);
+  const [exploreScreenSnapshot, setExploreScreenSnapshot] = useState<ExploreScreenSnapshot | null>(null);
   const [libraryNavigationRequest, setLibraryNavigationRequest] =
     useState<LibraryNavigationRequest>(null);
   const [exploreDetailRequest, setExploreDetailRequest] =
@@ -4042,6 +4059,7 @@ export function AppShell({
   const [playbarArtworkOverrideUrl, setPlaybarArtworkOverrideUrl] = useState<string | null>(null);
   const [currentTrackLyrics, setCurrentTrackLyrics] = useState<NeteaseSongLyrics | null>(null);
   const [isCurrentTrackLyricsLoading, setIsCurrentTrackLyricsLoading] = useState(false);
+  const [lyricsReloadSequence, setLyricsReloadSequence] = useState(0);
   const [immersiveArtworkPalette, setImmersiveArtworkPalette] =
     useState<ImmersiveArtworkPalette | null>(null);
   const [appBackgroundMvVideoSrc, setAppBackgroundMvVideoSrc] = useState<string | null>(null);
@@ -4087,6 +4105,9 @@ export function AppShell({
   const isImmersivePlayerOpenRef = useRef(false);
   const playbarArtworkOverrideUrlRef = useRef<string | null>(null);
   const currentTrackLyricsRef = useRef<NeteaseSongLyrics | null>(null);
+  const workspaceRef = useRef<HTMLElement | null>(null);
+  const workspaceScrollTopByKeyRef = useRef<Record<string, number>>({});
+  const activeWorkspaceScrollKeyRef = useRef("");
   const immersiveArtworkPaletteRef = useRef<ImmersiveArtworkPalette | null>(null);
   const appBackgroundMvVideoSrcRef = useRef<string | null>(null);
   const immersiveBackgroundMvVideoSrcRef = useRef<string | null>(null);
@@ -4161,6 +4182,7 @@ export function AppShell({
   const queueDragStateRef = useRef<QueueDragState | null>(null);
   const queueDropIndexRef = useRef<number | null>(null);
   const lyricsCacheRef = useRef<Record<string, NeteaseSongLyrics | null>>({});
+  const lyricsFailedCacheKeysRef = useRef(new Set<string>());
   const immersivePaletteCacheRef = useRef<Record<string, ImmersiveArtworkPalette | null>>({});
   const appBackgroundMvRequestSequenceRef = useRef(0);
   const immersiveBackgroundMvRequestSequenceRef = useRef(0);
@@ -4452,9 +4474,11 @@ export function AppShell({
   };
 
   const syncWindowFrameStateValue = (nextIsMaximized: boolean, nextIsFullscreen: boolean) => {
-    if (isMaximizedRef.current !== nextIsMaximized) {
-      isMaximizedRef.current = nextIsMaximized;
-      setIsMaximized(nextIsMaximized);
+    const normalizedIsMaximized = nextIsFullscreen ? false : nextIsMaximized;
+
+    if (isMaximizedRef.current !== normalizedIsMaximized) {
+      isMaximizedRef.current = normalizedIsMaximized;
+      setIsMaximized(normalizedIsMaximized);
     }
 
     if (isFullscreenRef.current !== nextIsFullscreen) {
@@ -8819,10 +8843,7 @@ export function AppShell({
     }
 
     const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(playbarDisplayTrack.playback.cacheKey);
-    const localLyricsCacheKey = buildLocalLyricsCacheKey(playbarDisplayTrack);
-    const cacheKey =
-      localLyricsCacheKey ??
-      (playbarDisplayTrack.source.kind === "remoteStream" && neteaseTrackId ? `${neteaseTrackId}` : null);
+    const cacheKey = resolveLyricsCacheKey(playbarDisplayTrack);
 
     if (!cacheKey) {
       syncCurrentTrackLyrics(null);
@@ -8846,8 +8867,8 @@ export function AppShell({
     void (async () => {
       if (playbarDisplayTrack.source.kind === "localFile") {
         const localPath = playbarDisplayTrack.source.path;
-        const rawLocalLyrics = await loadLocalLyrics(localPath);
-        const parsedLocalLyrics = rawLocalLyrics ? parseRawLyrics({ rawLyric: rawLocalLyrics }) : null;
+        const rawLocalLyrics = await loadLocalLyricsBundle(localPath);
+        const parsedLocalLyrics = parseStoredLocalLyrics(rawLocalLyrics);
         if (parsedLocalLyrics) {
           return parsedLocalLyrics;
         }
@@ -8885,7 +8906,11 @@ export function AppShell({
           return null;
         }
 
-        await saveLocalLyrics(localPath, rawLyric);
+        await saveLocalLyricsBundle(localPath, {
+          lyric: rawLyric,
+          translatedLyric: lyrics.translatedLyric,
+          romanizedLyric: lyrics.romanizedLyric,
+        });
         return lyrics;
       }
 
@@ -8911,6 +8936,7 @@ export function AppShell({
           LYRICS_CACHE_LIMIT,
           [cacheKey],
         );
+        lyricsFailedCacheKeysRef.current.delete(cacheKey);
         syncCurrentTrackLyrics(lyrics);
       })
       .catch((error) => {
@@ -8926,6 +8952,7 @@ export function AppShell({
           LYRICS_CACHE_LIMIT,
           [cacheKey],
         );
+        lyricsFailedCacheKeysRef.current.add(cacheKey);
         syncCurrentTrackLyrics(null);
       })
       .finally(() => {
@@ -8937,7 +8964,7 @@ export function AppShell({
     return () => {
       isCancelled = true;
     };
-  }, [isCurrentTrackLyricsLoading, playbarDisplayTrack]);
+  }, [isCurrentTrackLyricsLoading, lyricsReloadSequence, playbarDisplayTrack]);
 
   useEffect(() => {
     if (!activeTrackArtworkUrl) {
@@ -8978,6 +9005,14 @@ export function AppShell({
       return;
     }
 
+    const cacheKey = playbarDisplayTrack ? resolveLyricsCacheKey(playbarDisplayTrack) : null;
+    if (cacheKey && lyricsFailedCacheKeysRef.current.has(cacheKey)) {
+      delete lyricsCacheRef.current[cacheKey];
+      lyricsFailedCacheKeysRef.current.delete(cacheKey);
+      syncCurrentTrackLyrics(null);
+      setLyricsReloadSequence((current) => current + 1);
+    }
+
     const activeElement = document.activeElement;
     if (activeElement instanceof HTMLElement && !isEditableShortcutTarget(activeElement)) {
       activeElement.blur();
@@ -9016,7 +9051,7 @@ export function AppShell({
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("keyup", handleKeyUp, true);
     };
-  }, [isImmersivePlayerOpen]);
+  }, [isImmersivePlayerOpen, playbarDisplayTrack]);
 
   useEffect(() => {
     currentTrackIdRef.current = currentTrackId;
@@ -9611,6 +9646,11 @@ export function AppShell({
 
   const handleToggleMaximize = async () => {
     const currentWindow = getCurrentWindow();
+    if (await currentWindow.isFullscreen()) {
+      await syncWindowFrameState();
+      return;
+    }
+
     await currentWindow.toggleMaximize();
     await syncWindowFrameState();
   };
@@ -9619,6 +9659,10 @@ export function AppShell({
     try {
       const currentWindow = getCurrentWindow();
       const nextFullscreen = !(await currentWindow.isFullscreen());
+      if (nextFullscreen && (await currentWindow.isMaximized())) {
+        await currentWindow.toggleMaximize();
+      }
+
       await currentWindow.setFullscreen(nextFullscreen);
       await syncWindowFrameState();
     } catch (error) {
@@ -13892,6 +13936,38 @@ export function AppShell({
     .filter(Boolean)
     .join(":");
 
+  useLayoutEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) {
+      return;
+    }
+
+    const previousKey = activeWorkspaceScrollKeyRef.current;
+    if (previousKey && previousKey !== workspaceTransitionKey) {
+      workspaceScrollTopByKeyRef.current[previousKey] = workspace.scrollTop;
+    }
+
+    activeWorkspaceScrollKeyRef.current = workspaceTransitionKey;
+    workspace.scrollTop = workspaceScrollTopByKeyRef.current[workspaceTransitionKey] ?? 0;
+  }, [workspaceTransitionKey]);
+
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) {
+      return;
+    }
+
+    const handleScroll = () => {
+      workspaceScrollTopByKeyRef.current[workspaceTransitionKey] = workspace.scrollTop;
+    };
+
+    handleScroll();
+    workspace.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      workspace.removeEventListener("scroll", handleScroll);
+    };
+  }, [workspaceTransitionKey]);
+
   const workspaceScreen =
     activeNav === "settings" ? (
       <SettingsScreen
@@ -14070,6 +14146,8 @@ export function AppShell({
       <ExploreScreen
         locale={copy.locale}
         settings={settings}
+        initialSnapshot={exploreScreenSnapshot}
+        onSnapshotChange={setExploreScreenSnapshot}
         externalDetailRequest={exploreDetailRequest}
         externalBackLabel={
           exploreReturnSnapshot ? getPlaylistBackLabel(copy.locale, exploreReturnSnapshot) : null
@@ -14371,6 +14449,7 @@ export function AppShell({
                 .join(" ")}
               type="button"
               aria-label={isMaximized ? localeStrings.window.restore : localeStrings.window.maximize}
+              disabled={isFullscreen}
               onMouseDown={(event) => {
                 event.stopPropagation();
               }}
@@ -14457,6 +14536,7 @@ export function AppShell({
         </aside>
 
         <main
+          ref={workspaceRef}
           className="workspace"
           style={
             {
@@ -14470,17 +14550,24 @@ export function AppShell({
               currentTimeLabel={currentTimeLabel}
               detailedTimeLabel={detailedTimeLabel}
               lyricLine={dynamicIslandLyricLine}
-              notification={dynamicIslandNotification}
-              notificationPhase={dynamicIslandNotificationPhase}
+              notification={
+                workspaceLoadingMessage
+                  ? {
+                      id: -1,
+                      message: workspaceLoadingMessage,
+                    }
+                  : dynamicIslandNotification
+              }
+              notificationPhase={workspaceLoadingMessage ? "visible" : dynamicIslandNotificationPhase}
               importProgress={dynamicIslandImportProgress}
               styleVariant={settings.appearance.dynamicIslandStyle}
               colorMode={settings.appearance.dynamicIslandColorMode}
               position={settings.appearance.dynamicIslandPosition}
             />
-          ) : dynamicIslandNotification ? (
+          ) : workspaceLoadingMessage || dynamicIslandNotification ? (
             <WorkspaceNotification
-              message={dynamicIslandNotification.message}
-              phase={dynamicIslandNotificationPhase}
+              message={workspaceLoadingMessage ?? dynamicIslandNotification?.message ?? ""}
+              phase={workspaceLoadingMessage ? "visible" : dynamicIslandNotificationPhase}
             />
           ) : null}
 
@@ -14496,13 +14583,6 @@ export function AppShell({
             >
               {workspaceScreen}
             </div>
-            {workspaceLoadingMessage ? (
-              <div className="workspace__loading-overlay" aria-live="polite" aria-busy="true">
-                <div className="workspace__loading-panel">
-                  <UILoadingBlock label={workspaceLoadingMessage} variant="inline" />
-                </div>
-              </div>
-            ) : null}
           </div>
         </main>
 
@@ -18838,7 +18918,7 @@ function SettingsScreen({
                   ...getSearchableBooleanState(settings.library.onlineLyricsCompletion),
                 ]}
               >
-                <UICheckbox
+                <UISwitch
                   label={copy.settings.sections.library.onlineLyricsLabel}
                   description={copy.settings.sections.library.onlineLyricsDescription}
                   checked={settings.library.onlineLyricsCompletion}
@@ -19808,6 +19888,16 @@ function buildLocalLyricsCacheKey(track: TrackRecord) {
   }
 
   return `local:${track.source.path}`;
+}
+
+function resolveLyricsCacheKey(track: TrackRecord) {
+  const localLyricsCacheKey = buildLocalLyricsCacheKey(track);
+  if (localLyricsCacheKey) {
+    return localLyricsCacheKey;
+  }
+
+  const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(track.playback.cacheKey);
+  return track.source.kind === "remoteStream" && neteaseTrackId ? `${neteaseTrackId}` : null;
 }
 
 function buildNeteaseSearchKeywords(track: TrackRecord) {
@@ -25560,6 +25650,7 @@ export function ImmersivePlayerOverlay({
                 .join(" ")}
               type="button"
               aria-label={isMaximized ? localeStrings.restore : localeStrings.maximize}
+              disabled={isFullscreen}
               onMouseDown={(event) => {
                 event.stopPropagation();
               }}

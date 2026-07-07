@@ -2,6 +2,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     collections::BTreeMap,
     collections::HashSet,
+    collections::VecDeque,
     fs,
     hash::{Hash, Hasher},
     io::{self, Write},
@@ -267,6 +268,23 @@ pub struct SaveLocalLyricsRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SaveLocalLyricsBundleRequest {
+    pub path: String,
+    pub lyric: Option<String>,
+    pub translated_lyric: Option<String>,
+    pub romanized_lyric: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalLyricsBundle {
+    pub lyric: Option<String>,
+    pub translated_lyric: Option<String>,
+    pub romanized_lyric: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioAlignmentAnalysisRequest {
     pub reference_path: String,
     pub candidate_path: String,
@@ -288,6 +306,25 @@ pub fn save_local_lyrics(request: SaveLocalLyricsRequest) -> Result<String, Stri
     save_local_lyrics_impl(&path, &request.content)
         .map(|saved_path| saved_path.display().to_string())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn load_local_lyrics_bundle(request: LocalLyricsRequest) -> Result<LocalLyricsBundle, String> {
+    let path = PathBuf::from(request.path);
+    load_local_lyrics_bundle_impl(&path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn save_local_lyrics_bundle(request: SaveLocalLyricsBundleRequest) -> Result<String, String> {
+    let path = PathBuf::from(request.path);
+    save_local_lyrics_bundle_impl(
+        &path,
+        request.lyric.as_deref(),
+        request.translated_lyric.as_deref(),
+        request.romanized_lyric.as_deref(),
+    )
+    .map(|saved_path| saved_path.display().to_string())
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1934,6 +1971,14 @@ fn load_local_lyrics_impl(path: &Path) -> anyhow::Result<Option<String>> {
     Ok(None)
 }
 
+fn load_local_lyrics_bundle_impl(path: &Path) -> anyhow::Result<LocalLyricsBundle> {
+    Ok(LocalLyricsBundle {
+        lyric: load_local_lyrics_impl(path)?,
+        translated_lyric: load_auxiliary_local_lyrics_impl(path, &["translation", "translated"])?,
+        romanized_lyric: load_auxiliary_local_lyrics_impl(path, &["romanized"])?,
+    })
+}
+
 fn save_local_lyrics_impl(path: &Path, content: &str) -> anyhow::Result<PathBuf> {
     let sidecar_path = build_sidecar_lrc_path(path)?;
     if let Some(parent) = sidecar_path.parent() {
@@ -1946,6 +1991,223 @@ fn save_local_lyrics_impl(path: &Path, content: &str) -> anyhow::Result<PathBuf>
     file.write_all(content.as_bytes())
         .with_context(|| format!("Failed to write lyric file {}", sidecar_path.display()))?;
     Ok(sidecar_path)
+}
+
+fn save_local_lyrics_bundle_impl(
+    path: &Path,
+    lyric: Option<&str>,
+    translated_lyric: Option<&str>,
+    romanized_lyric: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    let sidecar_path = if let Some(content) = lyric.filter(|value| !value.trim().is_empty()) {
+        let merged_content =
+            build_compatible_lrc_bundle_content(content, translated_lyric, romanized_lyric);
+        save_local_lyrics_impl(path, &merged_content)?
+    } else {
+        delete_sidecar_lrc_if_exists(&build_sidecar_lrc_path(path)?)?;
+        build_sidecar_lrc_path(path)?
+    };
+
+    save_auxiliary_local_lyrics_impl(path, "translation", translated_lyric)?;
+    save_auxiliary_local_lyrics_impl(path, "romanized", romanized_lyric)?;
+
+    Ok(sidecar_path)
+}
+
+fn build_compatible_lrc_bundle_content(
+    lyric: &str,
+    translated_lyric: Option<&str>,
+    romanized_lyric: Option<&str>,
+) -> String {
+    let primary_track = parse_lrc_track_lines(lyric);
+    let mut merged_lines = primary_track.metadata_lines.clone();
+    let mut translated_by_tags = group_auxiliary_lrc_lines_by_tags(translated_lyric);
+    let mut romanized_by_tags = group_auxiliary_lrc_lines_by_tags(romanized_lyric);
+
+    for line in primary_track.timed_lines {
+        merged_lines.push(line.raw_line);
+
+        if let Some(text) = pop_auxiliary_lrc_text(&mut translated_by_tags, &line.tags_key) {
+            if !text.trim().is_empty() {
+                merged_lines.push(format!("{}{}", line.tags_key, text));
+            }
+        }
+
+        if let Some(text) = pop_auxiliary_lrc_text(&mut romanized_by_tags, &line.tags_key) {
+            if !text.trim().is_empty() {
+                merged_lines.push(format!("{}{}", line.tags_key, text));
+            }
+        }
+    }
+
+    merged_lines.join("\n")
+}
+
+fn load_auxiliary_local_lyrics_impl(path: &Path, suffixes: &[&str]) -> anyhow::Result<Option<String>> {
+    for suffix in suffixes {
+        if let Some(sidecar_path) = find_auxiliary_sidecar_lrc_path(path, suffix) {
+            let content = fs::read_to_string(&sidecar_path)
+                .with_context(|| format!("Failed to read lyric file {}", sidecar_path.display()))?;
+            if !content.trim().is_empty() {
+                return Ok(Some(content));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn save_auxiliary_local_lyrics_impl(
+    path: &Path,
+    suffix: &str,
+    content: Option<&str>,
+) -> anyhow::Result<()> {
+    let sidecar_path = build_auxiliary_sidecar_lrc_path(path, suffix)?;
+    if let Some(value) = content.filter(|entry| !entry.trim().is_empty()) {
+        if let Some(parent) = sidecar_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create lyric directory {}", parent.display()))?;
+        }
+
+        let mut file = fs::File::create(&sidecar_path)
+            .with_context(|| format!("Failed to create lyric file {}", sidecar_path.display()))?;
+        file.write_all(value.as_bytes())
+            .with_context(|| format!("Failed to write lyric file {}", sidecar_path.display()))?;
+    } else {
+        delete_sidecar_lrc_if_exists(&sidecar_path)?;
+    }
+
+    Ok(())
+}
+
+fn delete_sidecar_lrc_if_exists(path: &Path) -> anyhow::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to delete lyric file {}", path.display())),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ParsedLrcTrack {
+    metadata_lines: Vec<String>,
+    timed_lines: Vec<ParsedLrcTimedLine>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedLrcTimedLine {
+    tags_key: String,
+    raw_line: String,
+    text: String,
+}
+
+fn parse_lrc_track_lines(raw_lyric: &str) -> ParsedLrcTrack {
+    let mut metadata_lines = Vec::new();
+    let mut timed_lines = Vec::new();
+
+    for raw_line in raw_lyric.split('\n') {
+        let line = raw_line.trim_end_matches('\r').trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some((tags_key, text)) = parse_lrc_timed_line(line) {
+            timed_lines.push(ParsedLrcTimedLine {
+                tags_key,
+                raw_line: line.to_string(),
+                text,
+            });
+        } else {
+            metadata_lines.push(line.to_string());
+        }
+    }
+
+    ParsedLrcTrack {
+        metadata_lines,
+        timed_lines,
+    }
+}
+
+fn group_auxiliary_lrc_lines_by_tags(raw_lyric: Option<&str>) -> BTreeMap<String, VecDeque<String>> {
+    let mut grouped = BTreeMap::new();
+
+    if let Some(raw_lyric) = raw_lyric {
+        for line in parse_lrc_track_lines(raw_lyric).timed_lines {
+            grouped
+                .entry(line.tags_key)
+                .or_insert_with(VecDeque::new)
+                .push_back(line.text);
+        }
+    }
+
+    grouped
+}
+
+fn pop_auxiliary_lrc_text(
+    grouped: &mut BTreeMap<String, VecDeque<String>>,
+    tags_key: &str,
+) -> Option<String> {
+    let queue = grouped.get_mut(tags_key)?;
+    let next = queue.pop_front();
+    if queue.is_empty() {
+        grouped.remove(tags_key);
+    }
+    next
+}
+
+fn parse_lrc_timed_line(line: &str) -> Option<(String, String)> {
+    let mut tags = Vec::new();
+    let mut cursor = line;
+
+    while let Some(stripped) = cursor.strip_prefix('[') {
+        let end_index = stripped.find(']')?;
+        let content = &stripped[..end_index];
+        if !is_lrc_time_tag_content(content) {
+            break;
+        }
+
+        tags.push(format!("[{content}]"));
+        cursor = &stripped[end_index + 1..];
+    }
+
+    if tags.is_empty() {
+        return None;
+    }
+
+    Some((tags.join(""), cursor.to_string()))
+}
+
+fn is_lrc_time_tag_content(content: &str) -> bool {
+    let mut parts = content.split(':');
+    let minutes = parts.next();
+    let seconds = parts.next();
+    if minutes.is_none() || seconds.is_none() || parts.next().is_some() {
+        return false;
+    }
+
+    let minutes = minutes.unwrap_or_default();
+    let seconds = seconds.unwrap_or_default();
+    if minutes.is_empty() || !minutes.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+
+    let mut second_parts = seconds.split('.');
+    let whole_seconds = second_parts.next().unwrap_or_default();
+    if whole_seconds.len() != 2 || !whole_seconds.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+
+    match second_parts.next() {
+        Some(fraction)
+            if !fraction.is_empty()
+                && fraction.len() <= 3
+                && fraction.chars().all(|ch| ch.is_ascii_digit()) => {}
+        Some(_) => return false,
+        None => {}
+    }
+
+    second_parts.next().is_none()
 }
 
 fn read_embedded_lyrics(path: &Path) -> anyhow::Result<Option<String>> {
@@ -2023,6 +2285,45 @@ fn find_sidecar_lrc_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
+fn find_auxiliary_sidecar_lrc_path(path: &Path, suffix: &str) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let stem = path.file_stem()?.to_str()?;
+    let normalized_suffix = suffix.to_ascii_lowercase();
+    let mut exact_candidates = vec![
+        parent.join(format!("{stem}.{suffix}.lrc")),
+        parent.join(format!("{stem}.{suffix}.LRC")),
+    ];
+
+    for candidate in exact_candidates.drain(..) {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    let entries = fs::read_dir(parent).ok()?;
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        let extension = candidate
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        if extension.as_deref() != Some("lrc") {
+            continue;
+        }
+
+        let candidate_stem = candidate
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        let expected_stem = format!("{}.{}", stem.to_ascii_lowercase(), normalized_suffix);
+        if candidate_stem.as_deref() == Some(expected_stem.as_str()) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
 fn build_sidecar_lrc_path(path: &Path) -> anyhow::Result<PathBuf> {
     let parent = path
         .parent()
@@ -2032,6 +2333,17 @@ fn build_sidecar_lrc_path(path: &Path) -> anyhow::Result<PathBuf> {
         .and_then(|value| value.to_str())
         .ok_or_else(|| anyhow!("Track path {} does not have a valid file stem", path.display()))?;
     Ok(parent.join(format!("{stem}.lrc")))
+}
+
+fn build_auxiliary_sidecar_lrc_path(path: &Path, suffix: &str) -> anyhow::Result<PathBuf> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("Track path {} does not have a parent directory", path.display()))?;
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow!("Track path {} does not have a valid file stem", path.display()))?;
+    Ok(parent.join(format!("{stem}.{suffix}.lrc")))
 }
 
 fn import_path_into_library(

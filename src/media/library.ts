@@ -34,6 +34,12 @@ export type AudioTrackAnalysis = {
   suggestedTransitionReason: string;
 };
 
+export type LocalLyricsBundle = {
+  lyric: string | null;
+  translatedLyric: string | null;
+  romanizedLyric: string | null;
+};
+
 export const ensureMediaLibrary = async (): Promise<MediaLibrarySnapshot> =>
   invoke("ensure_media_library");
 
@@ -104,5 +110,23 @@ export const saveLocalLyrics = async (path: string, content: string): Promise<st
     request: {
       path,
       content,
+    },
+  });
+
+export const loadLocalLyricsBundle = async (path: string): Promise<LocalLyricsBundle> =>
+  invoke("load_local_lyrics_bundle", {
+    request: {
+      path,
+    },
+  });
+
+export const saveLocalLyricsBundle = async (
+  path: string,
+  lyrics: LocalLyricsBundle,
+): Promise<string> =>
+  invoke("save_local_lyrics_bundle", {
+    request: {
+      path,
+      ...lyrics,
     },
   });

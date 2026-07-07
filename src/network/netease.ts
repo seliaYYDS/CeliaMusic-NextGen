@@ -1492,11 +1492,7 @@ export async function getNeteaseSongLyrics(
 
   const response = await requestNeteaseJson<Record<string, unknown>>(settings, "/lyric/new", {
     id: String(id),
-  }).catch(() => null);
-
-  if (!response) {
-    return null;
-  }
+  });
 
   const lrc = asRecord(response.lrc);
   const tlyric = asRecord(response.tlyric);
