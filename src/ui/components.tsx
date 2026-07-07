@@ -241,6 +241,7 @@ type UISelectProps = {
   options: UISelectOption[];
   value: string;
   onChange: (value: string) => void;
+  onOpenChange?: (isOpen: boolean) => void;
   searchable?: boolean;
   searchPlaceholder?: string;
   emptyStateLabel?: string;
@@ -252,6 +253,7 @@ export function UISelect({
   options,
   value,
   onChange,
+  onOpenChange,
   searchable = false,
   searchPlaceholder,
   emptyStateLabel,
@@ -311,6 +313,10 @@ export function UISelect({
       setSearchQuery("");
     }
   }, [menuState]);
+
+  useEffect(() => {
+    onOpenChange?.(isOpen);
+  }, [isOpen, onOpenChange]);
 
   useEffect(() => {
     if (!searchable || !isOpen) {

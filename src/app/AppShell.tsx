@@ -1997,6 +1997,51 @@ function buildLyricFontFamilyValue(fontFamily: string) {
   return buildConfiguredFontFamilyValue(fontFamily);
 }
 
+function buildFontSelectOptions(
+  defaultLabel: string,
+  selectedFontFamily: string,
+  fontFamilies: string[],
+) {
+  const normalizedSelectedFontFamily = selectedFontFamily.trim();
+  const selectedFontOption =
+    normalizedSelectedFontFamily &&
+    normalizeFontFamilyKey(normalizedSelectedFontFamily) !== normalizeFontFamilyKey("system-ui")
+      ? [
+          {
+            label: normalizedSelectedFontFamily,
+            value: normalizedSelectedFontFamily,
+            labelStyle: buildFontOptionLabelStyle(normalizedSelectedFontFamily),
+          } satisfies UISelectOption,
+        ]
+      : [];
+
+  return [
+    {
+      label: defaultLabel,
+      value: "system-ui",
+      labelStyle: buildFontOptionLabelStyle("system-ui"),
+    },
+    ...selectedFontOption,
+    ...fontFamilies.map((family) => ({
+      label: family,
+      value: family,
+      labelStyle: buildFontOptionLabelStyle(family),
+    })),
+  ].filter(
+    (option, index, collection) =>
+      collection.findIndex((item) => normalizeFontFamilyKey(item.value) === normalizeFontFamilyKey(option.value)) ===
+      index,
+  );
+}
+
+function waitForAnimationFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      resolve();
+    });
+  });
+}
+
 function resolveLyricWordFillTiming(
   word: { startTimeMs: number; durationMs: number; endTimeMs: number },
   nextWord: { startTimeMs: number } | null,
@@ -13222,6 +13267,7 @@ export function AppShell({
 
   const handleReleaseMemoryCache = async () => {
     try {
+      const releaseStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
       const neteaseCacheSummary = clearNeteaseMemoryCaches();
       const exploreCacheSummary = clearExploreMemoryCaches();
       const appCacheSummary = {
@@ -13243,6 +13289,8 @@ export function AppShell({
         loggedTrackAnalysisKeys: loggedTrackAnalysisKeysRef.current.size,
         trackAnalysisEntries: Object.keys(trackAnalysisByTrackIdRef.current).length,
         trackAnalysisRequests: Object.keys(trackAnalysisRequestsRef.current).length,
+        transientRemoteTrackEntries: Object.keys(transientRemoteTracksRef.current).length,
+        transientRemoteArtworkEntries: Object.keys(transientRemoteArtworkUrlsRef.current).length,
         autoMixDecisionEntries: Object.keys(autoMixDecisionCacheRef.current).length,
         lyricsCacheEntries: Object.keys(lyricsCacheRef.current).length,
         immersivePaletteCacheEntries: Object.keys(immersivePaletteCacheRef.current).length,
@@ -13255,13 +13303,24 @@ export function AppShell({
       loggedTrackAnalysisKeysRef.current.clear();
       trackAnalysisByTrackIdRef.current = {};
       trackAnalysisRequestsRef.current = {};
+      transientRemoteTracksRef.current = {};
+      transientRemoteArtworkUrlsRef.current = {};
       autoMixDecisionCacheRef.current = {};
       lyricsCacheRef.current = {};
+      lyricsFailedCacheKeysRef.current.clear();
       immersivePaletteCacheRef.current = {};
 
       const cachedEntries = Object.entries(playbackCachedAudioPathsRef.current);
       playbackCachedAudioPathsRef.current = {};
       playbackCacheRequestsRef.current = {};
+      if (playbackCacheScheduleTimerRef.current !== null) {
+        window.clearTimeout(playbackCacheScheduleTimerRef.current);
+        playbackCacheScheduleTimerRef.current = null;
+      }
+      playbackCacheScheduledTrackIdRef.current = null;
+
+      setTransientRemoteTracks({});
+      setTransientRemoteArtworkUrls({});
 
       const playbackCacheReleaseResults = await Promise.allSettled(
         cachedEntries.map(([, path]) => clearCachedRemoteAudio(path)),
@@ -13274,6 +13333,17 @@ export function AppShell({
       if (typeof window !== "undefined" && "gc" in window) {
         const maybeGc = (window as Window & { gc?: () => void }).gc;
         maybeGc?.();
+      }
+
+      await waitForAnimationFrame();
+      await waitForAnimationFrame();
+
+      const elapsedMs =
+        (typeof performance !== "undefined" ? performance.now() : Date.now()) - releaseStartedAt;
+      if (elapsedMs < 650) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 650 - elapsedMs);
+        });
       }
 
       console.groupCollapsed("[cache] released in-memory cache");
@@ -16129,8 +16199,10 @@ function SettingsScreen({
   const [neteaseAccountError, setNeteaseAccountError] = useState<string | null>(null);
   const [isReleasingMemoryCache, setIsReleasingMemoryCache] = useState(false);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
+  const [isDeferredSettingsContentReady, setIsDeferredSettingsContentReady] = useState(false);
   const [systemFontFamilies, setSystemFontFamilies] = useState<string[]>([]);
   const [isLoadingSystemFonts, setIsLoadingSystemFonts] = useState(false);
+  const hasRequestedSystemFontsRef = useRef(false);
   const prioritizedSystemFontFamilies = useMemo(
     () => prioritizeSystemFontFamilies(systemFontFamilies, copy.locale),
     [copy.locale, systemFontFamilies],
@@ -16435,30 +16507,16 @@ function SettingsScreen({
       value: "glitch",
     },
   ];
-  const appFontOptions: UISelectOption[] = [
-    {
-      label: copy.settings.sections.appearance.fontDefaultOption,
-      value: "system-ui",
-      labelStyle: buildFontOptionLabelStyle("system-ui"),
-    },
-    ...prioritizedSystemFontFamilies.map((family) => ({
-      label: family,
-      value: family,
-      labelStyle: buildFontOptionLabelStyle(family),
-    })),
-  ];
-  const lyricFontOptions: UISelectOption[] = [
-    {
-      label: copy.settings.sections.lyrics.fontDefaultOption,
-      value: "system-ui",
-      labelStyle: buildFontOptionLabelStyle("system-ui"),
-    },
-    ...prioritizedSystemFontFamilies.map((family) => ({
-      label: family,
-      value: family,
-      labelStyle: buildFontOptionLabelStyle(family),
-    })),
-  ];
+  const appFontOptions = buildFontSelectOptions(
+    copy.settings.sections.appearance.fontDefaultOption,
+    settings.appearance.fontFamily,
+    prioritizedSystemFontFamilies,
+  );
+  const lyricFontOptions = buildFontSelectOptions(
+    copy.settings.sections.lyrics.fontDefaultOption,
+    settings.lyrics.fontFamily,
+    prioritizedSystemFontFamilies,
+  );
   const lyricLineAlignmentOptions: UISelectOption[] = [
     {
       label: copy.settings.sections.lyrics.lineAlignmentUpper,
@@ -16502,6 +16560,22 @@ function SettingsScreen({
   const isSettingsSearchRendered = settingsSearchState !== "closed";
   const isSettingsSearchVisible = settingsSearchState === "opening" || settingsSearchState === "open";
   const shouldShowThemeResults = settingsView === "theme" || isSearchingSettings;
+
+  useEffect(() => {
+    if (settingsView !== "main" || isSearchingSettings) {
+      setIsDeferredSettingsContentReady(true);
+      return;
+    }
+
+    setIsDeferredSettingsContentReady(false);
+    const frameId = window.requestAnimationFrame(() => {
+      setIsDeferredSettingsContentReady(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [isSearchingSettings, settingsView]);
 
   const matchesSettingsSearch = (parts: Array<string | number | boolean | null | undefined>) =>
     !isSearchingSettings ||
@@ -16750,6 +16824,8 @@ function SettingsScreen({
     showThemePresetSection,
     showThemeBackgroundSection,
   ].filter(Boolean).length;
+  const shouldRenderSecondarySettingsSections =
+    settingsView !== "main" || isSearchingSettings || isDeferredSettingsContentReady;
 
   useEffect(() => {
     if (isSearchingSettings && settingsView !== "main") {
@@ -16820,16 +16896,16 @@ function SettingsScreen({
     };
   }, [isSearchingSettings, normalizedSettingsSearchQuery]);
 
-  useEffect(() => {
-    let isDisposed = false;
+  const ensureSystemFontsLoaded = () => {
+    if (hasRequestedSystemFontsRef.current) {
+      return;
+    }
+
+    hasRequestedSystemFontsRef.current = true;
     setIsLoadingSystemFonts(true);
 
     void listSystemFontFamilies()
       .then((families) => {
-        if (isDisposed) {
-          return;
-        }
-
         setSystemFontFamilies(
           Array.from(
             new Set(
@@ -16841,23 +16917,13 @@ function SettingsScreen({
         );
       })
       .catch((error) => {
-        if (isDisposed) {
-          return;
-        }
-
         console.error("[settings] failed to load system fonts", error);
         setSystemFontFamilies([]);
       })
       .finally(() => {
-        if (!isDisposed) {
-          setIsLoadingSystemFonts(false);
-        }
+        setIsLoadingSystemFonts(false);
       });
-
-    return () => {
-      isDisposed = true;
-    };
-  }, []);
+  };
 
   useEffect(() => {
     if (isNeteaseEnabled) {
@@ -16873,7 +16939,11 @@ function SettingsScreen({
   }, [isNeteaseEnabled]);
 
   useEffect(() => {
-    if (!isNeteaseEnabled || !settings.network.neteaseCookie.trim()) {
+    if (
+      !shouldRenderSecondarySettingsSections ||
+      !isNeteaseEnabled ||
+      !settings.network.neteaseCookie.trim()
+    ) {
       setNeteaseAccount(null);
       setNeteaseAccountError(null);
       setIsLoadingNeteaseAccount(false);
@@ -16921,6 +16991,7 @@ function SettingsScreen({
     copy.settings.sections.network.accountEmpty,
     copy.settings.sections.network.accountLoadFailed,
     isNeteaseEnabled,
+    shouldRenderSecondarySettingsSections,
     settings.network.neteaseApiBaseUrl,
     settings.network.neteaseCookie,
     settings.network.neteaseProxy,
@@ -18113,6 +18184,11 @@ function SettingsScreen({
                 }
                 value={settings.appearance.fontFamily}
                 options={appFontOptions}
+                onOpenChange={(isOpen) => {
+                  if (isOpen) {
+                    ensureSystemFontsLoaded();
+                  }
+                }}
                 searchable
                 searchPlaceholder={copy.settings.sections.appearance.fontSearchPlaceholder}
                 emptyStateLabel={copy.settings.sections.appearance.fontSearchEmpty}
@@ -18305,7 +18381,7 @@ function SettingsScreen({
         </section>
         ) : null}
 
-        {showLyricsSection ? (
+        {shouldRenderSecondarySettingsSections && showLyricsSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -18344,6 +18420,11 @@ function SettingsScreen({
               }
               value={settings.lyrics.fontFamily}
               options={lyricFontOptions}
+              onOpenChange={(isOpen) => {
+                if (isOpen) {
+                  ensureSystemFontsLoaded();
+                }
+              }}
               searchable
               searchPlaceholder={copy.settings.sections.lyrics.fontSearchPlaceholder}
               emptyStateLabel={copy.settings.sections.lyrics.fontSearchEmpty}
@@ -18671,7 +18752,7 @@ function SettingsScreen({
         </section>
         ) : null}
 
-        {showPlaybackSection ? (
+        {shouldRenderSecondarySettingsSections && showPlaybackSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -18834,11 +18915,11 @@ function SettingsScreen({
         </section>
         ) : null}
 
-        {showShortcutsSection ? (
+        {shouldRenderSecondarySettingsSections && showShortcutsSection ? (
           <ShortcutSettingsSection copy={copy} bindings={settings.shortcuts} onUpdate={onUpdate} />
         ) : null}
 
-        {showLibrarySection ? (
+        {shouldRenderSecondarySettingsSections && showLibrarySection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
@@ -18938,7 +19019,7 @@ function SettingsScreen({
         </section>
         ) : null}
 
-        {showNetworkSection ? (
+        {shouldRenderSecondarySettingsSections && showNetworkSection ? (
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
