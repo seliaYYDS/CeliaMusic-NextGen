@@ -9949,6 +9949,29 @@ select {
   filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.44));
 }
 
+.app-shell--scheme-light .playbar__automix-floating-badge-glow--far {
+  opacity: 0.24;
+}
+
+.app-shell--scheme-light .playbar__automix-floating-badge-glow--mid {
+  opacity: 0.28;
+}
+
+.app-shell--scheme-light .playbar__automix-floating-badge-glow--near {
+  opacity: 0.34;
+}
+
+.app-shell--scheme-light .playbar__automix-floating-badge-core {
+  background: none;
+  color: color-mix(in srgb, var(--accent-strong, #234d8d) 58%, var(--text-primary, #1f2b3d) 42%);
+  -webkit-text-fill-color: currentColor;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  filter:
+    drop-shadow(0 1px 0 rgba(255, 255, 255, 0.46))
+    drop-shadow(0 1px 5px color-mix(in srgb, var(--accent-soft, #8ecdf4) 16%, transparent 84%));
+}
+
 @keyframes playbar-automix-badge-enter {
   0% {
     opacity: 0;
@@ -9983,6 +10006,27 @@ select {
   inset: 2px 0;
   background: rgba(214, 223, 236, 0.72);
   border-radius: 999px;
+}
+
+.playbar__progress-preview,
+.playbar__volume-popover,
+.playbar__queue-popover,
+.app-context-menu {
+  border: 4px solid color-mix(in srgb, var(--accent-soft, #8ecdf4) 58%, var(--accent, #2d5fa8) 42%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-pane-bg-elevated, var(--panel-bg-strong)) 88%, var(--accent-surface-strong, rgba(45, 95, 168, 0.12)) 12%),
+      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.96)) 82%, var(--accent-surface, rgba(45, 95, 168, 0.08)) 18%)
+    ),
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(45, 95, 168, 0.16)) 72%, transparent 28%), transparent 66%);
+  backdrop-filter: blur(var(--app-overlay-backdrop-blur));
+  -webkit-backdrop-filter: blur(var(--app-overlay-backdrop-blur));
+  box-shadow:
+    0 0 28px color-mix(in srgb, var(--accent-ring, rgba(142, 205, 244, 0.3)) 64%, transparent 36%),
+    0 16px 34px rgba(7, 13, 22, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: visible;
 }
 
 .playbar__progress-preview {
@@ -10020,7 +10064,8 @@ select {
 
 .playbar__progress-preview::after,
 .playbar__volume-popover::after,
-.playbar__queue-popover::after {
+.playbar__queue-popover::after,
+.app-context-menu::after {
   content: "";
   position: absolute;
   inset: -4px;
@@ -10659,55 +10704,44 @@ select {
 }
 
 .playbar__volume-popover {
-  position: absolute;
-  right: -6px;
-  bottom: calc(100% + 26px);
-  z-index: 7;
+  position: fixed;
+  right: auto;
+  bottom: auto;
   width: 220px;
   padding: 12px 12px 10px;
-  border: 4px solid color-mix(in srgb, var(--accent-soft, #8ecdf4) 58%, var(--accent, #2d5fa8) 42%);
+  box-sizing: border-box;
   border-radius: 14px;
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--app-pane-bg-elevated, var(--panel-bg-strong)) 90%, var(--accent-surface-strong, rgba(45, 95, 168, 0.12)) 10%),
-      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.96)) 84%, var(--accent-surface, rgba(45, 95, 168, 0.08)) 16%)
+      color-mix(in srgb, var(--app-pane-bg-elevated, rgba(248, 250, 255, 0.74)) 72%, transparent 28%),
+      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.68)) 58%, transparent 42%)
     ),
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(45, 95, 168, 0.14)) 70%, transparent 30%), transparent 68%);
-  backdrop-filter: blur(var(--app-panel-backdrop-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--app-panel-backdrop-blur, 0px));
-  box-shadow:
-    0 0 28px color-mix(in srgb, var(--accent-ring, rgba(142, 205, 244, 0.3)) 64%, transparent 36%),
-    0 16px 34px rgba(7, 13, 22, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  overflow: visible;
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(45, 95, 168, 0.18)) 60%, transparent 40%), transparent 68%);
+  backdrop-filter: blur(18px) saturate(118%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(118%) !important;
   animation: playbar-volume-in 180ms ease;
 }
 
 .playbar__queue-popover {
-  position: absolute;
-  right: -8px;
-  bottom: calc(100% + 26px);
-  z-index: 8;
+  position: fixed;
+  right: auto;
+  bottom: auto;
   width: 380px;
   max-height: min(420px, 52vh);
   padding: 12px;
-  border: 4px solid color-mix(in srgb, var(--accent-soft, #8ecdf4) 58%, var(--accent, #2d5fa8) 42%);
+  box-sizing: border-box;
   border-radius: 14px;
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--app-pane-bg-elevated, var(--panel-bg-strong)) 90%, var(--accent-surface-strong, rgba(45, 95, 168, 0.12)) 10%),
-      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.96)) 84%, var(--accent-surface, rgba(45, 95, 168, 0.08)) 16%)
+      color-mix(in srgb, var(--app-pane-bg-elevated, rgba(248, 250, 255, 0.74)) 72%, transparent 28%),
+      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.68)) 58%, transparent 42%)
     ),
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(45, 95, 168, 0.14)) 70%, transparent 30%), transparent 68%);
-  backdrop-filter: blur(var(--app-panel-backdrop-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--app-panel-backdrop-blur, 0px));
-  box-shadow:
-    0 0 28px color-mix(in srgb, var(--accent-ring, rgba(142, 205, 244, 0.3)) 64%, transparent 36%),
-    0 16px 34px rgba(7, 13, 22, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  overflow: visible;
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(45, 95, 168, 0.18)) 60%, transparent 40%), transparent 68%);
+  backdrop-filter: blur(18px) saturate(118%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(118%) !important;
+  overflow: hidden;
   animation: playbar-volume-in 180ms ease;
 }
 
@@ -10716,7 +10750,7 @@ select {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   color: var(--text-primary, rgba(27, 35, 64, 0.92));
 }
 
@@ -10792,7 +10826,7 @@ select {
 
 .playbar__queue-empty {
   margin: 0;
-  padding: 12px 4px 6px;
+  padding: 8px 4px 6px;
   font-size: 0.76rem;
   color: var(--text-secondary, rgba(88, 103, 132, 0.86));
 }
@@ -11873,31 +11907,10 @@ select {
   color: var(--accent-strong) !important;
 }
 
-.playbar__volume-popover {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--app-pane-bg-elevated, var(--panel-bg-strong)) 90%, var(--accent-surface-strong, rgba(45, 95, 168, 0.12)) 10%),
-      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.96)) 84%, var(--accent-surface, rgba(45, 95, 168, 0.08)) 16%)
-    ),
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(45, 95, 168, 0.14)) 70%, transparent 30%), transparent 68%);
-  border-color: color-mix(in srgb, var(--accent-soft, #8ecdf4) 58%, var(--accent, #2d5fa8) 42%);
-}
-
-.playbar__queue-popover {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--app-pane-bg-elevated, var(--panel-bg-strong)) 90%, var(--accent-surface-strong, rgba(45, 95, 168, 0.12)) 10%),
-      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.96)) 84%, var(--accent-surface, rgba(45, 95, 168, 0.08)) 16%)
-    ),
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(45, 95, 168, 0.14)) 70%, transparent 30%), transparent 68%);
-  border-color: color-mix(in srgb, var(--accent-soft, #8ecdf4) 58%, var(--accent, #2d5fa8) 42%);
-}
-
 .app-shell--scheme-dark .playbar__progress-preview,
 .app-shell--scheme-dark .playbar__volume-popover,
-.app-shell--scheme-dark .playbar__queue-popover {
+.app-shell--scheme-dark .playbar__queue-popover,
+.app-shell--scheme-dark .app-context-menu {
   background:
     linear-gradient(
       180deg,
@@ -11906,6 +11919,17 @@ select {
     ),
     radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(122, 162, 214, 0.18)) 74%, transparent 26%), transparent 68%);
   border-color: color-mix(in srgb, var(--accent-soft, #9bc2df) 58%, var(--accent, #3f6e99) 42%);
+}
+
+.app-shell--scheme-dark .playbar__volume-popover,
+.app-shell--scheme-dark .playbar__queue-popover {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-pane-bg-elevated, rgba(23, 30, 42, 0.78)) 72%, transparent 28%),
+      color-mix(in srgb, var(--panel-bg-strong, rgba(17, 24, 39, 0.66)) 58%, transparent 42%)
+    ),
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent-surface-strong, rgba(122, 162, 214, 0.2)) 62%, transparent 38%), transparent 68%);
 }
 
 .playbar__queue-item {
@@ -12032,19 +12056,7 @@ select {
   gap: 4px;
   min-width: 188px;
   padding: 6px;
-  border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--panel-bg-strong, rgba(255, 255, 255, 0.94)) 92%, var(--accent-surface, rgba(45, 95, 168, 0.08)) 8%),
-      color-mix(in srgb, var(--panel-bg, rgba(255, 255, 255, 0.86)) 84%, var(--accent-surface, rgba(45, 95, 168, 0.08)) 16%)
-    );
-  box-shadow:
-    0 18px 38px rgba(13, 24, 41, 0.18),
-    0 4px 14px rgba(13, 24, 41, 0.1);
-  backdrop-filter: blur(var(--app-card-backdrop-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--app-card-backdrop-blur, 0px));
   user-select: none;
   transform-origin: top left;
   opacity: 0;

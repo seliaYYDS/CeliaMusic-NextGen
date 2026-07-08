@@ -4324,6 +4324,8 @@ export function AppShell({
   const playbackCandidatesRef = useRef<string[]>([]);
   const volumePopoverRef = useRef<HTMLDivElement | null>(null);
   const queuePopoverRef = useRef<HTMLDivElement | null>(null);
+  const volumePopoverContentRef = useRef<HTMLDivElement | null>(null);
+  const queuePopoverContentRef = useRef<HTMLDivElement | null>(null);
   const queueListRef = useRef<HTMLDivElement | null>(null);
   const queueItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const queueDragFrameRef = useRef<number | null>(null);
@@ -6422,10 +6424,17 @@ export function AppShell({
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!volumePopoverRef.current?.contains(event.target as Node)) {
+      const targetNode = event.target as Node;
+      if (
+        !volumePopoverRef.current?.contains(targetNode) &&
+        !volumePopoverContentRef.current?.contains(targetNode)
+      ) {
         setIsVolumePopoverOpen(false);
       }
-      if (!queuePopoverRef.current?.contains(event.target as Node)) {
+      if (
+        !queuePopoverRef.current?.contains(targetNode) &&
+        !queuePopoverContentRef.current?.contains(targetNode)
+      ) {
         setIsQueuePopoverOpen(false);
       }
       if (!(event.target instanceof HTMLElement) || !event.target.closest(".app-context-menu")) {
@@ -7479,6 +7488,13 @@ export function AppShell({
     };
   };
   const playbarQueueCopy = getPlaybarQueueCopy(copy.locale);
+  const portalThemeClassName = [
+    `app-shell--theme-${settings.appearance.themeMode}`,
+    `app-shell--scheme-${settings.appearance.colorScheme}`,
+    settings.appearance.useCompactMode ? "app-shell--compact" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const canSkipPrevious =
     currentQueueIds.length > 1 &&
     currentQueueIndex !== -1 &&
@@ -13983,43 +13999,22 @@ export function AppShell({
         neteaseTrackId !== null &&
         currentIntelligencePlaylist !== null;
       const playlistSubmenu =
-        !canUseNeteaseContextActions
-          ? [
-              {
-                id: "login-required",
-                label: contextMenuCopy.loginRequired,
-                disabled: true,
-              },
-            ]
-          : isContextMenuPlaylistLoading
-            ? [
-                {
-                  id: "loading-playlists",
-                  label: contextMenuCopy.loadingPlaylists,
-                  disabled: true,
-                },
-              ]
-            : contextMenuOwnedPlaylists.length === 0
-              ? [
-                  {
-                    id: "no-playlists",
-                    label: contextMenuCopy.noAvailablePlaylist,
-                    disabled: true,
-                  },
-                ]
-              : contextMenuOwnedPlaylists.map((playlist) => ({
+        !canUseNeteaseContextActions ||
+        neteaseTrackId === null ||
+        isContextMenuPlaylistLoading ||
+        contextMenuBusyActionId !== null ||
+        contextMenuOwnedPlaylists.length === 0
+          ? []
+          : contextMenuOwnedPlaylists.map((playlist) => ({
                   id: `playlist-choice:${playlist.id}`,
                   label: playlist.name,
                   artworkUrl: playlist.artworkUrl ?? null,
-                  disabled:
-                    contextMenuBusyActionId !== null ||
-                    neteaseTrackId === null,
                   onSelect: () => {
                     void handleAddSongToPlaylistFromContext(payload, playlist.id);
                   },
                 }));
 
-      return [
+      const songMenuItems: Array<ContextMenuItemDefinition | null> = [
         {
           id: "song-add-queue",
           label: contextMenuCopy.addToQueue,
@@ -14032,43 +14027,47 @@ export function AppShell({
           disabled: contextMenuBusyActionId !== null,
           onSelect: () => queueContextSong(payload, "next"),
         },
-        {
-          id: "song-start-intelligence",
-          label: contextMenuCopy.startIntelligenceMode,
-          disabled: contextMenuBusyActionId !== null || !canStartIntelligenceMode,
-          onSelect: () => {
-            if (!currentIntelligencePlaylist || !neteasePayload) {
-              return;
-            }
+        canStartIntelligenceMode && contextMenuBusyActionId === null
+          ? {
+              id: "song-start-intelligence",
+              label: contextMenuCopy.startIntelligenceMode,
+              onSelect: () => {
+                if (!currentIntelligencePlaylist || !neteasePayload) {
+                  return;
+                }
 
-            void handleStartNeteaseIntelligenceMode(
-              currentIntelligencePlaylist,
-              neteasePayload,
-              contextQueueSongs,
-            );
-          },
-        },
-        {
-          id: "song-like",
-          label: contextMenuCopy.likeSong,
-          disabled: !canUseNeteaseContextActions || neteaseTrackId === null,
-          onSelect: () => {
-            void handleLikeSongFromContext(payload);
-          },
-        },
-        {
-          id: "song-add-playlist",
-          label: contextMenuCopy.addToPlaylist,
-          disabled: !canUseNeteaseContextActions || neteaseTrackId === null,
-          submenu: playlistSubmenu,
-        },
+                void handleStartNeteaseIntelligenceMode(
+                  currentIntelligencePlaylist,
+                  neteasePayload,
+                  contextQueueSongs,
+                );
+              },
+            }
+          : null,
+        canUseNeteaseContextActions && neteaseTrackId !== null && contextMenuBusyActionId === null
+          ? {
+              id: "song-like",
+              label: contextMenuCopy.likeSong,
+              onSelect: () => {
+                void handleLikeSongFromContext(payload);
+              },
+            }
+          : null,
+        playlistSubmenu.length > 0
+          ? {
+              id: "song-add-playlist",
+              label: contextMenuCopy.addToPlaylist,
+              submenu: playlistSubmenu,
+            }
+          : null,
         ...(currentPlaylistId !== null
+          && canRemoveFromCurrentPlaylist
+          && contextMenuBusyActionId === null
           ? [
               {
                 id: "song-remove-current-playlist",
                 label: contextMenuCopy.removeFromCurrentPlaylist,
                 danger: true,
-                disabled: !canRemoveFromCurrentPlaylist || contextMenuBusyActionId !== null,
                 onSelect: () => {
                   void handleRemoveSongFromCurrentPlaylistFromContext(payload, currentPlaylistId);
                 },
@@ -14076,6 +14075,8 @@ export function AppShell({
             ]
           : []),
       ];
+
+      return songMenuItems.filter((item): item is ContextMenuItemDefinition => item !== null);
     }
 
     const playlist = contextMenuState.target.playlist;
@@ -14097,40 +14098,45 @@ export function AppShell({
         )
       );
 
-    return [
-      {
+    const playlistMenuItems: Array<ContextMenuItemDefinition | null> = [
+      !isOwnPlaylist && canUseNeteaseContextActions && contextMenuBusyActionId === null
+        ? {
         id: "playlist-subscribe",
         label: isOwnPlaylist
           ? contextMenuCopy.ownPlaylist
           : isSubscribedPlaylist
             ? contextMenuCopy.unsubscribePlaylist
             : contextMenuCopy.subscribePlaylist,
-        disabled: !canUseNeteaseContextActions || isOwnPlaylist,
         onSelect: () => {
           void handleTogglePlaylistSubscriptionFromContext({
             ...playlist,
             subscribed: isSubscribedPlaylist,
           });
         },
-      },
-      {
+      }
+        : null,
+      isOwnPlaylist && contextMenuBusyActionId === null
+        ? {
         id: "playlist-delete",
         label: contextMenuCopy.deletePlaylist,
         danger: true,
-        disabled: !isOwnPlaylist || contextMenuBusyActionId !== null,
         onSelect: () => {
           void handleDeletePlaylistFromContext(playlist);
         },
-      },
-      {
+      }
+        : null,
+      isOwnPlaylist && contextMenuBusyActionId === null
+        ? {
         id: "playlist-edit",
         label: contextMenuCopy.editPlaylist,
-        disabled: !isOwnPlaylist || contextMenuBusyActionId !== null,
         onSelect: () => {
           void handleEditPlaylistFromContext(playlist);
         },
-      },
+      }
+        : null,
     ];
+
+    return playlistMenuItems.filter((item): item is ContextMenuItemDefinition => item !== null);
   })();
 
   const handleWorkspaceContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -15263,15 +15269,22 @@ export function AppShell({
             <div className="playbar__actions" aria-label={localeStrings.player.actions}>
               <span className="playbar__status">{volume}%</span>
               <div className="playbar__volume" ref={volumePopoverRef}>
-                {isVolumePopoverOpen ? (
-                  <div className="playbar__volume-popover">
-                    <UISlider
-                      label={localeStrings.player.volumeLabel}
-                      value={volume}
-                      onChange={handleVolumeChange}
-                    />
-                  </div>
-                ) : null}
+                <AnchoredPopoverPortal
+                  anchorRef={volumePopoverRef}
+                  popoverRef={volumePopoverContentRef}
+                  isOpen={isVolumePopoverOpen}
+                  className="playbar__volume-popover"
+                  themeClassName={portalThemeClassName}
+                  themeStyle={themeStyle}
+                  horizontalOffset={6}
+                  verticalOffset={26}
+                >
+                  <UISlider
+                    label={localeStrings.player.volumeLabel}
+                    value={volume}
+                    onChange={handleVolumeChange}
+                  />
+                </AnchoredPopoverPortal>
                 <button
                   className={[
                     "playbar__action-button",
@@ -15301,39 +15314,47 @@ export function AppShell({
                 <PlaybackModeIcon mode={playbackMode} />
               </button>
               <div className="playbar__queue" ref={queuePopoverRef}>
-                {isQueuePopoverOpen ? (
-                  <div className="playbar__queue-popover">
-                    <div className="playbar__queue-popover-header">
-                      <div className="playbar__queue-popover-heading">
-                        <strong>{playbarQueueCopy.title}</strong>
-                      </div>
-                      <div className="playbar__queue-popover-actions">
-                        {currentQueueTracks.length > 0 ? (
-                          <button
-                            className="playbar__queue-popover-link playbar__queue-popover-link--danger"
-                            type="button"
-                            onClick={handleClearPlaybackQueue}
-                          >
-                            <span>{playbarQueueCopy.clear}</span>
-                          </button>
-                        ) : null}
-                        {playbackQueueSourcePlaylist ? (
-                          <button
-                            className="playbar__queue-popover-link"
-                            type="button"
-                            onClick={handleOpenQueueSourcePlaylist}
-                          >
-                            <QueueOpenPlaylistIcon />
-                            <span>{playbarQueueCopy.openSourcePlaylist}</span>
-                          </button>
-                        ) : null}
-                      </div>
+                <AnchoredPopoverPortal
+                  anchorRef={queuePopoverRef}
+                  popoverRef={queuePopoverContentRef}
+                  isOpen={isQueuePopoverOpen}
+                  className="playbar__queue-popover"
+                  themeClassName={portalThemeClassName}
+                  themeStyle={themeStyle}
+                  horizontalOffset={8}
+                  verticalOffset={26}
+                >
+                  <div className="playbar__queue-popover-header">
+                    <div className="playbar__queue-popover-heading">
+                      <strong>{playbarQueueCopy.title}</strong>
                     </div>
-                    {currentQueueTracks.length === 0 ? (
-                      <p className="playbar__queue-empty">{playbarQueueCopy.empty}</p>
-                    ) : (
-                      <div className="playbar__queue-list" ref={queueListRef}>
-                        {currentQueueTracks.map((track, index) => {
+                    <div className="playbar__queue-popover-actions">
+                      {currentQueueTracks.length > 0 ? (
+                        <button
+                          className="playbar__queue-popover-link playbar__queue-popover-link--danger"
+                          type="button"
+                          onClick={handleClearPlaybackQueue}
+                        >
+                          <span>{playbarQueueCopy.clear}</span>
+                        </button>
+                      ) : null}
+                      {playbackQueueSourcePlaylist ? (
+                        <button
+                          className="playbar__queue-popover-link"
+                          type="button"
+                          onClick={handleOpenQueueSourcePlaylist}
+                        >
+                          <QueueOpenPlaylistIcon />
+                          <span>{playbarQueueCopy.openSourcePlaylist}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {currentQueueTracks.length === 0 ? (
+                    <p className="playbar__queue-empty">{playbarQueueCopy.empty}</p>
+                  ) : (
+                    <div className="playbar__queue-list" ref={queueListRef}>
+                      {currentQueueTracks.map((track, index) => {
                           const isCurrentTrack = track.id === currentTrackId;
                           const queuePosition = currentQueueIndexMap.get(track.id) ?? -1;
                           const displaySequence =
@@ -15431,11 +15452,10 @@ export function AppShell({
                               </div>
                             </div>
                           );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
+                      })}
+                    </div>
+                  )}
+                </AnchoredPopoverPortal>
                 <button
                   className={[
                     "playbar__action-button",
@@ -15904,6 +15924,120 @@ function AppContextMenu({
         </div>
       ) : null}
     </>
+  );
+}
+
+function AnchoredPopoverPortal({
+  anchorRef,
+  popoverRef,
+  isOpen,
+  className,
+  themeClassName,
+  themeStyle,
+  horizontalOffset = 0,
+  verticalOffset = 12,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>;
+  popoverRef: React.RefObject<HTMLDivElement | null>;
+  isOpen: boolean;
+  className: string;
+  themeClassName: string;
+  themeStyle: CSSProperties;
+  horizontalOffset?: number;
+  verticalOffset?: number;
+  children: ReactNode;
+}) {
+  const [style, setStyle] = useState<CSSProperties | null>(null);
+
+  useLayoutEffect(() => {
+    if (!isOpen || typeof window === "undefined") {
+      setStyle(null);
+      return;
+    }
+
+    let frameId = 0;
+    let resizeObserver: ResizeObserver | null = null;
+
+    const updatePosition = () => {
+      const anchor = anchorRef.current;
+      const popover = popoverRef.current;
+
+      if (!anchor || !popover) {
+        return;
+      }
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const popoverWidth = popover.offsetWidth;
+      const popoverHeight = popover.offsetHeight;
+      const margin = 12;
+      const nextLeft = Math.min(
+        Math.max(margin, anchorRect.right - popoverWidth + horizontalOffset),
+        Math.max(margin, window.innerWidth - popoverWidth - margin),
+      );
+      const nextTop = Math.max(margin, anchorRect.top - popoverHeight - verticalOffset);
+
+      setStyle({
+        position: "fixed",
+        left: nextLeft,
+        top: nextTop,
+        zIndex: 280,
+        visibility: "visible",
+      });
+    };
+
+    updatePosition();
+    frameId = window.requestAnimationFrame(() => {
+      updatePosition();
+    });
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        updatePosition();
+      });
+
+      if (popoverRef.current) {
+        resizeObserver.observe(popoverRef.current);
+      }
+    }
+
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    return () => {
+      if (frameId !== 0) {
+        window.cancelAnimationFrame(frameId);
+      }
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef, horizontalOffset, isOpen, popoverRef, verticalOffset]);
+
+  if (!isOpen || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      className={[className, "app-shell-portal-theme", themeClassName].filter(Boolean).join(" ")}
+      style={
+        {
+          ...themeStyle,
+          ...(style ?? {
+            position: "fixed",
+            left: -9999,
+            top: -9999,
+            zIndex: 280,
+            visibility: "hidden",
+          }),
+        }
+      }
+    >
+      {children}
+    </div>,
+    document.body,
   );
 }
 
