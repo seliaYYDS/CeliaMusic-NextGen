@@ -40,6 +40,36 @@ export type LocalLyricsBundle = {
   romanizedLyric: string | null;
 };
 
+export type LocalSongMetadataInspection = {
+  sourcePath: string;
+  fileName: string;
+  extension: string | null;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  albumArtist: string | null;
+  durationMs: number | null;
+  trackNumber: number | null;
+  discNumber: number | null;
+  year: number | null;
+  genre: string | null;
+  hasEmbeddedArtwork: boolean;
+  hasRelatedArtwork: boolean;
+  artworkPreviewPath: string | null;
+  hasEmbeddedLyrics: boolean;
+  hasSidecarLyrics: boolean;
+  missingFields: string[];
+};
+
+export type SaveLocalSongMetadataRequest = {
+  path: string;
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  lyric?: string | null;
+  coverArtPath?: string | null;
+};
+
 export const ensureMediaLibrary = async (): Promise<MediaLibrarySnapshot> =>
   invoke("ensure_media_library");
 
@@ -96,6 +126,22 @@ export const analyzeLocalAudioTrack = async (path: string): Promise<AudioTrackAn
     request: {
       path,
     },
+  });
+
+export const inspectLocalSongMetadata = async (
+  path: string,
+): Promise<LocalSongMetadataInspection> =>
+  invoke("inspect_local_song_metadata", {
+    request: {
+      path,
+    },
+  });
+
+export const saveLocalSongMetadata = async (
+  request: SaveLocalSongMetadataRequest,
+): Promise<LocalSongMetadataInspection> =>
+  invoke("save_local_song_metadata", {
+    request,
   });
 
 export const loadLocalLyrics = async (path: string): Promise<string | null> =>

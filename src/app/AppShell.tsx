@@ -44,8 +44,11 @@ import {
   clearMediaLibrary,
   deleteMediaTracks,
   importMediaFiles,
+  inspectLocalSongMetadata,
   listMediaLibrary,
+  type LocalSongMetadataInspection,
   loadLocalLyricsBundle,
+  saveLocalSongMetadata,
   saveLocalLyricsBundle,
 } from "../media/library";
 import {
@@ -3156,7 +3159,7 @@ type LibraryView =
   | "albums"
   | "artistSongs"
   | "albumSongs";
-type ToolsView = "hub" | "kugouImport";
+type ToolsView = "hub" | "kugouImport" | "songMetadataFill";
 
 const neteaseHomeFeedCache = new Map<string, NeteaseHomeFeedCacheEntry>();
 const neteasePlaylistLibraryCache = new Map<string, NeteasePlaylistLibraryCacheEntry>();
@@ -3345,6 +3348,10 @@ export function getLocaleStrings(locale: string) {
         kugouImportCompleted: "Kugou playlist import completed",
         kugouImportFailed: "Failed to import the Kugou playlist",
         kugouImportInvalidFile: "The selected Kugou JSON file is invalid",
+        songMetadataInspectionCompleted: "Song metadata inspection completed",
+        songMetadataInspectionFailed: "Failed to inspect the song file",
+        songMetadataSaved: "Song metadata updated",
+        songMetadataSaveFailed: "Failed to update the song metadata",
         wallpaperModeEnabled: "Wallpaper mode enabled",
         wallpaperModeDisabled: "Wallpaper mode disabled",
         wallpaperModeFailed: "Failed to enable wallpaper mode",
@@ -3444,6 +3451,10 @@ export function getLocaleStrings(locale: string) {
       kugouImportCompleted: "酷狗歌单导入完成",
       kugouImportFailed: "酷狗歌单导入失败",
       kugouImportInvalidFile: "所选酷狗 JSON 文件无效",
+      songMetadataInspectionCompleted: "歌曲信息检测完成",
+      songMetadataInspectionFailed: "歌曲文件检测失败",
+      songMetadataSaved: "歌曲信息已写入",
+      songMetadataSaveFailed: "歌曲信息写入失败",
       wallpaperModeEnabled: "已开启壁纸模式",
       wallpaperModeDisabled: "已关闭壁纸模式",
       wallpaperModeFailed: "开启壁纸模式失败",
@@ -3828,6 +3839,9 @@ function getToolsCopy(locale: string) {
       eyebrow: "Tools",
       title: "Toolbox",
       description: "Use import and migration tools here.",
+      songMetadataFillTitle: "Song Metadata Completion",
+      songMetadataFillDescription:
+        "Open a local song file, inspect missing metadata, and prepare for one-click completion.",
       kugouTitle: "Import Kugou Playlist",
       kugouDescription:
         "Parse a local Kugou JSON file and add matched songs into a selected Netease playlist.",
@@ -3840,10 +3854,108 @@ function getToolsCopy(locale: string) {
     eyebrow: "工具",
     title: "工具箱",
     description: "在这里使用导入和迁移等工具。",
+    songMetadataFillTitle: "歌曲信息补全",
+    songMetadataFillDescription: "打开本地歌曲文件并检测缺失信息，为后续一键补全做准备。",
     kugouTitle: "导入酷狗歌单",
     kugouDescription: "解析本地酷狗 JSON，并将匹配到的歌曲导入指定网易云歌单。",
     open: "打开",
     back: "返回工具",
+  };
+}
+
+function getSongMetadataFillCopy(locale: string) {
+  if (locale === "en-US") {
+    return {
+      title: "Song Metadata Completion",
+      description: "Inspect embedded tags and lyrics for a local song file.",
+      autofill: "One-Click Completion",
+      searchSong: "Search Song",
+      searchSongPlaceholder: "Search by song name or artist",
+      search: "Search",
+      confirm: "Confirm",
+      searching: "Searching...",
+      applying: "Applying...",
+      noSearchResults: "No matching songs",
+      selectedSong: "Selected Song",
+      selectFile: "Choose Song File",
+      analyzing: "Inspecting...",
+      selectedFile: "Selected File",
+      overview: "Overview",
+      detectedInfo: "Embedded Metadata",
+      missingInfo: "Missing Fields",
+      editor: "Edit Metadata",
+      sourcePath: "File Path",
+      extension: "Format",
+      duration: "Duration",
+      artwork: "Cover",
+      embeddedArtwork: "Embedded cover",
+      relatedArtwork: "Local cover file",
+      lyrics: "Lyrics",
+      embeddedLyrics: "Embedded lyrics",
+      sidecarLyrics: "Sidecar lyrics",
+      titleField: "Title",
+      artistField: "Artist",
+      albumField: "Album",
+      coverField: "Cover Image",
+      uploadCover: "Upload Cover",
+      write: "Write",
+      writing: "Writing...",
+      lyricField: "Lyrics",
+      noCover: "No cover image",
+      importLyrics: "Import",
+      present: "Present",
+      missing: "Missing",
+      none: "None",
+      emptyState: "No song file selected yet.",
+      lyricsMissing: "No embedded or sidecar lyrics detected",
+      embeddedOnlyNotice: "Only embedded tags are used for title, artist, and album detection.",
+    };
+  }
+
+  return {
+    title: "歌曲信息补全",
+    description: "检测本地歌曲文件的内嵌标签与歌词信息。",
+    autofill: "网络一键补全",
+    searchSong: "搜索歌曲",
+    searchSongPlaceholder: "输入歌名或歌手",
+    search: "搜索",
+    confirm: "确定",
+    searching: "搜索中...",
+    applying: "填充中...",
+    noSearchResults: "没有匹配的歌曲",
+    selectedSong: "已选歌曲",
+    selectFile: "选择歌曲文件",
+    analyzing: "检测中...",
+    selectedFile: "已选文件",
+    overview: "概览",
+    detectedInfo: "内嵌信息",
+    missingInfo: "缺失字段",
+    editor: "歌曲信息编辑",
+    sourcePath: "文件路径",
+    extension: "格式",
+    duration: "时长",
+    artwork: "封面",
+    embeddedArtwork: "内嵌封面",
+    relatedArtwork: "本地封面文件",
+    lyrics: "歌词",
+    embeddedLyrics: "内嵌歌词",
+    sidecarLyrics: "旁挂歌词",
+    titleField: "歌名",
+    artistField: "歌手",
+    albumField: "专辑",
+    coverField: "封面图片",
+    uploadCover: "上传封面",
+    write: "写入",
+    writing: "写入中...",
+    lyricField: "歌词",
+    noCover: "暂无封面",
+    importLyrics: "导入",
+    present: "已存在",
+    missing: "缺失",
+    none: "无",
+    emptyState: "暂未选择歌曲文件。",
+    lyricsMissing: "未检测到内嵌歌词或同名歌词文件",
+    embeddedOnlyNotice: "歌名、歌手、专辑仅依据文件内嵌标签检测，不读取文件名推断。",
   };
 }
 
@@ -4036,6 +4148,23 @@ export function AppShell({
   const [neteaseUiVersion, setNeteaseUiVersion] = useState(0);
   const [toolOwnedPlaylists, setToolOwnedPlaylists] = useState<NeteasePlaylistRecommendation[]>([]);
   const [isToolPlaylistsLoading, setIsToolPlaylistsLoading] = useState(false);
+  const [songMetadataInspectionFilePath, setSongMetadataInspectionFilePath] = useState("");
+  const [songMetadataInspectionResult, setSongMetadataInspectionResult] =
+    useState<LocalSongMetadataInspection | null>(null);
+  const [songMetadataInspectionError, setSongMetadataInspectionError] = useState<string | null>(null);
+  const [isInspectingSongMetadata, setIsInspectingSongMetadata] = useState(false);
+  const [isSavingSongMetadata, setIsSavingSongMetadata] = useState(false);
+  const [songMetadataDraftTitle, setSongMetadataDraftTitle] = useState("");
+  const [songMetadataDraftArtist, setSongMetadataDraftArtist] = useState("");
+  const [songMetadataDraftAlbum, setSongMetadataDraftAlbum] = useState("");
+  const [songMetadataDraftLyric, setSongMetadataDraftLyric] = useState("");
+  const [songMetadataDraftCoverPath, setSongMetadataDraftCoverPath] = useState<string | null>(null);
+  const [songMetadataPickedCoverPath, setSongMetadataPickedCoverPath] = useState<string | null>(null);
+  const [songMetadataSearchKeyword, setSongMetadataSearchKeyword] = useState("");
+  const [songMetadataSearchResults, setSongMetadataSearchResults] = useState<NeteaseSongDetail[]>([]);
+  const [selectedSongMetadataSearchId, setSelectedSongMetadataSearchId] = useState<number | null>(null);
+  const [isSearchingSongMetadata, setIsSearchingSongMetadata] = useState(false);
+  const [isApplyingSongMetadataAutofill, setIsApplyingSongMetadataAutofill] = useState(false);
   const [selectedKugouImportPlaylistId, setSelectedKugouImportPlaylistId] = useState("");
   const [kugouImportTracks, setKugouImportTracks] = useState<ParsedKugouPlaylistTrack[]>([]);
   const [kugouImportFileName, setKugouImportFileName] = useState("");
@@ -10286,6 +10415,207 @@ export function AppShell({
     }
   };
 
+  const hydrateSongMetadataDraftFromInspection = async (
+    inspection: LocalSongMetadataInspection,
+  ) => {
+    setSongMetadataDraftTitle(inspection.title ?? "");
+    setSongMetadataDraftArtist(inspection.artist ?? "");
+    setSongMetadataDraftAlbum(inspection.album ?? "");
+    setSongMetadataDraftCoverPath(inspection.artworkPreviewPath ?? null);
+    setSongMetadataPickedCoverPath(null);
+
+    try {
+      const lyricsBundle = await loadLocalLyricsBundle(inspection.sourcePath);
+      setSongMetadataDraftLyric(lyricsBundle.lyric ?? "");
+    } catch (error) {
+      console.error("[tools] failed to load local lyrics bundle", error);
+      setSongMetadataDraftLyric("");
+    }
+  };
+
+  const handleInspectSongMetadataFile = async () => {
+    const selection = await open({
+      multiple: false,
+      directory: false,
+      filters: [
+        {
+          name: "Audio",
+          extensions: ["mp3", "flac", "wav", "ogg", "m4a", "aac", "opus", "wma", "aiff", "alac"],
+        },
+      ],
+    });
+
+    if (typeof selection !== "string") {
+      return;
+    }
+
+    setSongMetadataInspectionFilePath(selection);
+    setSongMetadataInspectionError(null);
+    setSongMetadataInspectionResult(null);
+    setIsInspectingSongMetadata(true);
+
+    try {
+      const inspection = await inspectLocalSongMetadata(selection);
+      setSongMetadataInspectionResult(inspection);
+      await hydrateSongMetadataDraftFromInspection(inspection);
+      pushDynamicIslandNotification(localeStrings.notifications.songMetadataInspectionCompleted);
+    } catch (error) {
+      console.error("[tools] failed to inspect song metadata", error);
+      setSongMetadataInspectionResult(null);
+      setSongMetadataInspectionError(
+        error instanceof Error ? error.message : localeStrings.notifications.songMetadataInspectionFailed,
+      );
+      setSongMetadataDraftTitle("");
+      setSongMetadataDraftArtist("");
+      setSongMetadataDraftAlbum("");
+      setSongMetadataDraftLyric("");
+      setSongMetadataDraftCoverPath(null);
+      setSongMetadataPickedCoverPath(null);
+      pushDynamicIslandNotification(localeStrings.notifications.songMetadataInspectionFailed);
+    } finally {
+      setIsInspectingSongMetadata(false);
+    }
+  };
+
+  const handlePickSongMetadataCover = async () => {
+    const selection = await open({
+      multiple: false,
+      directory: false,
+      filters: [
+        {
+          name: "Image",
+          extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"],
+        },
+      ],
+    });
+
+    if (typeof selection !== "string") {
+      return;
+    }
+
+    setSongMetadataDraftCoverPath(selection);
+    setSongMetadataPickedCoverPath(selection);
+  };
+
+  const handleImportSongMetadataLyrics = async () => {
+    const selection = await open({
+      multiple: false,
+      directory: false,
+      filters: [
+        {
+          name: "Lyrics",
+          extensions: ["lrc", "txt"],
+        },
+      ],
+    });
+
+    if (typeof selection !== "string") {
+      return;
+    }
+
+    try {
+      const content = await invoke<string>("read_text_file_for_tools", {
+        request: { path: selection },
+      });
+      setSongMetadataDraftLyric(content ?? "");
+    } catch (error) {
+      console.error("[tools] failed to import lyrics file", error);
+    }
+  };
+
+  const handleSearchSongMetadataAutofill = async () => {
+    const keyword = songMetadataSearchKeyword.trim();
+    if (!keyword || !isNeteaseSourceEnabled(settingsRef.current)) {
+      return;
+    }
+
+    setIsSearchingSongMetadata(true);
+    try {
+      const page = await searchNeteaseSongDetailsPage(settingsRef.current, keyword, {
+        limit: 8,
+      });
+      setSongMetadataSearchResults(page.items);
+      setSelectedSongMetadataSearchId(page.items[0]?.id ?? null);
+    } catch (error) {
+      console.error("[tools] failed to search song metadata autofill target", error);
+      setSongMetadataSearchResults([]);
+      setSelectedSongMetadataSearchId(null);
+    } finally {
+      setIsSearchingSongMetadata(false);
+    }
+  };
+
+  const handleApplySongMetadataAutofill = async () => {
+    const selectedSong = songMetadataSearchResults.find((song) => song.id === selectedSongMetadataSearchId);
+    if (!selectedSong) {
+      return;
+    }
+
+    setIsApplyingSongMetadataAutofill(true);
+    try {
+      const [detail, lyrics] = await Promise.all([
+        getNeteaseSongDetail(settingsRef.current, selectedSong.id),
+        getNeteaseSongLyrics(settingsRef.current, selectedSong.id).catch(() => null),
+      ]);
+      const resolvedDetail = detail ?? selectedSong;
+
+      setSongMetadataDraftTitle(resolvedDetail.name);
+      setSongMetadataDraftArtist(resolvedDetail.artists.join(" / "));
+      setSongMetadataDraftAlbum(resolvedDetail.album ?? "");
+      setSongMetadataDraftLyric(lyrics?.lyric ?? "");
+
+      if (resolvedDetail.artworkUrl) {
+        const cachedArtworkPath = await invoke<string>("cache_remote_file_for_tools", {
+          request: {
+            url: resolvedDetail.artworkUrl,
+            fileNameHint: `netease-cover-${resolvedDetail.id}.jpg`,
+          },
+        });
+        setSongMetadataDraftCoverPath(cachedArtworkPath);
+        setSongMetadataPickedCoverPath(cachedArtworkPath);
+      } else {
+        setSongMetadataDraftCoverPath(null);
+        setSongMetadataPickedCoverPath(null);
+      }
+    } catch (error) {
+      console.error("[tools] failed to apply song metadata autofill", error);
+    } finally {
+      setIsApplyingSongMetadataAutofill(false);
+    }
+  };
+
+  const handleSaveSongMetadata = async () => {
+    const inspection = songMetadataInspectionResult;
+    if (!inspection) {
+      return;
+    }
+
+    setIsSavingSongMetadata(true);
+    setSongMetadataInspectionError(null);
+
+    try {
+      const savedInspection = await saveLocalSongMetadata({
+        path: inspection.sourcePath,
+        title: songMetadataDraftTitle,
+        artist: songMetadataDraftArtist,
+        album: songMetadataDraftAlbum,
+        lyric: songMetadataDraftLyric,
+        coverArtPath: songMetadataPickedCoverPath,
+      });
+      setSongMetadataInspectionResult(savedInspection);
+      await hydrateSongMetadataDraftFromInspection(savedInspection);
+      pushDynamicIslandNotification(localeStrings.notifications.songMetadataSaved);
+    } catch (error) {
+      console.error("[tools] failed to save song metadata", error);
+      setSongMetadataInspectionError(
+        error instanceof Error ? error.message : localeStrings.notifications.songMetadataSaveFailed,
+      );
+      pushDynamicIslandNotification(localeStrings.notifications.songMetadataSaveFailed);
+    } finally {
+      setIsSavingSongMetadata(false);
+    }
+  };
+
   const handleLoadKugouImportFile = async (file: File | null) => {
     if (!file) {
       return;
@@ -14173,8 +14503,44 @@ export function AppShell({
           onChangeMatchStrictness={setKugouImportMatchStrictness}
           onRetryEntry={(entry) => void handleRetrySingleKugouImportTrack(entry)}
         />
+      ) : toolsView === "songMetadataFill" ? (
+        <SongMetadataFillScreen
+          copy={copy}
+          filePath={songMetadataInspectionFilePath}
+          result={songMetadataInspectionResult}
+          error={songMetadataInspectionError}
+          isInspecting={isInspectingSongMetadata}
+          isSaving={isSavingSongMetadata}
+          draftTitle={songMetadataDraftTitle}
+          draftArtist={songMetadataDraftArtist}
+          draftAlbum={songMetadataDraftAlbum}
+          draftLyric={songMetadataDraftLyric}
+          draftCoverPath={songMetadataDraftCoverPath}
+          searchKeyword={songMetadataSearchKeyword}
+          searchResults={songMetadataSearchResults}
+          selectedSearchId={selectedSongMetadataSearchId}
+          onOpenFile={() => void handleInspectSongMetadataFile()}
+          onDraftTitleChange={setSongMetadataDraftTitle}
+          onDraftArtistChange={setSongMetadataDraftArtist}
+          onDraftAlbumChange={setSongMetadataDraftAlbum}
+          onDraftLyricChange={setSongMetadataDraftLyric}
+          onSearchKeywordChange={setSongMetadataSearchKeyword}
+          onSelectSearchId={setSelectedSongMetadataSearchId}
+          onSearchAutofill={() => void handleSearchSongMetadataAutofill()}
+          onApplyAutofill={() => void handleApplySongMetadataAutofill()}
+          onPickCover={() => void handlePickSongMetadataCover()}
+          onImportLyrics={() => void handleImportSongMetadataLyrics()}
+          onSave={() => void handleSaveSongMetadata()}
+          isSearchingAutofill={isSearchingSongMetadata}
+          isApplyingAutofill={isApplyingSongMetadataAutofill}
+          onBack={() => setToolsView("hub")}
+        />
       ) : (
-        <ToolsScreen copy={copy} onOpenKugouImport={() => setToolsView("kugouImport")} />
+        <ToolsScreen
+          copy={copy}
+          onOpenSongMetadataFill={() => setToolsView("songMetadataFill")}
+          onOpenKugouImport={() => setToolsView("kugouImport")}
+        />
       )
     ) : activeNav === "library" ? (
       <LibraryScreen
@@ -22250,9 +22616,11 @@ function LikedSongsScreen({
 
 function ToolsScreen({
   copy,
+  onOpenSongMetadataFill,
   onOpenKugouImport,
 }: {
   copy: UiCopy;
+  onOpenSongMetadataFill: () => void;
   onOpenKugouImport: () => void;
 }) {
   const toolsCopy = getToolsCopy(copy.locale);
@@ -22265,6 +22633,32 @@ function ToolsScreen({
       </header>
 
       <div className="settings-grid tools-screen__grid">
+        <section
+          className="settings-card tools-screen__card tools-screen__entry-card"
+          role="button"
+          tabIndex={0}
+          onClick={onOpenSongMetadataFill}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onOpenSongMetadataFill();
+            }
+          }}
+        >
+          <div className="tools-screen__entry-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M6.12 20.75C5.36 20.75 4.64 20.45 4.09 19.91C2.97 18.79 2.97 16.98 4.09 15.86L9.6 10.35C9.1 8.40997 9.64 6.31997 11.06 4.89997C12.49 3.46997 14.59 2.90997 16.54 3.43997C16.8 3.50997 17 3.70997 17.07 3.96997C17.14 4.22997 17.07 4.49997 16.88 4.68997L14.43 7.13997L14.95 9.04997L16.86 9.56997L19.31 7.11997C19.5 6.92997 19.78 6.85997 20.03 6.92997C20.29 6.99997 20.49 7.19997 20.56 7.45997C21.09 9.40997 20.54 11.51 19.1 12.94C17.68 14.36 15.59 14.9 13.65 14.4L8.14 19.91C7.6 20.45 6.88 20.75 6.12 20.75ZM14.68 4.76997C13.72 4.84997 12.81 5.26997 12.11 5.96997C10.97 7.10997 10.6 8.77997 11.15 10.32C11.25 10.59 11.18 10.9 10.97 11.1L5.14 16.93C4.61 17.46 4.61 18.33 5.14 18.86C5.4 19.12 5.74 19.26 6.11 19.26C6.47 19.26 6.82 19.12 7.07 18.86L12.9 13.03C13.11 12.82 13.41 12.76 13.68 12.85C15.22 13.39 16.89 13.03 18.03 11.89C18.73 11.19 19.14 10.28 19.23 9.31997L17.6 10.95C17.41 11.14 17.13 11.21 16.87 11.14L14.13 10.39C13.87 10.32 13.67 10.12 13.6 9.85997L12.85 7.11997C12.78 6.85997 12.85 6.57997 13.04 6.38997L14.67 4.75997L14.68 4.76997Z" />
+            </svg>
+          </div>
+          <div className="tools-screen__entry-copy">
+            <h3 className="settings-card__title">{toolsCopy.songMetadataFillTitle}</h3>
+            <p className="settings-card__description">{toolsCopy.songMetadataFillDescription}</p>
+          </div>
+          <UIButton variant="secondary" className="tools-screen__entry-action" onClick={onOpenSongMetadataFill}>
+            {toolsCopy.open}
+          </UIButton>
+        </section>
+
         <section
           className="settings-card tools-screen__card tools-screen__entry-card"
           role="button"
@@ -22286,7 +22680,6 @@ function ToolsScreen({
             </svg>
           </div>
           <div className="tools-screen__entry-copy">
-            <p className="settings-card__eyebrow">{toolsCopy.eyebrow}</p>
             <h3 className="settings-card__title">{toolsCopy.kugouTitle}</h3>
             <p className="settings-card__description">{toolsCopy.kugouDescription}</p>
           </div>
@@ -22295,6 +22688,331 @@ function ToolsScreen({
           </UIButton>
         </section>
       </div>
+    </section>
+  );
+}
+
+function SongMetadataFillScreen({
+  copy,
+  filePath,
+  result,
+  error,
+  isInspecting,
+  isSaving,
+  draftTitle,
+  draftArtist,
+  draftAlbum,
+  draftLyric,
+  draftCoverPath,
+  searchKeyword,
+  searchResults,
+  selectedSearchId,
+  onOpenFile,
+  onDraftTitleChange,
+  onDraftArtistChange,
+  onDraftAlbumChange,
+  onDraftLyricChange,
+  onSearchKeywordChange,
+  onSelectSearchId,
+  onSearchAutofill,
+  onApplyAutofill,
+  onPickCover,
+  onImportLyrics,
+  onSave,
+  isSearchingAutofill,
+  isApplyingAutofill,
+  onBack,
+}: {
+  copy: UiCopy;
+  filePath: string;
+  result: LocalSongMetadataInspection | null;
+  error: string | null;
+  isInspecting: boolean;
+  isSaving: boolean;
+  draftTitle: string;
+  draftArtist: string;
+  draftAlbum: string;
+  draftLyric: string;
+  draftCoverPath: string | null;
+  searchKeyword: string;
+  searchResults: NeteaseSongDetail[];
+  selectedSearchId: number | null;
+  onOpenFile: () => void;
+  onDraftTitleChange: (value: string) => void;
+  onDraftArtistChange: (value: string) => void;
+  onDraftAlbumChange: (value: string) => void;
+  onDraftLyricChange: (value: string) => void;
+  onSearchKeywordChange: (value: string) => void;
+  onSelectSearchId: (value: number | null) => void;
+  onSearchAutofill: () => void;
+  onApplyAutofill: () => void;
+  onPickCover: () => void;
+  onImportLyrics: () => void;
+  onSave: () => void;
+  isSearchingAutofill: boolean;
+  isApplyingAutofill: boolean;
+  onBack: () => void;
+}) {
+  const toolsCopy = getToolsCopy(copy.locale);
+  const songMetadataCopy = getSongMetadataFillCopy(copy.locale);
+  const missingFieldLabels: Record<string, string> = {
+    title: songMetadataCopy.titleField,
+    artist: songMetadataCopy.artistField,
+    album: songMetadataCopy.albumField,
+    artwork: songMetadataCopy.artwork,
+    lyrics: songMetadataCopy.lyrics,
+  };
+
+  const metadataItems = result
+    ? [
+        { label: songMetadataCopy.titleField, value: result.title },
+        { label: songMetadataCopy.artistField, value: result.artist },
+        { label: songMetadataCopy.albumField, value: result.album },
+      ]
+    : [];
+  const hasLyrics = Boolean(result?.hasEmbeddedLyrics || result?.hasSidecarLyrics);
+  const coverPreviewSrc = draftCoverPath ? convertFileSrc(draftCoverPath.replace(/\\/g, "/")) : null;
+
+  return (
+    <section className="settings-screen tools-screen">
+      <div className="tools-screen__toolbar">
+        <UIButton variant="secondary" onClick={onBack}>
+          {toolsCopy.back}
+        </UIButton>
+      </div>
+
+      <header className="settings-screen__hero">
+        <h2 className="settings-screen__title">{songMetadataCopy.title}</h2>
+        <p className="settings-screen__description">{songMetadataCopy.description}</p>
+      </header>
+
+      <section className="settings-card tools-screen__workspace">
+        <div className="tools-screen__workspace-header">
+          <UIButton onClick={onOpenFile} disabled={isInspecting}>
+            {isInspecting ? songMetadataCopy.analyzing : songMetadataCopy.selectFile}
+          </UIButton>
+          <p className="tools-screen__note">{songMetadataCopy.embeddedOnlyNotice}</p>
+        </div>
+
+        {isInspecting ? (
+          <UILoadingBlock label={songMetadataCopy.analyzing} variant="list" items={6} />
+        ) : (
+          <>
+            <div className="tools-screen__inspector-grid">
+              <section className="tools-screen__panel">
+                <h3>{songMetadataCopy.overview}</h3>
+                <div className="tools-screen__summary">
+                  <div className="tools-screen__summary-row">
+                    <span>{songMetadataCopy.selectedFile}</span>
+                    <strong>{filePath || songMetadataCopy.none}</strong>
+                  </div>
+                  <div className="tools-screen__summary-row">
+                    <span>{songMetadataCopy.duration}</span>
+                    <strong>{result ? formatDurationMs(result.durationMs) : songMetadataCopy.none}</strong>
+                  </div>
+                  <div className="tools-screen__summary-row">
+                    <span>{songMetadataCopy.extension}</span>
+                    <strong>{result?.extension?.toUpperCase() ?? songMetadataCopy.none}</strong>
+                  </div>
+                  <div className="tools-screen__summary-row">
+                    <span>{songMetadataCopy.missingInfo}</span>
+                    <strong>
+                      {result
+                        ? result.missingFields.length > 0
+                          ? result.missingFields.map((field) => missingFieldLabels[field] ?? field).join(" / ")
+                          : songMetadataCopy.none
+                        : songMetadataCopy.none}
+                    </strong>
+                  </div>
+                </div>
+                {error ? <p className="library-empty">{error}</p> : null}
+                {!result && !error ? <p className="library-empty">{songMetadataCopy.emptyState}</p> : null}
+              </section>
+
+              <section className="tools-screen__panel">
+                <h3>{songMetadataCopy.detectedInfo}</h3>
+                {!result ? (
+                  <p className="library-empty">{songMetadataCopy.emptyState}</p>
+                ) : (
+                  <div className="tools-screen__flat-list">
+                    {metadataItems.map((item) => (
+                      <div key={item.label} className="tools-screen__flat-row">
+                        <div className="tools-screen__flat-copy">
+                          <strong>{item.label}</strong>
+                          <span>{item.value || songMetadataCopy.none}</span>
+                        </div>
+                        <span
+                          className={[
+                            "tools-screen__status",
+                            item.value ? "tools-screen__status--matched" : "tools-screen__status--failed",
+                          ].join(" ")}
+                        >
+                          {item.value ? songMetadataCopy.present : songMetadataCopy.missing}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="tools-screen__flat-row">
+                      <div className="tools-screen__flat-copy">
+                        <strong>{songMetadataCopy.artwork}</strong>
+                        <span>
+                          {result.hasEmbeddedArtwork || result.hasRelatedArtwork
+                            ? [
+                                result.hasEmbeddedArtwork ? songMetadataCopy.embeddedArtwork : null,
+                                result.hasRelatedArtwork ? songMetadataCopy.relatedArtwork : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" / ")
+                            : songMetadataCopy.none}
+                        </span>
+                      </div>
+                      <span
+                        className={[
+                          "tools-screen__status",
+                          result.hasEmbeddedArtwork || result.hasRelatedArtwork
+                            ? "tools-screen__status--matched"
+                            : "tools-screen__status--failed",
+                        ].join(" ")}
+                      >
+                        {result.hasEmbeddedArtwork || result.hasRelatedArtwork
+                          ? songMetadataCopy.present
+                          : songMetadataCopy.missing}
+                      </span>
+                    </div>
+                    <div className="tools-screen__flat-row">
+                      <div className="tools-screen__flat-copy">
+                        <strong>{songMetadataCopy.lyrics}</strong>
+                        <span>
+                          {hasLyrics
+                            ? [result.hasEmbeddedLyrics ? songMetadataCopy.embeddedLyrics : null, result.hasSidecarLyrics ? songMetadataCopy.sidecarLyrics : null]
+                                .filter(Boolean)
+                                .join(" / ")
+                            : songMetadataCopy.lyricsMissing}
+                        </span>
+                      </div>
+                      <span
+                        className={[
+                          "tools-screen__status",
+                          hasLyrics ? "tools-screen__status--matched" : "tools-screen__status--failed",
+                        ].join(" ")}
+                      >
+                        {hasLyrics ? songMetadataCopy.present : songMetadataCopy.missing}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <section className="tools-screen__editor">
+              <div className="tools-screen__editor-header">
+                <h3>{songMetadataCopy.editor}</h3>
+              </div>
+
+              <section className="tools-screen__autofill">
+                <h4>{songMetadataCopy.autofill}</h4>
+                <div className="tools-screen__autofill-search">
+                  <UITextField
+                    label={songMetadataCopy.searchSong}
+                    placeholder={songMetadataCopy.searchSongPlaceholder}
+                    value={searchKeyword}
+                    onChange={onSearchKeywordChange}
+                  />
+                  <UIButton onClick={onSearchAutofill} disabled={isSearchingAutofill}>
+                    {isSearchingAutofill ? songMetadataCopy.searching : songMetadataCopy.search}
+                  </UIButton>
+                </div>
+                <div className="tools-screen__autofill-results">
+                  {searchResults.length === 0 ? (
+                    <p className="library-empty">{songMetadataCopy.noSearchResults}</p>
+                  ) : (
+                    searchResults.map((song) => (
+                      <button
+                        key={song.id}
+                        type="button"
+                        className={[
+                          "tools-screen__autofill-item",
+                          selectedSearchId === song.id ? "tools-screen__autofill-item--selected" : "",
+                        ].join(" ")}
+                        onClick={() => onSelectSearchId(song.id)}
+                        aria-pressed={selectedSearchId === song.id}
+                      >
+                        <span className="tools-screen__autofill-mark" aria-hidden="true" />
+                        <div className="tools-screen__autofill-copy">
+                          <strong>{song.name}</strong>
+                          <span>{[song.artists.join(" / "), song.album].filter(Boolean).join(" · ")}</span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+                <div className="tools-screen__editor-actions">
+                  <UIButton
+                    onClick={onApplyAutofill}
+                    disabled={!selectedSearchId || isApplyingAutofill}
+                  >
+                    {isApplyingAutofill ? songMetadataCopy.applying : songMetadataCopy.confirm}
+                  </UIButton>
+                </div>
+              </section>
+
+              <div className="tools-screen__editor-grid">
+                <div className="tools-screen__editor-fields">
+                  <UITextField
+                    label={songMetadataCopy.titleField}
+                    value={draftTitle}
+                    onChange={onDraftTitleChange}
+                  />
+                  <UITextField
+                    label={songMetadataCopy.artistField}
+                    value={draftArtist}
+                    onChange={onDraftArtistChange}
+                  />
+                  <UITextField
+                    label={songMetadataCopy.albumField}
+                    value={draftAlbum}
+                    onChange={onDraftAlbumChange}
+                  />
+                  <label className="ui-field tools-screen__textarea-field">
+                    <span className="ui-field__label">{songMetadataCopy.lyricField}</span>
+                    <span className="ui-input-shell tools-screen__textarea-shell">
+                      <textarea
+                        value={draftLyric}
+                        onChange={(event) => onDraftLyricChange(event.target.value)}
+                      />
+                      <UIButton
+                        variant="secondary"
+                        size="sm"
+                        className="tools-screen__textarea-action"
+                        onClick={onImportLyrics}
+                      >
+                        {songMetadataCopy.importLyrics}
+                      </UIButton>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="tools-screen__cover-editor">
+                  <span className="ui-field__label">{songMetadataCopy.coverField}</span>
+                  <div className="tools-screen__cover-preview">
+                    {coverPreviewSrc ? <img src={coverPreviewSrc} alt="" /> : <span>{songMetadataCopy.noCover}</span>}
+                  </div>
+                  <div className="tools-screen__actions">
+                    <UIButton variant="secondary" onClick={onPickCover}>
+                      {songMetadataCopy.uploadCover}
+                    </UIButton>
+                  </div>
+                </div>
+              </div>
+
+              <div className="tools-screen__editor-actions">
+                <UIButton onClick={onSave} disabled={!result || isSaving}>
+                  {isSaving ? songMetadataCopy.writing : songMetadataCopy.write}
+                </UIButton>
+              </div>
+            </section>
+          </>
+        )}
+      </section>
     </section>
   );
 }

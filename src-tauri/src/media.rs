@@ -5,7 +5,7 @@ use std::{
     collections::VecDeque,
     fs,
     hash::{Hash, Hasher},
-    io::{self, Write},
+    io::{self, Cursor, Write},
     path::{Path, PathBuf},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -15,10 +15,17 @@ use anyhow::{anyhow, Context};
 use crate::settings::{load_app_settings_or_default, LibrarySettings};
 use image::ImageReader;
 use lofty::{
+    config::WriteOptions,
     file::TaggedFileExt,
+    picture::{MimeType, Picture, PictureType},
     prelude::{AudioFile, ItemKey},
     probe::Probe,
-    tag::Accessor,
+    tag::{Accessor, Tag, TagExt},
+};
+use id3::{
+    frame::{Lyrics as Id3Lyrics, Picture as Id3Picture, PictureType as Id3PictureType},
+    TagLike,
+    Version as Id3Version,
 };
 use rustfft::{num_complex::Complex32, FftPlanner};
 use serde::{Deserialize, Serialize};
@@ -261,6 +268,12 @@ pub struct LocalLyricsRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalSongMetadataInspectionRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveLocalLyricsRequest {
     pub path: String,
     pub content: String,
@@ -277,10 +290,57 @@ pub struct SaveLocalLyricsBundleRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SaveLocalSongMetadataRequest {
+    pub path: String,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub lyric: Option<String>,
+    pub cover_art_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalTextFileRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadRemoteFileRequest {
+    pub url: String,
+    pub file_name_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalLyricsBundle {
     pub lyric: Option<String>,
     pub translated_lyric: Option<String>,
     pub romanized_lyric: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSongMetadataInspection {
+    pub source_path: String,
+    pub file_name: String,
+    pub extension: Option<String>,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub track_number: Option<u32>,
+    pub disc_number: Option<u32>,
+    pub year: Option<i32>,
+    pub genre: Option<String>,
+    pub has_embedded_artwork: bool,
+    pub has_related_artwork: bool,
+    pub artwork_preview_path: Option<String>,
+    pub has_embedded_lyrics: bool,
+    pub has_sidecar_lyrics: bool,
+    pub missing_fields: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -297,6 +357,39 @@ pub struct AudioAlignmentAnalysisRequest {
 pub fn load_local_lyrics(request: LocalLyricsRequest) -> Result<Option<String>, String> {
     let path = PathBuf::from(request.path);
     load_local_lyrics_impl(&path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn inspect_local_song_metadata(
+    app: AppHandle,
+    request: LocalSongMetadataInspectionRequest,
+) -> Result<LocalSongMetadataInspection, String> {
+    let path = PathBuf::from(request.path);
+    inspect_local_song_metadata_impl(&app, &path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn save_local_song_metadata(
+    app: AppHandle,
+    request: SaveLocalSongMetadataRequest,
+) -> Result<LocalSongMetadataInspection, String> {
+    let path = PathBuf::from(&request.path);
+    save_local_song_metadata_impl(&app, &path, request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn read_text_file_for_tools(request: LocalTextFileRequest) -> Result<String, String> {
+    fs::read_to_string(PathBuf::from(request.path)).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn cache_remote_file_for_tools(
+    app: AppHandle,
+    request: DownloadRemoteFileRequest,
+) -> Result<String, String> {
+    cache_remote_file_for_tools_impl(&app, request)
+        .await
         .map_err(|error| error.to_string())
 }
 
@@ -776,6 +869,44 @@ fn cache_remote_audio_impl(app: &AppHandle, request: SpectrumCacheRequest) -> an
             target_path.display()
         )
     })?;
+
+    Ok(target_path.display().to_string())
+}
+
+async fn cache_remote_file_for_tools_impl(
+    app: &AppHandle,
+    request: DownloadRemoteFileRequest,
+) -> anyhow::Result<String> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .context("Failed to resolve app cache directory")?
+        .join("tool-downloads");
+    fs::create_dir_all(&cache_dir)
+        .with_context(|| format!("Failed to create tool download directory {}", cache_dir.display()))?;
+
+    let extension = request
+        .file_name_hint
+        .as_deref()
+        .and_then(|value| Path::new(value).extension().and_then(|ext| ext.to_str()))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("bin");
+    let file_name = format!("{}.{}", stable_hash(request.url.as_str()), extension);
+    let target_path = cache_dir.join(file_name);
+
+    let response = reqwest::get(request.url.as_str())
+        .await
+        .with_context(|| format!("Failed to download file {}", request.url))?;
+    let response = response
+        .error_for_status()
+        .with_context(|| format!("Failed to download file {}", request.url))?;
+    let bytes = response
+        .bytes()
+        .await
+        .context("Failed to read downloaded file bytes")?;
+    fs::write(&target_path, &bytes)
+        .with_context(|| format!("Failed to write downloaded file {}", target_path.display()))?;
 
     Ok(target_path.display().to_string())
 }
@@ -1949,6 +2080,166 @@ fn parse_audio_track(path: &Path) -> anyhow::Result<TrackRecord> {
     })
 }
 
+fn inspect_local_song_metadata_impl(
+    app: &AppHandle,
+    path: &Path,
+) -> anyhow::Result<LocalSongMetadataInspection> {
+    let tagged_file = Probe::open(path)
+        .with_context(|| format!("Failed to open audio file {}", path.display()))?
+        .read()
+        .with_context(|| format!("Failed to parse audio file {}", path.display()))?;
+    let properties = tagged_file.properties();
+    let primary_tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+    let local_source = local_file_source(path)?;
+    let has_embedded_artwork = has_embedded_artwork(path)?;
+    let has_related_artwork = has_related_artwork(path)?;
+    let artwork_preview_path = resolve_local_song_artwork_preview_path(app, path)?;
+    let has_embedded_lyrics = read_embedded_lyrics(path)?
+        .map(|content| !content.trim().is_empty())
+        .unwrap_or(false);
+    let has_sidecar_lyrics = find_sidecar_lrc_path(path)
+        .map(|candidate| candidate.exists())
+        .unwrap_or(false);
+
+    let title = primary_tag
+        .and_then(|tag| tag.get_string(ItemKey::TrackTitle))
+        .and_then(|value| normalize_optional_text(Some(value)));
+    let artist = primary_tag
+        .and_then(|tag| tag.get_string(ItemKey::TrackArtist))
+        .map(normalize_multi_artist_text)
+        .filter(|value| !value.is_empty());
+    let album = primary_tag
+        .and_then(|tag| tag.get_string(ItemKey::AlbumTitle))
+        .and_then(|value| normalize_optional_text(Some(value)));
+    let album_artist = primary_tag
+        .and_then(|tag| tag.get_string(ItemKey::AlbumArtist))
+        .map(normalize_multi_artist_text)
+        .filter(|value| !value.is_empty());
+    let genre = primary_tag
+        .and_then(|tag| tag.get_string(ItemKey::Genre))
+        .and_then(|value| normalize_optional_text(Some(value)));
+    let year = primary_tag
+        .and_then(|tag| tag.get_string(ItemKey::RecordingDate))
+        .and_then(parse_year);
+    let track_number = primary_tag.and_then(|tag| tag.track());
+    let disc_number = primary_tag.and_then(|tag| tag.disk());
+
+    let mut missing_fields = Vec::new();
+    if title.is_none() {
+        missing_fields.push("title".to_string());
+    }
+    if artist.is_none() {
+        missing_fields.push("artist".to_string());
+    }
+    if album.is_none() {
+        missing_fields.push("album".to_string());
+    }
+    if !has_embedded_artwork && !has_related_artwork {
+        missing_fields.push("artwork".to_string());
+    }
+    if !has_embedded_lyrics && !has_sidecar_lyrics {
+        missing_fields.push("lyrics".to_string());
+    }
+
+    Ok(LocalSongMetadataInspection {
+        source_path: local_source.path.clone(),
+        file_name: local_source.file_name.clone(),
+        extension: local_source.extension.clone(),
+        title,
+        artist,
+        album,
+        album_artist,
+        duration_ms: Some(properties.duration().as_millis() as u64),
+        track_number,
+        disc_number,
+        year,
+        genre,
+        has_embedded_artwork,
+        has_related_artwork,
+        artwork_preview_path,
+        has_embedded_lyrics,
+        has_sidecar_lyrics,
+        missing_fields,
+    })
+}
+
+fn save_local_song_metadata_impl(
+    app: &AppHandle,
+    path: &Path,
+    request: SaveLocalSongMetadataRequest,
+) -> anyhow::Result<LocalSongMetadataInspection> {
+    if has_extension(path, &["mp3"]) {
+        save_mp3_song_metadata_impl(app, path, request)?;
+        return inspect_local_song_metadata_impl(app, path);
+    }
+
+    let tagged_file = Probe::open(path)
+        .with_context(|| format!("Failed to open audio file {}", path.display()))?
+        .read()
+        .with_context(|| format!("Failed to parse audio file {}", path.display()))?;
+    let file_type = tagged_file.file_type();
+    let tag_type = file_type.primary_tag_type();
+    if !file_type.tag_support(tag_type).is_writable() {
+        return Err(anyhow!(
+            "This audio format does not support writing its primary tag"
+        ));
+    }
+
+    let mut tag = tagged_file
+        .primary_tag()
+        .cloned()
+        .or_else(|| tagged_file.first_tag().cloned().map(|mut existing| {
+            existing.re_map(tag_type);
+            existing
+        }))
+        .unwrap_or_else(|| Tag::new(tag_type));
+
+    apply_optional_tag_string(&mut tag, ItemKey::TrackTitle, request.title.as_deref());
+    apply_optional_tag_string(&mut tag, ItemKey::TrackArtist, request.artist.as_deref());
+    apply_optional_tag_string(&mut tag, ItemKey::AlbumTitle, request.album.as_deref());
+    apply_optional_lyric_tag_string(&mut tag, ItemKey::UnsyncLyrics, request.lyric.as_deref());
+
+    if let Some(cover_art_path) = request.cover_art_path.as_deref() {
+        replace_tag_cover_art(&mut tag, Path::new(cover_art_path))?;
+    }
+
+    tag.save_to_path(path, WriteOptions::default())
+        .with_context(|| format!("Failed to write metadata to {}", path.display()))?;
+
+    inspect_local_song_metadata_impl(app, path)
+}
+
+fn save_mp3_song_metadata_impl(
+    app: &AppHandle,
+    path: &Path,
+    request: SaveLocalSongMetadataRequest,
+) -> anyhow::Result<()> {
+    let mut tag = id3::Tag::read_from_path(path).unwrap_or_else(|_| id3::Tag::new());
+
+    apply_optional_id3_text(&mut tag, "title", request.title.as_deref());
+    apply_optional_id3_text(&mut tag, "artist", request.artist.as_deref());
+    apply_optional_id3_text(&mut tag, "album", request.album.as_deref());
+
+    tag.remove("USLT");
+    if let Some(lyric) = normalize_optional_lyric_text(request.lyric.as_deref()) {
+        tag.add_frame(Id3Lyrics {
+            lang: "eng".to_string(),
+            description: String::new(),
+            text: lyric,
+        });
+    }
+
+    if let Some(cover_art_path) = request.cover_art_path.as_deref() {
+        replace_mp3_cover_art(&mut tag, Path::new(cover_art_path))?;
+    }
+
+    tag.write_to_path(path, Id3Version::Id3v23)
+        .with_context(|| format!("Failed to write ID3 metadata to {}", path.display()))?;
+    // Refresh cached preview extraction base after rewriting the file.
+    let _ = resolve_local_song_artwork_preview_path(app, path)?;
+    Ok(())
+}
+
 fn load_local_lyrics_impl(path: &Path) -> anyhow::Result<Option<String>> {
     if !path.exists() {
         return Ok(None);
@@ -2211,6 +2502,17 @@ fn is_lrc_time_tag_content(content: &str) -> bool {
 }
 
 fn read_embedded_lyrics(path: &Path) -> anyhow::Result<Option<String>> {
+    if has_extension(path, &["mp3"]) {
+        if let Ok(tag) = id3::Tag::read_from_path(path) {
+            for lyrics in tag.lyrics() {
+                let trimmed = lyrics.text.trim();
+                if !trimmed.is_empty() && looks_like_lyric_content(trimmed) {
+                    return Ok(Some(trimmed.to_string()));
+                }
+            }
+        }
+    }
+
     let tagged_file = Probe::open(path)
         .with_context(|| format!("Failed to open audio file {}", path.display()))?
         .read()
@@ -2499,9 +2801,10 @@ fn persist_embedded_picture(
         )
     })?;
 
-    let artwork = parse_image_artwork(&file_path)?;
-    let canonical_artwork_id = upsert_artwork(document, artwork);
-    artwork_ids.push(canonical_artwork_id);
+    if let Ok(artwork) = parse_image_artwork(&file_path) {
+        let canonical_artwork_id = upsert_artwork(document, artwork);
+        artwork_ids.push(canonical_artwork_id);
+    }
     Ok(())
 }
 
@@ -2560,14 +2863,159 @@ fn collect_related_artworks(
             continue;
         }
 
-        let artwork = parse_image_artwork(&candidate_path)?;
-        let canonical_artwork_id = upsert_artwork(document, artwork);
-        artwork_ids.push(canonical_artwork_id);
+        if let Ok(artwork) = parse_image_artwork(&candidate_path) {
+            let canonical_artwork_id = upsert_artwork(document, artwork);
+            artwork_ids.push(canonical_artwork_id);
+        }
     }
 
     artwork_ids.sort();
     artwork_ids.dedup();
     Ok(artwork_ids)
+}
+
+fn has_embedded_artwork(audio_path: &Path) -> anyhow::Result<bool> {
+    let tagged_file = Probe::open(audio_path)
+        .with_context(|| format!("Failed to open audio file {}", audio_path.display()))?
+        .read()
+        .with_context(|| format!("Failed to parse audio file {}", audio_path.display()))?;
+
+    if tagged_file
+        .tags()
+        .iter()
+        .any(|candidate_tag| !candidate_tag.pictures().is_empty())
+    {
+        return Ok(true);
+    }
+
+    if has_extension(audio_path, &["mp3"]) {
+        if let Ok(tag) = id3::Tag::read_from_path(audio_path) {
+            if tag.pictures().next().is_some() {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn has_related_artwork(audio_path: &Path) -> anyhow::Result<bool> {
+    let Some(parent) = audio_path.parent() else {
+        return Ok(false);
+    };
+
+    let base_name = file_stem(audio_path).unwrap_or_default().to_lowercase();
+    for entry in fs::read_dir(parent)
+        .with_context(|| format!("Failed to read artwork directory {}", parent.display()))?
+    {
+        let entry = entry?;
+        let candidate_path = entry.path();
+        if !candidate_path.is_file() || !is_supported_image(&candidate_path) {
+            continue;
+        }
+
+        let candidate_name = file_stem(&candidate_path).unwrap_or_default().to_lowercase();
+        let matches_same_stem = !base_name.is_empty() && candidate_name == base_name;
+        let matches_common_name = ARTWORK_CANDIDATES.iter().any(|name| candidate_name == *name);
+        if matches_same_stem || matches_common_name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn find_related_artwork_path(audio_path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    let Some(parent) = audio_path.parent() else {
+        return Ok(None);
+    };
+
+    let base_name = file_stem(audio_path).unwrap_or_default().to_lowercase();
+    for entry in fs::read_dir(parent)
+        .with_context(|| format!("Failed to read artwork directory {}", parent.display()))?
+    {
+        let entry = entry?;
+        let candidate_path = entry.path();
+        if !candidate_path.is_file() || !is_supported_image(&candidate_path) {
+            continue;
+        }
+
+        let candidate_name = file_stem(&candidate_path).unwrap_or_default().to_lowercase();
+        let matches_same_stem = !base_name.is_empty() && candidate_name == base_name;
+        let matches_common_name = ARTWORK_CANDIDATES.iter().any(|name| candidate_name == *name);
+        if matches_same_stem || matches_common_name {
+            return Ok(Some(candidate_path));
+        }
+    }
+
+    Ok(None)
+}
+
+fn resolve_local_song_artwork_preview_path(
+    app: &AppHandle,
+    audio_path: &Path,
+) -> anyhow::Result<Option<String>> {
+    if let Some(related_artwork_path) = find_related_artwork_path(audio_path)? {
+        return Ok(Some(related_artwork_path.display().to_string()));
+    }
+
+    let tagged_file = Probe::open(audio_path)
+        .with_context(|| format!("Failed to open audio file {}", audio_path.display()))?
+        .read()
+        .with_context(|| format!("Failed to parse audio file {}", audio_path.display()))?;
+
+    for candidate_tag in tagged_file.tags() {
+        if let Some(picture) = candidate_tag.pictures().first() {
+            return persist_inspection_picture_preview(
+                app,
+                audio_path,
+                picture.mime_type().map(MimeType::as_str),
+                picture.data(),
+            );
+        }
+    }
+
+    if has_extension(audio_path, &["mp3"]) {
+        if let Ok(tag) = id3::Tag::read_from_path(audio_path) {
+            if let Some(picture) = tag.pictures().next() {
+                return persist_inspection_picture_preview(
+                    app,
+                    audio_path,
+                    Some(picture.mime_type.as_str()),
+                    &picture.data,
+                );
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn persist_inspection_picture_preview(
+    app: &AppHandle,
+    audio_path: &Path,
+    mime_type: Option<&str>,
+    picture_data: &[u8],
+) -> anyhow::Result<Option<String>> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .context("Failed to resolve app cache directory")?
+        .join("song-metadata-previews");
+    fs::create_dir_all(&cache_dir)
+        .with_context(|| format!("Failed to create preview directory {}", cache_dir.display()))?;
+
+    let extension = picture_mime_extension(mime_type).unwrap_or("bin");
+    let preview_path = embedded_artwork_file_path(&cache_dir, audio_path, 0, extension);
+    fs::write(&preview_path, picture_data).with_context(|| {
+        format!(
+            "Failed to write artwork preview extracted from {}",
+            audio_path.display()
+        )
+    })?;
+
+    Ok(Some(preview_path.display().to_string()))
 }
 
 fn hydrate_missing_local_artworks(
@@ -2817,6 +3265,133 @@ fn normalize_metadata_text(value: &str) -> String {
         .trim_matches(['-', '/', '、', ',', '，', ';', '；', '|', ' '])
         .trim()
         .to_string()
+}
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(normalize_metadata_text)
+        .filter(|normalized| !normalized.is_empty())
+}
+
+fn normalize_optional_lyric_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(|text| text.replace("\r\n", "\n").replace('\r', "\n").trim().to_string())
+        .filter(|normalized| !normalized.is_empty())
+}
+
+fn apply_optional_tag_string(tag: &mut Tag, key: ItemKey, value: Option<&str>) {
+    let normalized = normalize_optional_text(value);
+    match key {
+        ItemKey::TrackTitle => {
+            if let Some(value) = normalized {
+                tag.set_title(value);
+            } else {
+                tag.remove_title();
+            }
+        }
+        ItemKey::TrackArtist => {
+            if let Some(value) = normalized {
+                tag.set_artist(value);
+            } else {
+                tag.remove_artist();
+            }
+        }
+        ItemKey::AlbumTitle => {
+            if let Some(value) = normalized {
+                tag.set_album(value);
+            } else {
+                tag.remove_album();
+            }
+        }
+        _ => {
+            if let Some(value) = normalized {
+                tag.insert_text(key, value);
+            } else {
+                tag.remove_key(key);
+            }
+        }
+    }
+}
+
+fn apply_optional_lyric_tag_string(tag: &mut Tag, key: ItemKey, value: Option<&str>) {
+    let normalized = normalize_optional_lyric_text(value);
+    if let Some(value) = normalized {
+        tag.insert_text(key, value);
+    } else {
+        tag.remove_key(key);
+    }
+}
+
+fn apply_optional_id3_text(tag: &mut id3::Tag, field: &str, value: Option<&str>) {
+    let normalized = normalize_optional_text(value);
+    match field {
+        "title" => {
+            if let Some(value) = normalized {
+                tag.set_title(value);
+            } else {
+                tag.remove_title();
+            }
+        }
+        "artist" => {
+            if let Some(value) = normalized {
+                tag.set_artist(value);
+            } else {
+                tag.remove_artist();
+            }
+        }
+        "album" => {
+            if let Some(value) = normalized {
+                tag.set_album(value);
+            } else {
+                tag.remove_album();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn replace_tag_cover_art(tag: &mut Tag, cover_art_path: &Path) -> anyhow::Result<()> {
+    let image = decode_cover_image(cover_art_path)?;
+    let mut png_bytes = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .with_context(|| format!("Failed to encode cover image {}", cover_art_path.display()))?;
+
+    tag.remove_picture_type(PictureType::CoverFront);
+    tag.push_picture(
+        Picture::unchecked(png_bytes)
+            .pic_type(PictureType::CoverFront)
+            .mime_type(MimeType::Png)
+            .build(),
+    );
+    Ok(())
+}
+
+fn replace_mp3_cover_art(tag: &mut id3::Tag, cover_art_path: &Path) -> anyhow::Result<()> {
+    let image = decode_cover_image(cover_art_path)?;
+    let mut jpeg_bytes = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut jpeg_bytes), image::ImageFormat::Jpeg)
+        .with_context(|| format!("Failed to encode cover image {}", cover_art_path.display()))?;
+
+    tag.remove_all_pictures();
+    tag.add_frame(Id3Picture {
+        mime_type: "image/jpeg".to_string(),
+        picture_type: Id3PictureType::CoverFront,
+        description: String::new(),
+        data: jpeg_bytes,
+    });
+    Ok(())
+}
+
+fn decode_cover_image(cover_art_path: &Path) -> anyhow::Result<image::DynamicImage> {
+    let bytes = fs::read(cover_art_path)
+        .with_context(|| format!("Failed to read cover image {}", cover_art_path.display()))?;
+    ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .with_context(|| format!("Failed to guess cover image format {}", cover_art_path.display()))?
+        .decode()
+        .with_context(|| format!("Failed to decode cover image {}", cover_art_path.display()))
 }
 
 fn split_multi_artist_candidates(value: &str) -> Vec<String> {
