@@ -2163,7 +2163,7 @@ fn inspect_local_song_metadata_impl(
     })
 }
 
-fn save_local_song_metadata_impl(
+pub(crate) fn save_local_song_metadata_impl(
     app: &AppHandle,
     path: &Path,
     request: SaveLocalSongMetadataRequest,
@@ -2284,7 +2284,7 @@ fn save_local_lyrics_impl(path: &Path, content: &str) -> anyhow::Result<PathBuf>
     Ok(sidecar_path)
 }
 
-fn save_local_lyrics_bundle_impl(
+pub(crate) fn save_local_lyrics_bundle_impl(
     path: &Path,
     lyric: Option<&str>,
     translated_lyric: Option<&str>,

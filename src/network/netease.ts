@@ -1,6 +1,6 @@
 import { registerRemoteTrack } from "../media/library";
 import type { RemoteTrackDraft, TrackRecord } from "../media/types";
-import type { AppSettings } from "../settings/types";
+import type { AppSettings, DownloadQualityOption } from "../settings/types";
 import type {
   NeteaseAccountProfile,
   NeteaseAlbumDetail,
@@ -1484,6 +1484,36 @@ export async function getNeteaseSongDownloadStream(
   };
 }
 
+export async function resolveNeteaseSongDownloadStream(
+  settings: AppSettings,
+  id: number,
+  quality: DownloadQualityOption,
+): Promise<NeteaseSongStream> {
+  for (const level of getDownloadNeteaseLevels(quality)) {
+    try {
+      const stream = await getNeteaseSongStream(settings, id, { level });
+      if (isUsableSongStream(stream)) {
+        return stream;
+      }
+    } catch {
+      // Fall through to lower quality and legacy endpoints.
+    }
+  }
+
+  for (const br of getDownloadNeteaseBitrates(quality)) {
+    try {
+      const stream = await getNeteaseSongDownloadStream(settings, id, br);
+      if (stream && isUsableSongStream(stream)) {
+        return stream;
+      }
+    } catch {
+      // Fall through to lower bitrate candidates.
+    }
+  }
+
+  throw new Error("NeteaseMusicAPI did not return a downloadable song URL.");
+}
+
 export async function getNeteaseSongLyrics(
   settings: AppSettings,
   id: number,
@@ -1961,6 +1991,48 @@ function getPreferredNeteaseBitrates(preferredQuality: string) {
       return [128000, 96000];
     default:
       return [999000, 320000, 192000, 128000];
+  }
+}
+
+function getDownloadNeteaseLevels(quality: DownloadQualityOption) {
+  switch (quality) {
+    case "standard":
+      return ["standard"];
+    case "higher":
+      return ["higher", "standard"];
+    case "exhigh":
+      return ["exhigh", "higher", "standard"];
+    case "lossless":
+      return ["lossless", "exhigh", "higher", "standard"];
+    case "hires":
+      return ["hires", "lossless", "exhigh", "higher", "standard"];
+    case "jyeffect":
+      return ["jyeffect", "hires", "lossless", "exhigh", "higher", "standard"];
+    case "sky":
+      return ["sky", "jyeffect", "hires", "lossless", "exhigh", "higher", "standard"];
+    case "jymaster":
+      return ["jymaster", "sky", "jyeffect", "hires", "lossless", "exhigh", "higher", "standard"];
+    default:
+      return ["exhigh", "higher", "standard"];
+  }
+}
+
+function getDownloadNeteaseBitrates(quality: DownloadQualityOption) {
+  switch (quality) {
+    case "standard":
+      return [128000, 96000];
+    case "higher":
+      return [192000, 128000];
+    case "exhigh":
+      return [320000, 192000, 128000];
+    case "lossless":
+    case "hires":
+    case "jyeffect":
+    case "sky":
+    case "jymaster":
+      return [999000, 320000, 192000, 128000];
+    default:
+      return [320000, 192000, 128000];
   }
 }
 

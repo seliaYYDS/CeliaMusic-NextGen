@@ -168,6 +168,28 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       ...settings.network,
       requestTimeoutMs: clampInteger(settings.network.requestTimeoutMs, 1000, 120000),
     },
+    library: {
+      ...settings.library,
+      watchDirectories: Boolean(settings.library.watchDirectories),
+      onlineLyricsCompletion: Boolean(settings.library.onlineLyricsCompletion),
+      downloadEnabled: Boolean(settings.library.downloadEnabled),
+      downloadSaveDirectory:
+        settings.library.downloadSaveDirectory.trim() || defaultSettings.library.downloadSaveDirectory,
+      downloadQuality:
+        settings.library.downloadQuality === "standard" ||
+        settings.library.downloadQuality === "higher" ||
+        settings.library.downloadQuality === "exhigh" ||
+        settings.library.downloadQuality === "lossless" ||
+        settings.library.downloadQuality === "hires" ||
+        settings.library.downloadQuality === "jyeffect" ||
+        settings.library.downloadQuality === "sky" ||
+        settings.library.downloadQuality === "jymaster"
+          ? settings.library.downloadQuality
+          : "exhigh",
+      downloadLyricsEnabled: Boolean(settings.library.downloadLyricsEnabled),
+      downloadLyricsMode:
+        settings.library.downloadLyricsMode === "sidecar" ? "sidecar" : "embedded",
+    },
     lyrics: {
       ...settings.lyrics,
       delayMs: clampInteger(settings.lyrics.delayMs, -1000, 1000),

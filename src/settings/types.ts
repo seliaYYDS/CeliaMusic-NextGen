@@ -23,6 +23,16 @@ export type LyricsRenderMode = "simple" | "balanced" | "advanced";
 export type PlaybackModeOption = "ordered" | "repeat-all" | "repeat-one" | "shuffle";
 export type PlaybackCacheMode = "stream" | "complete";
 export type SongTransitionMode = "simple-mix" | "auto-mix";
+export type DownloadQualityOption =
+  | "standard"
+  | "higher"
+  | "exhigh"
+  | "lossless"
+  | "hires"
+  | "jyeffect"
+  | "sky"
+  | "jymaster";
+export type DownloadLyricsMode = "embedded" | "sidecar";
 export const SHORTCUT_ACTION_IDS = [
   "togglePlayback",
   "nextTrack",
@@ -112,6 +122,11 @@ export type LibrarySettings = {
   scanDirectories: string[];
   watchDirectories: boolean;
   onlineLyricsCompletion: boolean;
+  downloadEnabled: boolean;
+  downloadSaveDirectory: string;
+  downloadQuality: DownloadQualityOption;
+  downloadLyricsEnabled: boolean;
+  downloadLyricsMode: DownloadLyricsMode;
 };
 
 export type NetworkSettings = {
@@ -254,6 +269,11 @@ export const createDefaultAppSettings = (): AppSettings => ({
     scanDirectories: [],
     watchDirectories: false,
     onlineLyricsCompletion: false,
+    downloadEnabled: true,
+    downloadSaveDirectory: "",
+    downloadQuality: "exhigh",
+    downloadLyricsEnabled: false,
+    downloadLyricsMode: "embedded",
   },
   network: {
     enabledSources: ["netease"],

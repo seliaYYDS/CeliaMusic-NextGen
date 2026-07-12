@@ -1,3 +1,4 @@
+mod downloads;
 mod local_api;
 mod media;
 mod media_proxy;
@@ -8,6 +9,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use downloads::download_netease_song;
 use local_api::{
     get_local_netease_api_server_status, sync_local_netease_api_server,
     sync_local_netease_api_server_for_settings, shutdown_local_netease_api_server,
@@ -652,6 +654,7 @@ pub fn run() {
             save_local_song_metadata,
             read_text_file_for_tools,
             cache_remote_file_for_tools,
+            download_netease_song,
             ensure_app_settings,
             get_app_settings,
             save_app_settings,

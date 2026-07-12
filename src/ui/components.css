@@ -239,6 +239,13 @@
   flex: 0 0 auto;
 }
 
+.ui-input-shell__action {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
 .ui-select {
   padding: 0;
 }

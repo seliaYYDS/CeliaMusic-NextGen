@@ -78,6 +78,7 @@ import {
   parseRawLyrics,
   getNeteaseSongDetail,
   getNeteaseSongLyrics,
+  resolveNeteaseSongDownloadStream,
   getNeteaseUserPlaylists,
   clearNeteaseMemoryCaches,
   isNeteaseSourceEnabled,
@@ -96,6 +97,11 @@ import {
   updateNeteasePlaylistDescription,
   updateNeteasePlaylistName,
 } from "../network/netease";
+import {
+  downloadNeteaseSong,
+  SONG_DOWNLOAD_PROGRESS_EVENT,
+  type SongDownloadProgressEvent,
+} from "../downloads/store";
 import type {
   NeteaseAccountProfile,
   NeteaseDjRecommendation,
@@ -122,6 +128,8 @@ import {
   SHORTCUT_ACTION_IDS,
   type AppSettings,
   type AppSettingsSnapshot,
+  type DownloadLyricsMode,
+  type DownloadQualityOption,
   type GlobalParticleEffectType,
   type ImmersiveBackgroundMode,
   type PlaybackCacheMode,
@@ -657,6 +665,20 @@ const UI_COPY = {
         { label: "均衡", value: "balanced", description: "兼顾网络与播放稳定性。" },
         { label: "节省流量", value: "data-saver", description: "优先更轻量的播放源。" },
       ],
+      downloadQuality: [
+        { label: "标准", value: "standard", description: "对应 API level=standard。" },
+        { label: "较高", value: "higher", description: "对应 API level=higher。" },
+        { label: "极高", value: "exhigh", description: "对应 API level=exhigh。" },
+        { label: "无损", value: "lossless", description: "对应 API level=lossless。" },
+        { label: "Hi-Res", value: "hires", description: "对应 API level=hires。" },
+        { label: "高清环绕声", value: "jyeffect", description: "对应 API level=jyeffect。" },
+        { label: "沉浸环绕声", value: "sky", description: "对应 API level=sky。" },
+        { label: "超清母带", value: "jymaster", description: "对应 API level=jymaster。" },
+      ],
+      downloadLyricsMode: [
+        { label: "内嵌歌词", value: "embedded", description: "将歌词写入歌曲文件标签。" },
+        { label: "外挂歌词", value: "sidecar", description: "在歌曲旁生成同名歌词文件。" },
+      ],
       playbackCacheMode: [
         { label: "边缓存边播放", value: "stream", description: "立即开始播放，并在后台持续缓存当前歌曲。" },
         { label: "完整缓存后播放", value: "complete", description: "先缓存整首歌曲，再从本地缓存开始播放。" },
@@ -853,6 +875,20 @@ const UI_COPY = {
           onlineLyricsLabel: "在线歌词补全",
           onlineLyricsDescription: "播放无歌词的本地歌曲时，尝试从在线接口获取歌词并保存同名 .lrc 文件。",
         },
+        download: {
+          title: "歌曲下载",
+          pickDirectory: "选择文件夹",
+          enabledLabel: "开启在线歌曲下载",
+          enabledDescription: "关闭后不再显示或执行歌曲下载相关操作。",
+          saveDirectoryLabel: "保存目录",
+          saveDirectoryHelper: "默认保存到系统 Music 目录下的 CeliaMusicNextGen 文件夹。",
+          qualityLabel: "下载歌曲品质",
+          qualityHelper: "选择下载时优先使用的音质。",
+          lyricsLabel: "下载歌词",
+          lyricsDescription: "下载歌曲时同步保存歌词。",
+          lyricsModeLabel: "歌词保存方式",
+          lyricsModeHelper: "选择将歌词写进歌曲文件，或保存为同名歌词文件。",
+        },
         network: {
           eyebrow: "网络",
           title: "网易云在线服务",
@@ -1022,6 +1058,20 @@ const UI_COPY = {
         { label: "High Quality", value: "high", description: "Prefer higher bitrate and higher quality streams." },
         { label: "Balanced", value: "balanced", description: "Balance network usage and playback stability." },
         { label: "Data Saver", value: "data-saver", description: "Prefer lighter playback sources." },
+      ],
+      downloadQuality: [
+        { label: "Standard", value: "standard", description: "Maps to API level=standard." },
+        { label: "Higher", value: "higher", description: "Maps to API level=higher." },
+        { label: "ExHigh", value: "exhigh", description: "Maps to API level=exhigh." },
+        { label: "Lossless", value: "lossless", description: "Maps to API level=lossless." },
+        { label: "Hi-Res", value: "hires", description: "Maps to API level=hires." },
+        { label: "Spatial", value: "jyeffect", description: "Maps to API level=jyeffect." },
+        { label: "Sky", value: "sky", description: "Maps to API level=sky." },
+        { label: "Master", value: "jymaster", description: "Maps to API level=jymaster." },
+      ],
+      downloadLyricsMode: [
+        { label: "Embedded", value: "embedded", description: "Write lyrics into the song file tags." },
+        { label: "Sidecar", value: "sidecar", description: "Save a matching lyric file beside the song." },
       ],
       playbackCacheMode: [
         {
@@ -1232,6 +1282,20 @@ const UI_COPY = {
           watchDescription: "Automatically detect newly added or replaced local music files.",
           onlineLyricsLabel: "Online Lyrics Completion",
           onlineLyricsDescription: "When a local track has no lyrics, try fetching them from the online API and save a matching `.lrc` file beside the audio file.",
+        },
+        download: {
+          title: "Song Downloads",
+          pickDirectory: "Choose Folder",
+          enabledLabel: "Enable Online Song Downloads",
+          enabledDescription: "Turn off all song download actions and related controls.",
+          saveDirectoryLabel: "Save Folder",
+          saveDirectoryHelper: "Defaults to the CeliaMusicNextGen folder inside the system Music directory.",
+          qualityLabel: "Download Quality",
+          qualityHelper: "Choose the preferred quality for downloaded songs.",
+          lyricsLabel: "Download Lyrics",
+          lyricsDescription: "Save lyrics together with the song download.",
+          lyricsModeLabel: "Lyrics Save Mode",
+          lyricsModeHelper: "Choose whether lyrics should be embedded or saved as a matching lyric file.",
         },
         network: {
           eyebrow: "Network",
@@ -3142,6 +3206,16 @@ type ContextMenuItemDefinition = {
   submenu?: ContextMenuItemDefinition[];
   onSelect?: () => void;
 };
+type SongDownloadTaskState = {
+  jobId: string;
+  songId: number;
+  title: string;
+  artist: string | null;
+  phase: "resolving" | "downloading";
+  receivedBytes: number;
+  totalBytes: number | null;
+  progressPercent: number | null;
+};
 type PlaylistEditorState =
   | {
       mode: "create";
@@ -3173,6 +3247,7 @@ function getContextMenuCopy(locale: string) {
       refresh: "Refresh Page",
       addToQueue: "Add to Queue",
       playNext: "Play Next",
+      downloadSong: "Download Song",
       startIntelligenceMode: "Start Heart Mode",
       likeSong: "Like Song",
       addToPlaylist: "Add to Playlist",
@@ -3193,6 +3268,7 @@ function getContextMenuCopy(locale: string) {
     refresh: "刷新页面",
     addToQueue: "添加到播放列表",
     playNext: "下一首播放",
+    downloadSong: "下载歌曲",
     startIntelligenceMode: "开启心动模式",
     likeSong: "收藏歌曲",
     addToPlaylist: "添加到歌单",
@@ -3223,6 +3299,65 @@ function dedupeNeteaseSongDetailsById(songs: NeteaseSongDetail[]) {
 
     return collection;
   }, []);
+}
+
+function formatDownloadProgressMessage(
+  locale: string,
+  tasks: SongDownloadTaskState[],
+  notifications: ReturnType<typeof getLocaleStrings>["notifications"],
+) {
+  if (tasks.length === 0) {
+    return null;
+  }
+
+  if (tasks.length === 1) {
+    const task = tasks[0];
+    if (task.phase === "resolving") {
+      return locale === "en-US"
+        ? `${notifications.downloadingSingle}: ${task.title} · fetching info`
+        : `${notifications.downloadingSingle}：${task.title} · 正在获取信息`;
+    }
+    const progressLabel =
+      task.progressPercent !== null
+        ? `${Math.max(0, Math.min(100, Math.round(task.progressPercent)))}%`
+        : "…";
+    return locale === "en-US"
+      ? `${notifications.downloadingSingle}: ${task.title} ${progressLabel}`
+      : `${notifications.downloadingSingle}：${task.title} ${progressLabel}`;
+  }
+
+  const resolvingCount = tasks.filter((task) => task.phase === "resolving").length;
+  const knownTotals = tasks.filter((task) => (task.totalBytes ?? 0) > 0);
+  const progressLabel =
+    knownTotals.length === tasks.length
+      ? `${Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              (knownTotals.reduce((sum, task) => sum + task.receivedBytes, 0) /
+                knownTotals.reduce((sum, task) => sum + (task.totalBytes ?? 0), 0)) *
+                100,
+            ),
+          ),
+        )}%`
+      : "…";
+
+  if (resolvingCount > 0 && knownTotals.length === 0) {
+    return locale === "en-US"
+      ? `${notifications.downloadingMulti} ${tasks.length} · fetching info`
+      : `${notifications.downloadingMulti} ${tasks.length} 首 · 正在获取信息`;
+  }
+
+  if (resolvingCount > 0) {
+    return locale === "en-US"
+      ? `${notifications.downloadingMulti} ${tasks.length} ${progressLabel} · ${resolvingCount} preparing`
+      : `${notifications.downloadingMulti} ${tasks.length} 首 ${progressLabel} · ${resolvingCount} 首准备中`;
+  }
+
+  return locale === "en-US"
+    ? `${notifications.downloadingMulti} ${tasks.length} ${progressLabel}`
+    : `${notifications.downloadingMulti} ${tasks.length} 首 ${progressLabel}`;
 }
 
 function getPlaylistBackLabel(
@@ -3321,6 +3456,14 @@ export function getLocaleStrings(locale: string) {
         neteaseLoginClearFailed: "Failed to clear Netease login",
         contextSongQueued: "Added to queue",
         contextSongPlayNext: "Will play next",
+        downloadQueued: "Download added",
+        downloadCompleted: "Download completed",
+        downloadFailed: "Download failed",
+        downloadAlreadyActive: "This song is already downloading",
+        downloadDisabled: "Song downloads are disabled",
+        downloadUnavailable: "No downloadable song link is available",
+        downloadingSingle: "Downloading",
+        downloadingMulti: "Downloading songs",
         loadingArtistView: "Loading artist view...",
         loadingAlbumView: "Loading album view...",
         loadingHeartMode: "Starting Heart Mode...",
@@ -3426,6 +3569,14 @@ export function getLocaleStrings(locale: string) {
       neteaseLoginClearFailed: "退出网易云登录失败",
       contextSongQueued: "已添加到播放列表",
       contextSongPlayNext: "已设为下一首播放",
+      downloadQueued: "已加入下载",
+      downloadCompleted: "下载完成",
+      downloadFailed: "下载失败",
+      downloadAlreadyActive: "这首歌正在下载中",
+      downloadDisabled: "歌曲下载已关闭",
+      downloadUnavailable: "当前没有可下载的歌曲链接",
+      downloadingSingle: "正在下载",
+      downloadingMulti: "正在下载歌曲",
       loadingArtistView: "正在加载歌手页面...",
       loadingAlbumView: "正在加载专辑页面...",
       loadingHeartMode: "正在开启心动模式...",
@@ -4196,6 +4347,7 @@ export function AppShell({
   >([]);
   const [isContextMenuPlaylistLoading, setIsContextMenuPlaylistLoading] = useState(false);
   const [contextMenuBusyActionId, setContextMenuBusyActionId] = useState<string | null>(null);
+  const [activeSongDownloads, setActiveSongDownloads] = useState<Record<string, SongDownloadTaskState>>({});
   const [playlistEditorState, setPlaylistEditorState] = useState<PlaylistEditorState | null>(null);
   const [isPlaylistEditorClosing, setIsPlaylistEditorClosing] = useState(false);
   const [isSubmittingPlaylistEditor, setIsSubmittingPlaylistEditor] = useState(false);
@@ -4365,6 +4517,7 @@ export function AppShell({
   const settingsRef = useRef(settings);
   const isSettingsLoadingRef = useRef(isSettingsLoading);
   const contextMenuStateRef = useRef<ContextMenuState | null>(null);
+  const activeSongDownloadsRef = useRef<Record<string, SongDownloadTaskState>>({});
   const shortcutActionHandlerRef = useRef<(actionId: ShortcutActionId) => void>(() => undefined);
   const savedWindowSizeKeyRef = useRef("");
   const pendingWindowSizeKeyRef = useRef("");
@@ -4395,7 +4548,17 @@ export function AppShell({
   const languageOptions = [...copy.options.language];
   const themeOptions = getThemePresetOptions(copy.locale);
   const qualityOptions = [...copy.options.quality];
+  const downloadQualityOptions = [...copy.options.downloadQuality] as UISelectOption[];
+  const downloadLyricsModeOptions = [...copy.options.downloadLyricsMode] as UISelectOption[];
   const playbackCacheModeOptions = [...copy.options.playbackCacheMode] as UISelectOption[];
+  const activeSongDownloadEntries = useMemo(
+    () => Object.values(activeSongDownloads),
+    [activeSongDownloads],
+  );
+  const downloadProgressMessage = useMemo(
+    () => formatDownloadProgressMessage(copy.locale, activeSongDownloadEntries, localeStrings.notifications),
+    [activeSongDownloadEntries, copy.locale, localeStrings.notifications],
+  );
   const backgroundMediaKind = getBackgroundMediaKind(settings.appearance.backgroundImagePath);
   const backgroundImageStyle =
     backgroundMediaKind === "image"
@@ -4453,6 +4616,11 @@ export function AppShell({
     configuredAppFontFamily,
     settings.appearance,
   ]);
+
+  useEffect(() => {
+    activeSongDownloadsRef.current = activeSongDownloads;
+  }, [activeSongDownloads]);
+
   const globalFilterType = settings.appearance.globalParticleEffectType;
   const isGlobalContainerFilterEnabled =
     settings.appearance.globalParticleEffectEnabled &&
@@ -9875,6 +10043,76 @@ export function AppShell({
     });
   };
 
+  const applySongDownloadProgressEvent = (payload: SongDownloadProgressEvent) => {
+    const locale = settingsRef.current.appearance.language;
+    const notifications = getLocaleStrings(locale).notifications;
+
+    if (payload.status === "failed") {
+      setActiveSongDownloads((current) => {
+        const nextState = { ...current };
+        delete nextState[payload.jobId];
+        return nextState;
+      });
+      pushDynamicIslandNotification(
+        locale === "en-US"
+          ? `${notifications.downloadFailed}: ${payload.title}`
+          : `${notifications.downloadFailed}：${payload.title}`,
+      );
+      return;
+    }
+
+    if (payload.status === "completed") {
+      setActiveSongDownloads((current) => {
+        const nextState = { ...current };
+        delete nextState[payload.jobId];
+        return nextState;
+      });
+      pushDynamicIslandNotification(
+        locale === "en-US"
+          ? `${notifications.downloadCompleted}: ${payload.title}`
+          : `${notifications.downloadCompleted}：${payload.title}`,
+      );
+      return;
+    }
+
+    setActiveSongDownloads((current) => ({
+      ...current,
+      [payload.jobId]: {
+        jobId: payload.jobId,
+        songId: payload.songId,
+        title: payload.title,
+        artist: payload.artist,
+        phase: "downloading",
+        receivedBytes: payload.receivedBytes,
+        totalBytes: payload.totalBytes,
+        progressPercent: payload.progressPercent,
+      },
+    }));
+  };
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+
+    void getCurrentWindow()
+      .listen<SongDownloadProgressEvent>(SONG_DOWNLOAD_PROGRESS_EVENT, ({ payload }) => {
+        applySongDownloadProgressEvent(payload);
+      })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+          return;
+        }
+
+        unlisten = cleanup;
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const syncPlaybackQueueKind = (nextKind: PlaybackQueueKind) => {
     if (playbackQueueKindRef.current === nextKind) {
       return;
@@ -11336,6 +11574,125 @@ export function AppShell({
     closeContextMenu();
   };
 
+  const handleDownloadSongFromContext = async (payload: SongContextTarget) => {
+    const neteaseTrackId = getNeteaseTrackIdFromContextSong(payload);
+    if (!neteaseTrackId) {
+      pushDynamicIslandNotification(localeStrings.notifications.downloadUnavailable);
+      return;
+    }
+
+    if (!isNeteaseSourceEnabled(settingsRef.current)) {
+      pushDynamicIslandNotification(localeStrings.notifications.neteaseSourceDisabled);
+      return;
+    }
+
+    if (!settingsRef.current.library.downloadEnabled) {
+      pushDynamicIslandNotification(localeStrings.notifications.downloadDisabled);
+      return;
+    }
+
+    if (
+      Object.values(activeSongDownloadsRef.current).some(
+        (task) => task.songId === neteaseTrackId,
+      )
+    ) {
+      pushDynamicIslandNotification(localeStrings.notifications.downloadAlreadyActive);
+      return;
+    }
+
+    const songTitle = payload.kind === "netease" ? payload.song.name : payload.track.title;
+    const songArtist =
+      payload.kind === "netease"
+        ? payload.song.artists[0] ?? null
+        : payload.track.artist ?? null;
+    const songAlbum =
+      payload.kind === "netease"
+        ? payload.song.album ?? null
+        : payload.track.album ?? null;
+    const artworkUrl =
+      payload.kind === "netease"
+        ? payload.song.artworkUrl ?? null
+        : null;
+    const shouldDownloadLyrics = settingsRef.current.library.downloadLyricsEnabled;
+    const lyricsMode = shouldDownloadLyrics ? settingsRef.current.library.downloadLyricsMode : null;
+    const jobId = `${neteaseTrackId}:${Date.now()}`;
+
+    closeContextMenu();
+    setActiveSongDownloads((current) => ({
+      ...current,
+      [jobId]: {
+        jobId,
+        songId: neteaseTrackId,
+        title: songTitle,
+        artist: songArtist,
+        phase: "resolving",
+        receivedBytes: 0,
+        totalBytes: null,
+        progressPercent: null,
+      },
+    }));
+
+    void (async () => {
+      try {
+        const [stream, lyrics] = await Promise.all([
+          resolveNeteaseSongDownloadStream(
+            settingsRef.current,
+            neteaseTrackId,
+            settingsRef.current.library.downloadQuality,
+          ),
+          shouldDownloadLyrics
+            ? getNeteaseSongLyrics(settingsRef.current, neteaseTrackId).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+
+        setActiveSongDownloads((current) => ({
+          ...current,
+          [jobId]: {
+            ...(current[jobId] ?? {
+              jobId,
+              songId: neteaseTrackId,
+              title: songTitle,
+              artist: songArtist,
+            }),
+            phase: "downloading",
+            receivedBytes: 0,
+            totalBytes: stream.size ?? null,
+            progressPercent: 0,
+          },
+        }));
+
+        await downloadNeteaseSong({
+          jobId,
+          songId: neteaseTrackId,
+          title: songTitle,
+          artist: songArtist,
+          album: songAlbum,
+          artworkUrl,
+          lyric: shouldDownloadLyrics ? lyrics?.lyric ?? null : null,
+          translatedLyric: shouldDownloadLyrics ? lyrics?.translatedLyric ?? null : null,
+          romanizedLyric: shouldDownloadLyrics ? lyrics?.romanizedLyric ?? null : null,
+          lyricsMode,
+          url: stream.url,
+          saveDirectory: settingsRef.current.library.downloadSaveDirectory,
+          fileExtension: stream.type ?? null,
+        });
+        pushDynamicIslandNotification(
+          copy.locale === "en-US"
+            ? `${localeStrings.notifications.downloadQueued}: ${songTitle}`
+            : `${localeStrings.notifications.downloadQueued}：${songTitle}`,
+        );
+      } catch (error) {
+        console.error("[context-menu] failed to start song download", error);
+        setActiveSongDownloads((current) => {
+          const nextState = { ...current };
+          delete nextState[jobId];
+          return nextState;
+        });
+        pushDynamicIslandNotification(localeStrings.notifications.downloadFailed);
+      }
+    })();
+  };
+
   const withContextMenuAction = async (actionId: string, task: () => Promise<void>) => {
     setContextMenuBusyActionId(actionId);
 
@@ -11743,6 +12100,25 @@ export function AppShell({
     } finally {
       setIsSettingsSaving(false);
     }
+  };
+
+  const handlePickDownloadDirectory = async () => {
+    const selection = await open({
+      multiple: false,
+      directory: true,
+    });
+
+    if (typeof selection !== "string") {
+      return;
+    }
+
+    updateSettings((current) => ({
+      ...current,
+      library: {
+        ...current.library,
+        downloadSaveDirectory: selection,
+      },
+    }));
   };
 
   const handlePickBackgroundImage = async () => {
@@ -14027,6 +14403,18 @@ export function AppShell({
           disabled: contextMenuBusyActionId !== null,
           onSelect: () => queueContextSong(payload, "next"),
         },
+        neteaseTrackId !== null &&
+        isOnlineFeaturesAvailable &&
+        settings.library.downloadEnabled &&
+        contextMenuBusyActionId === null
+          ? {
+              id: "song-download",
+              label: contextMenuCopy.downloadSong,
+              onSelect: () => {
+                void handleDownloadSongFromContext(payload);
+              },
+            }
+          : null,
         canStartIntelligenceMode && contextMenuBusyActionId === null
           ? {
               id: "song-start-intelligence",
@@ -14381,6 +14769,8 @@ export function AppShell({
         languageOptions={languageOptions}
         themeOptions={themeOptions}
         qualityOptions={qualityOptions}
+        downloadQualityOptions={downloadQualityOptions}
+        downloadLyricsModeOptions={downloadLyricsModeOptions}
         playbackCacheModeOptions={playbackCacheModeOptions}
         settings={settings}
         isLoading={isSettingsLoading}
@@ -14395,6 +14785,7 @@ export function AppShell({
         onSaveNeteaseCookie={(cookie) => handleSaveNeteaseCookie(cookie)}
         onClearNeteaseCookie={() => handleClearNeteaseCookie()}
         onPickScanDirectory={() => void handlePickScanDirectory()}
+        onPickDownloadDirectory={() => void handlePickDownloadDirectory()}
         onPickBackgroundImage={() => void handlePickBackgroundImage()}
         onClearBackgroundImage={handleClearBackgroundImage}
         onClearLibrary={() => void handleClearLibrary()}
@@ -14993,23 +15384,31 @@ export function AppShell({
               detailedTimeLabel={detailedTimeLabel}
               lyricLine={dynamicIslandLyricLine}
               notification={
-                workspaceLoadingMessage
+                workspaceLoadingMessage || downloadProgressMessage
                   ? {
                       id: -1,
-                      message: workspaceLoadingMessage,
+                      message: workspaceLoadingMessage ?? downloadProgressMessage ?? "",
                     }
                   : dynamicIslandNotification
               }
-              notificationPhase={workspaceLoadingMessage ? "visible" : dynamicIslandNotificationPhase}
+              notificationPhase={
+                workspaceLoadingMessage || downloadProgressMessage
+                  ? "visible"
+                  : dynamicIslandNotificationPhase
+              }
               importProgress={dynamicIslandImportProgress}
               styleVariant={settings.appearance.dynamicIslandStyle}
               colorMode={settings.appearance.dynamicIslandColorMode}
               position={settings.appearance.dynamicIslandPosition}
             />
-          ) : workspaceLoadingMessage || dynamicIslandNotification ? (
+          ) : workspaceLoadingMessage || downloadProgressMessage || dynamicIslandNotification ? (
             <WorkspaceNotification
-              message={workspaceLoadingMessage ?? dynamicIslandNotification?.message ?? ""}
-              phase={workspaceLoadingMessage ? "visible" : dynamicIslandNotificationPhase}
+              message={workspaceLoadingMessage ?? downloadProgressMessage ?? dynamicIslandNotification?.message ?? ""}
+              phase={
+                workspaceLoadingMessage || downloadProgressMessage
+                  ? "visible"
+                  : dynamicIslandNotificationPhase
+              }
             />
           ) : null}
 
@@ -16634,6 +17033,8 @@ function SettingsScreen({
   languageOptions,
   themeOptions,
   qualityOptions,
+  downloadQualityOptions,
+  downloadLyricsModeOptions,
   playbackCacheModeOptions,
   settings,
   isLoading,
@@ -16649,6 +17050,7 @@ function SettingsScreen({
   onSaveNeteaseCookie,
   onClearNeteaseCookie,
   onPickScanDirectory,
+  onPickDownloadDirectory,
   onPickBackgroundImage,
   onClearBackgroundImage,
   onClearLibrary,
@@ -16657,6 +17059,8 @@ function SettingsScreen({
   languageOptions: UISelectOption[];
   themeOptions: UISelectOption[];
   qualityOptions: UISelectOption[];
+  downloadQualityOptions: UISelectOption[];
+  downloadLyricsModeOptions: UISelectOption[];
   playbackCacheModeOptions: UISelectOption[];
   settings: AppSettings;
   isLoading: boolean;
@@ -16672,6 +17076,7 @@ function SettingsScreen({
   onSaveNeteaseCookie: (cookie: string) => Promise<void>;
   onClearNeteaseCookie: () => Promise<void>;
   onPickScanDirectory: () => void;
+  onPickDownloadDirectory: () => void;
   onPickBackgroundImage: () => void;
   onClearBackgroundImage: () => void;
   onClearLibrary: () => void;
@@ -17301,6 +17706,29 @@ function SettingsScreen({
     settings.library.watchDirectories,
     settings.library.onlineLyricsCompletion,
   ]);
+  const showDownloadSection =
+    isNeteaseEnabled &&
+    (!isSearchingSettings || matchesSettingsSearch([
+      copy.settings.sections.download.title,
+      copy.settings.sections.download.pickDirectory,
+      copy.settings.sections.download.enabledLabel,
+      copy.settings.sections.download.enabledDescription,
+      copy.settings.sections.download.saveDirectoryLabel,
+      copy.settings.sections.download.saveDirectoryHelper,
+      copy.settings.sections.download.qualityLabel,
+      copy.settings.sections.download.qualityHelper,
+      copy.settings.sections.download.lyricsLabel,
+      copy.settings.sections.download.lyricsDescription,
+      copy.settings.sections.download.lyricsModeLabel,
+      copy.settings.sections.download.lyricsModeHelper,
+      settings.library.downloadEnabled,
+      settings.library.downloadSaveDirectory,
+      settings.library.downloadQuality,
+      settings.library.downloadLyricsEnabled,
+      settings.library.downloadLyricsMode,
+      ...getSearchableOptions(downloadQualityOptions),
+      ...getSearchableOptions(downloadLyricsModeOptions),
+    ]));
   const showNetworkSection = !isSearchingSettings || matchesSettingsSearch([
     copy.settings.sections.network.title,
     copy.settings.sections.network.sourceLabel,
@@ -17668,6 +18096,7 @@ function SettingsScreen({
     showPlaybackSection,
     showShortcutsSection,
     showLibrarySection,
+    showDownloadSection,
     showNetworkSection,
     showAccountSection,
   ].filter(Boolean).length;
@@ -19509,6 +19938,162 @@ function SettingsScreen({
                       library: {
                         ...current.library,
                         onlineLyricsCompletion: checked,
+                      },
+                    }))
+                  }
+                />
+                </SettingsSearchItem>
+            ) : null}
+          </div>
+        </section>
+        ) : null}
+
+        {shouldRenderSecondarySettingsSections && showDownloadSection ? (
+        <section className="settings-card">
+          <div className="settings-card__header">
+            <div>
+              <h3 className="settings-card__title">{copy.settings.sections.download.title}</h3>
+            </div>
+          </div>
+
+          <div className="settings-card__body">
+            <SettingsSearchItem
+              itemKey="download-enabled"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("download-enabled")}
+              searchParts={[
+                copy.settings.sections.download.enabledLabel,
+                copy.settings.sections.download.enabledDescription,
+                ...getSearchableBooleanState(settings.library.downloadEnabled),
+              ]}
+            >
+              <UISwitch
+                label={copy.settings.sections.download.enabledLabel}
+                description={copy.settings.sections.download.enabledDescription}
+                checked={settings.library.downloadEnabled}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    library: {
+                      ...current.library,
+                      downloadEnabled: checked,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="download-directory"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("download-directory")}
+              searchParts={[
+                copy.settings.sections.download.saveDirectoryLabel,
+                copy.settings.sections.download.saveDirectoryHelper,
+                copy.settings.sections.download.pickDirectory,
+                settings.library.downloadSaveDirectory,
+              ]}
+            >
+              <UITextField
+                label={copy.settings.sections.download.saveDirectoryLabel}
+                value={settings.library.downloadSaveDirectory}
+                helper={copy.settings.sections.download.saveDirectoryHelper}
+                suffix={(
+                  <UIButton
+                    variant="secondary"
+                    size="sm"
+                    className="ui-input-shell__action"
+                    onClick={onPickDownloadDirectory}
+                    disabled={isLoading || isSaving}
+                  >
+                    {copy.settings.sections.download.pickDirectory}
+                  </UIButton>
+                )}
+                onChange={(value) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    library: {
+                      ...current.library,
+                      downloadSaveDirectory: value,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="download-quality"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("download-quality")}
+              searchParts={[
+                copy.settings.sections.download.qualityLabel,
+                copy.settings.sections.download.qualityHelper,
+                settings.library.downloadQuality,
+                ...getSearchableOptions(downloadQualityOptions),
+              ]}
+            >
+              <UISelect
+                label={copy.settings.sections.download.qualityLabel}
+                value={settings.library.downloadQuality}
+                options={downloadQualityOptions}
+                helper={copy.settings.sections.download.qualityHelper}
+                onChange={(value) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    library: {
+                      ...current.library,
+                      downloadQuality: value as DownloadQualityOption,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            <SettingsSearchItem
+              itemKey="download-lyrics"
+              instanceId={settingsSearchInstanceId}
+              visible={matchesSettingKey("download-lyrics")}
+              searchParts={[
+                copy.settings.sections.download.lyricsLabel,
+                copy.settings.sections.download.lyricsDescription,
+                ...getSearchableBooleanState(settings.library.downloadLyricsEnabled),
+              ]}
+            >
+              <UISwitch
+                label={copy.settings.sections.download.lyricsLabel}
+                description={copy.settings.sections.download.lyricsDescription}
+                checked={settings.library.downloadLyricsEnabled}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    library: {
+                      ...current.library,
+                      downloadLyricsEnabled: checked,
+                    },
+                  }))
+                }
+              />
+            </SettingsSearchItem>
+            {settings.library.downloadLyricsEnabled ? (
+              <SettingsSearchItem
+                itemKey="download-lyrics-mode"
+                instanceId={settingsSearchInstanceId}
+                visible={matchesSettingKey("download-lyrics-mode")}
+                searchParts={[
+                  copy.settings.sections.download.lyricsModeLabel,
+                  copy.settings.sections.download.lyricsModeHelper,
+                  settings.library.downloadLyricsMode,
+                  ...getSearchableOptions(downloadLyricsModeOptions),
+                ]}
+              >
+                <UISelect
+                  label={copy.settings.sections.download.lyricsModeLabel}
+                  value={settings.library.downloadLyricsMode}
+                  options={downloadLyricsModeOptions}
+                  helper={copy.settings.sections.download.lyricsModeHelper}
+                  onChange={(value) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      library: {
+                        ...current.library,
+                        downloadLyricsMode: value as DownloadLyricsMode,
                       },
                     }))
                   }

@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    env,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -10,7 +11,7 @@ use fontdb::Database;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 10;
+const SETTINGS_SCHEMA_VERSION: u32 = 11;
 const DEFAULT_SETTINGS_FILE: &str = "app-settings.json";
 pub const DEFAULT_WINDOW_WIDTH: u32 = 960;
 pub const DEFAULT_WINDOW_HEIGHT: u32 = 600;
@@ -264,6 +265,11 @@ pub struct LibrarySettings {
     pub scan_directories: Vec<String>,
     pub watch_directories: bool,
     pub online_lyrics_completion: bool,
+    pub download_enabled: bool,
+    pub download_save_directory: String,
+    pub download_quality: String,
+    pub download_lyrics_enabled: bool,
+    pub download_lyrics_mode: String,
 }
 
 impl Default for LibrarySettings {
@@ -272,6 +278,11 @@ impl Default for LibrarySettings {
             scan_directories: Vec::new(),
             watch_directories: false,
             online_lyrics_completion: false,
+            download_enabled: true,
+            download_save_directory: String::new(),
+            download_quality: "exhigh".to_string(),
+            download_lyrics_enabled: false,
+            download_lyrics_mode: "embedded".to_string(),
         }
     }
 }
@@ -426,6 +437,7 @@ pub fn save_app_settings(
     with_settings_mutation(&app, &state, |path, document| {
         document.schema_version = SETTINGS_SCHEMA_VERSION;
         document.settings = sanitize_settings(settings);
+        populate_runtime_settings_defaults(&mut document.settings);
         Ok(snapshot_from_document(path, document))
     })
     .map_err(error_to_string)
@@ -439,6 +451,7 @@ pub fn reset_app_settings(
     with_settings_mutation(&app, &state, |path, document| {
         document.schema_version = SETTINGS_SCHEMA_VERSION;
         document.settings = AppSettings::default();
+        populate_runtime_settings_defaults(&mut document.settings);
         Ok(snapshot_from_document(path, document))
     })
     .map_err(error_to_string)
@@ -465,7 +478,9 @@ pub fn list_system_font_families() -> Result<Vec<String>, String> {
 pub fn load_app_settings_or_default(app: &AppHandle) -> anyhow::Result<AppSettings> {
     let settings_path = settings_file_path(app)?;
     let document = load_or_create_settings(&settings_path)?;
-    Ok(document.settings)
+    let mut settings = document.settings;
+    populate_runtime_settings_defaults(&mut settings);
+    Ok(settings)
 }
 
 fn with_settings_mutation<T>(
@@ -480,6 +495,7 @@ fn with_settings_mutation<T>(
 
     let settings_path = settings_file_path(app)?;
     let mut document = load_or_create_settings(&settings_path)?;
+    populate_runtime_settings_defaults(&mut document.settings);
     let result = mutator(&settings_path, &mut document)?;
     persist_settings(&settings_path, &document)?;
     Ok(result)
@@ -712,6 +728,27 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     settings.appearance.font_weight = settings.appearance.font_weight.clamp(100, 900);
     settings.network.request_timeout_ms = settings.network.request_timeout_ms.max(1000);
     settings.library.scan_directories = dedupe_strings(settings.library.scan_directories);
+    settings.library.download_save_directory =
+        sanitize_non_empty_or_empty(settings.library.download_save_directory);
+    settings.library.download_quality = sanitize_limited_value(
+        settings.library.download_quality,
+        &[
+            "standard",
+            "higher",
+            "exhigh",
+            "lossless",
+            "hires",
+            "jyeffect",
+            "sky",
+            "jymaster",
+        ],
+        "exhigh",
+    );
+    settings.library.download_lyrics_mode = sanitize_limited_value(
+        settings.library.download_lyrics_mode,
+        &["embedded", "sidecar"],
+        "embedded",
+    );
     settings.network.enabled_sources = sanitize_enabled_sources(settings.network.enabled_sources);
     settings.network.netease_api_base_url = sanitize_url_or_fallback(
         settings.network.netease_api_base_url,
@@ -759,6 +796,12 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     settings.window.width = settings.window.width.max(MIN_WINDOW_WIDTH);
     settings.window.height = settings.window.height.max(MIN_WINDOW_HEIGHT);
     settings
+}
+
+fn populate_runtime_settings_defaults(settings: &mut AppSettings) {
+    if settings.library.download_save_directory.trim().is_empty() {
+        settings.library.download_save_directory = resolve_default_download_directory();
+    }
 }
 
 fn migrate_settings_defaults(settings: &mut AppSettings, previous_schema_version: u32) {
@@ -863,6 +906,26 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
     }
 
     deduped
+}
+
+fn resolve_default_download_directory() -> String {
+    default_music_directory()
+        .unwrap_or_else(|| PathBuf::from("Music"))
+        .join("CeliaMusicNextGen")
+        .display()
+        .to_string()
+}
+
+fn default_music_directory() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        env::var_os("USERPROFILE").map(|profile| PathBuf::from(profile).join("Music"))
+    }
+
+    #[cfg(not(windows))]
+    {
+        env::var_os("HOME").map(|home| PathBuf::from(home).join("Music"))
+    }
 }
 
 fn sanitize_enabled_sources(values: Vec<String>) -> Vec<String> {
