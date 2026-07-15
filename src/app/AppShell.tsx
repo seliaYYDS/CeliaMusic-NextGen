@@ -174,6 +174,21 @@ import {
   clearExploreMemoryCaches,
   type ExploreScreenSnapshot,
 } from "./ExploreScreen";
+import {
+  createWallpaperEngineProjectPath,
+  isWallpaperEngineProjectPath,
+  parseWallpaperEngineProjectPath,
+  type WallpaperEngineProjectDescriptor,
+  type WallpaperEngineSceneRuntime,
+} from "./wallpaperEngine";
+import {
+  clearWallpaperEngineProjectState,
+  loadWallpaperEngineProject,
+  readWallpaperEngineProjectState,
+  subscribeWallpaperEngineProjectState,
+  type WallpaperEngineProjectState,
+} from "./wallpaperEngineSync";
+import { WallpaperEngineSceneRenderer } from "./WallpaperEngineSceneRenderer";
 import playerIcon from "../../icon.png";
 import "./styles.css";
 
@@ -1757,6 +1772,7 @@ function getThemeEditorCopy(locale: string) {
       customImageDescription:
         "Upload your own image or video for the application background. Videos stay muted and loop automatically.",
       customImageUpload: "Choose Media",
+      customWallpaperEngineFolder: "Choose WE Folder",
       customImageClear: "Clear Media",
       customImageEmpty: "No background media selected yet.",
       customImageOpacityLabel: "Media Opacity",
@@ -1851,6 +1867,7 @@ function getThemeEditorCopy(locale: string) {
     customImageTitle: "背景媒体",
     customImageDescription: "上传自定义背景图片或视频，并设置它的透明度、模糊和暗化程度。视频会自动静音循环播放。",
     customImageUpload: "选择媒体",
+    customWallpaperEngineFolder: "选择 WE 文件夹",
     customImageClear: "清除媒体",
     customImageEmpty: "当前还没有选择背景媒体。",
     customImageOpacityLabel: "媒体透明度",
@@ -2835,6 +2852,10 @@ function resolveBackgroundImageStyle(path: string) {
 }
 
 function resolveBackgroundMediaSrc(path: string) {
+  if (isWallpaperEngineProjectPath(path)) {
+    return null;
+  }
+
   const trimmedPath = path.trim();
   if (!trimmedPath) {
     return null;
@@ -2863,6 +2884,10 @@ function getPathExtension(path: string) {
 }
 
 function getBackgroundMediaKind(path: string): "none" | "image" | "video" {
+  if (isWallpaperEngineProjectPath(path)) {
+    return "none";
+  }
+
   const extension = getPathExtension(path);
   if (!extension) {
     return "none";
@@ -2877,6 +2902,19 @@ function getBackgroundMediaKind(path: string): "none" | "image" | "video" {
   }
 
   return "none";
+}
+
+function getBackgroundSelectionDisplayPath(path: string) {
+  return parseWallpaperEngineProjectPath(path) ?? path;
+}
+
+function getBackgroundSelectionDisplayName(path: string) {
+  const displayPath = getBackgroundSelectionDisplayPath(path).trim();
+  if (!displayPath) {
+    return "";
+  }
+
+  return displayPath.split(/[\\/]/).pop() ?? displayPath;
 }
 
 function buildThemeStyle(
@@ -2897,7 +2935,9 @@ function buildThemeStyle(
   const componentBlurRatio = clamp01(componentBackdropBlur / 32);
   const backgroundDim = clamp01((appearance.backgroundDim ?? 18) / 100);
   const backgroundImageOpacity = clamp01((appearance.backgroundImageOpacity ?? 82) / 100);
-  const hasCustomBackground = backgroundMode === "custom" && backgroundMediaKind !== "none";
+  const hasCustomBackground =
+    backgroundMode === "custom" &&
+    (backgroundMediaKind !== "none" || isWallpaperEngineProjectPath(appearance.backgroundImagePath));
   const panelBackdropBlur = `${Math.max(0, Math.round(componentBackdropBlur * 1.18))}px`;
   const cardBackdropBlur = `${Math.max(0, Math.round(componentBackdropBlur * 0.98))}px`;
   const overlayBackdropBlur = `${Math.max(8, Math.round(componentBackdropBlur * 0.7))}px`;
@@ -4559,6 +4599,18 @@ export function AppShell({
     () => formatDownloadProgressMessage(copy.locale, activeSongDownloadEntries, localeStrings.notifications),
     [activeSongDownloadEntries, copy.locale, localeStrings.notifications],
   );
+  const [wallpaperEngineProjectState, setWallpaperEngineProjectState] = useState<WallpaperEngineProjectState | null>(() =>
+    readWallpaperEngineProjectState(),
+  );
+  const wallpaperEngineFolderPath = parseWallpaperEngineProjectPath(settings.appearance.backgroundImagePath);
+  const matchesWallpaperEngineProject =
+    wallpaperEngineFolderPath !== null &&
+    wallpaperEngineProjectState !== null &&
+    wallpaperEngineProjectState.folderPath.replace(/\\/g, "/") === wallpaperEngineFolderPath.replace(/\\/g, "/");
+  const wallpaperEngineDescriptor =
+    matchesWallpaperEngineProject
+      ? wallpaperEngineProjectState.descriptor
+      : null;
   const backgroundMediaKind = getBackgroundMediaKind(settings.appearance.backgroundImagePath);
   const backgroundImageStyle =
     backgroundMediaKind === "image"
@@ -4574,7 +4626,32 @@ export function AppShell({
       : null;
   const effectiveBackgroundVideoSrc = appBackgroundMvVideoSrc ?? backgroundVideoSrc;
   const hasCustomAppBackground =
-    settings.appearance.backgroundMode === "custom" && backgroundMediaKind !== "none";
+    settings.appearance.backgroundMode === "custom" &&
+    (backgroundMediaKind !== "none" || wallpaperEngineDescriptor !== null);
+  useEffect(() => subscribeWallpaperEngineProjectState(setWallpaperEngineProjectState), []);
+  useEffect(() => {
+    if (!wallpaperEngineFolderPath) {
+      return;
+    }
+
+    const normalizedFolderPath = wallpaperEngineFolderPath.replace(/\\/g, "/");
+    const currentProjectMatches =
+      wallpaperEngineProjectState?.folderPath.replace(/\\/g, "/") === normalizedFolderPath;
+    const sceneRuntimeIsReady =
+      wallpaperEngineProjectState?.descriptor.wallpaperType !== "scene" ||
+      wallpaperEngineProjectState.sceneRuntime !== null;
+    const webHostIsReady =
+      wallpaperEngineProjectState?.descriptor.wallpaperType !== "web" ||
+      typeof wallpaperEngineProjectState.webHostUrl === "string" &&
+      wallpaperEngineProjectState.webHostUrl.startsWith("http://127.0.0.1:");
+    if (currentProjectMatches && sceneRuntimeIsReady && webHostIsReady) {
+      return;
+    }
+
+    void loadWallpaperEngineProject(wallpaperEngineFolderPath).catch((error) => {
+      console.error("[wallpaper-engine] failed to restore selected project", error);
+    });
+  }, [wallpaperEngineFolderPath, wallpaperEngineProjectState]);
   const configuredAppFontFamily = buildConfiguredFontFamilyValue(
     settings.appearance.fontFamily ?? "system-ui",
   );
@@ -10043,6 +10120,14 @@ export function AppShell({
     });
   };
 
+  const pushAppNotification = (message: string) => {
+    if (settingsRef.current.appearance.showDynamicIsland) {
+      pushDynamicIslandNotification(message);
+      return;
+    }
+    setDynamicIslandNotification({ id: Date.now(), message });
+  };
+
   const applySongDownloadProgressEvent = (payload: SongDownloadProgressEvent) => {
     const locale = settingsRef.current.appearance.language;
     const notifications = getLocaleStrings(locale).notifications;
@@ -10053,7 +10138,7 @@ export function AppShell({
         delete nextState[payload.jobId];
         return nextState;
       });
-      pushDynamicIslandNotification(
+      pushAppNotification(
         locale === "en-US"
           ? `${notifications.downloadFailed}: ${payload.title}`
           : `${notifications.downloadFailed}：${payload.title}`,
@@ -12137,6 +12222,8 @@ export function AppShell({
       return;
     }
 
+    clearWallpaperEngineProjectState();
+
     updateSettings((current) => ({
       ...current,
       appearance: {
@@ -12147,7 +12234,40 @@ export function AppShell({
     }));
   };
 
+  const handlePickWallpaperEngineFolder = async () => {
+    const selection = await open({
+      multiple: false,
+      directory: true,
+    });
+
+    if (typeof selection !== "string") {
+      return;
+    }
+
+    try {
+      await loadWallpaperEngineProject(selection);
+    } catch (error) {
+      console.error("[wallpaper-engine] failed to load project folder", error);
+      pushDynamicIslandNotification(
+        error instanceof Error && error.message === "暂不支持该类壁纸"
+          ? "暂不支持该类壁纸"
+          : "壁纸加载失败",
+      );
+      return;
+    }
+
+    updateSettings((current) => ({
+      ...current,
+      appearance: {
+        ...current.appearance,
+        backgroundMode: "custom",
+        backgroundImagePath: createWallpaperEngineProjectPath(selection),
+      },
+    }));
+  };
+
   const handleClearBackgroundImage = () => {
+    clearWallpaperEngineProjectState();
     updateSettings((current) => ({
       ...current,
       appearance: {
@@ -14787,6 +14907,7 @@ export function AppShell({
         onPickScanDirectory={() => void handlePickScanDirectory()}
         onPickDownloadDirectory={() => void handlePickDownloadDirectory()}
         onPickBackgroundImage={() => void handlePickBackgroundImage()}
+        onPickWallpaperEngineFolder={() => void handlePickWallpaperEngineFolder()}
         onClearBackgroundImage={handleClearBackgroundImage}
         onClearLibrary={() => void handleClearLibrary()}
         onReleaseMemoryCache={() => void handleReleaseMemoryCache()}
@@ -15189,6 +15310,13 @@ export function AppShell({
                 syncBackgroundMvPosition(backgroundVideoRef.current, true);
               }
             }}
+          />
+        ) : null}
+        {settings.appearance.backgroundMode === "custom" && wallpaperEngineDescriptor ? (
+          <WallpaperEngineBackgroundLayer
+            descriptor={wallpaperEngineDescriptor}
+            sceneRuntime={wallpaperEngineProjectState?.sceneRuntime ?? null}
+            webHostUrl={wallpaperEngineProjectState?.webHostUrl ?? null}
           />
         ) : null}
         <div className="titlebar">
@@ -17052,6 +17180,7 @@ function SettingsScreen({
   onPickScanDirectory,
   onPickDownloadDirectory,
   onPickBackgroundImage,
+  onPickWallpaperEngineFolder,
   onClearBackgroundImage,
   onClearLibrary,
 }: {
@@ -17078,6 +17207,7 @@ function SettingsScreen({
   onPickScanDirectory: () => void;
   onPickDownloadDirectory: () => void;
   onPickBackgroundImage: () => void;
+  onPickWallpaperEngineFolder: () => void;
   onClearBackgroundImage: () => void;
   onClearLibrary: () => void;
 }) {
@@ -18419,13 +18549,16 @@ function SettingsScreen({
                   <div>
                     <h4 className="theme-background-panel__title">
                       {settings.appearance.backgroundImagePath
-                        ? settings.appearance.backgroundImagePath.split(/[\\/]/).pop()
+                        ? getBackgroundSelectionDisplayName(settings.appearance.backgroundImagePath)
                         : themeEditorCopy.customImageEmpty}
                     </h4>
                   </div>
                   <div className="theme-background-panel__actions">
                     <UIButton variant="secondary" size="sm" onClick={onPickBackgroundImage}>
                       {themeEditorCopy.customImageUpload}
+                    </UIButton>
+                    <UIButton variant="secondary" size="sm" onClick={onPickWallpaperEngineFolder}>
+                      {themeEditorCopy.customWallpaperEngineFolder}
                     </UIButton>
                     <UIButton
                       variant="ghost"
@@ -18441,7 +18574,7 @@ function SettingsScreen({
                   {themeEditorCopy.customImageDescription}
                 </p>
                 <div className="theme-background-path">
-                  {settings.appearance.backgroundImagePath || themeEditorCopy.customImageEmpty}
+                  {getBackgroundSelectionDisplayPath(settings.appearance.backgroundImagePath) || themeEditorCopy.customImageEmpty}
                 </div>
                 <div className="theme-background-grid">
                   <UISlider
@@ -20618,6 +20751,18 @@ function renderStartupGreeting(
 
 function ThemePreviewCard({ settings }: { settings: AppSettings }) {
   const seed = getThemeSeed(settings.appearance.themeMode, settings.appearance);
+  const [wallpaperEngineProjectState, setWallpaperEngineProjectState] = useState<WallpaperEngineProjectState | null>(() =>
+    readWallpaperEngineProjectState(),
+  );
+  const wallpaperEngineFolderPath = parseWallpaperEngineProjectPath(settings.appearance.backgroundImagePath);
+  const matchesWallpaperEngineProject =
+    wallpaperEngineFolderPath !== null &&
+    wallpaperEngineProjectState !== null &&
+    wallpaperEngineProjectState.folderPath.replace(/\\/g, "/") === wallpaperEngineFolderPath.replace(/\\/g, "/");
+  const wallpaperEngineDescriptor =
+    matchesWallpaperEngineProject
+      ? wallpaperEngineProjectState.descriptor
+      : null;
   const backgroundMediaKind = getBackgroundMediaKind(settings.appearance.backgroundImagePath);
   const backgroundImageStyle =
     backgroundMediaKind === "image"
@@ -20633,6 +20778,8 @@ function ThemePreviewCard({ settings }: { settings: AppSettings }) {
     backgroundMediaKind,
   );
 
+  useEffect(() => subscribeWallpaperEngineProjectState(setWallpaperEngineProjectState), []);
+
   return (
     <div className="theme-preview" style={previewStyle}>
       {settings.appearance.backgroundMode === "custom" && backgroundVideoSrc ? (
@@ -20646,6 +20793,14 @@ function ThemePreviewCard({ settings }: { settings: AppSettings }) {
           playsInline
           preload="metadata"
           aria-hidden="true"
+        />
+      ) : null}
+      {settings.appearance.backgroundMode === "custom" && wallpaperEngineDescriptor && wallpaperEngineDescriptor.wallpaperType !== "scene" ? (
+          <WallpaperEngineBackgroundLayer
+            descriptor={wallpaperEngineDescriptor}
+            sceneRuntime={wallpaperEngineProjectState?.sceneRuntime ?? null}
+            webHostUrl={wallpaperEngineProjectState?.webHostUrl ?? null}
+          className="theme-preview__wallpaper-engine"
         />
       ) : null}
       <div className="theme-preview__chrome">
@@ -20678,6 +20833,82 @@ function ThemePreviewCard({ settings }: { settings: AppSettings }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function WallpaperEngineBackgroundLayer({
+  descriptor,
+  sceneRuntime,
+  webHostUrl,
+  className,
+}: {
+  descriptor: WallpaperEngineProjectDescriptor;
+  sceneRuntime: WallpaperEngineSceneRuntime | null;
+  webHostUrl: string | null;
+  className?: string;
+}) {
+  const previewSrc = descriptor.previewPath ? convertFileSrc(descriptor.previewPath) : null;
+  const mainFileSrc = descriptor.mainFilePath ? convertFileSrc(descriptor.mainFilePath) : null;
+
+  if (descriptor.wallpaperType === "scene") {
+    if (sceneRuntime) {
+      return <WallpaperEngineSceneRenderer runtime={sceneRuntime} className={className} />;
+    }
+
+    return <div className={["wallpaper-engine-background", "wallpaper-engine-background--fallback", className].filter(Boolean).join(" ")} />;
+  }
+
+  if (descriptor.wallpaperType === "web" && webHostUrl) {
+    return (
+      <iframe
+        className={["wallpaper-engine-background", className].filter(Boolean).join(" ")}
+        src={webHostUrl}
+        title={descriptor.title || "Wallpaper Engine Background"}
+        allow="autoplay; fullscreen"
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
+
+  if (descriptor.wallpaperType === "web") {
+    return <div className={["wallpaper-engine-background", "wallpaper-engine-background--fallback", className].filter(Boolean).join(" ")} />;
+  }
+
+  if (descriptor.wallpaperType === "video" && mainFileSrc) {
+    return (
+      <video
+        className={["wallpaper-engine-background", "wallpaper-engine-background--video", className]
+          .filter(Boolean)
+          .join(" ")}
+        src={mainFileSrc}
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="auto"
+        aria-hidden="true"
+      />
+    );
+  }
+
+  if (previewSrc) {
+    return (
+      <img
+        className={["wallpaper-engine-background", "wallpaper-engine-background--image", className]
+          .filter(Boolean)
+          .join(" ")}
+        src={previewSrc}
+        alt=""
+      />
+    );
+  }
+
+  return (
+    <div
+      className={["wallpaper-engine-background", "wallpaper-engine-background--fallback", className]
+        .filter(Boolean)
+        .join(" ")}
+    />
   );
 }
 

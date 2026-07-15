@@ -428,6 +428,136 @@ select {
   pointer-events: none;
 }
 
+.wallpaper-engine-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  opacity: var(--app-background-opacity, 0);
+  filter: blur(var(--app-background-blur, 0px));
+  transform: scale(1.08);
+  pointer-events: none;
+}
+
+.wallpaper-engine-background--video,
+.wallpaper-engine-background--image {
+  object-fit: cover;
+}
+
+.wallpaper-engine-background--scene-host,
+.wallpaper-engine-wallpaper__native-scene-host {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: transparent;
+}
+
+.wallpaper-engine-background--fallback {
+  background:
+    radial-gradient(circle at 22% 18%, rgba(133, 181, 255, 0.22), transparent 28%),
+    radial-gradient(circle at 74% 24%, rgba(245, 173, 209, 0.18), transparent 26%),
+    linear-gradient(140deg, rgba(11, 18, 29, 0.94), rgba(16, 28, 43, 0.9));
+}
+
+.wallpaper-engine-scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+  opacity: var(--app-background-opacity, 0);
+  filter: blur(var(--app-background-blur, 0px));
+  transform: scale(1.08);
+  pointer-events: none;
+}
+
+.wallpaper-engine-scene__canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.wallpaper-engine-scene__webgl-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
+.wallpaper-engine-scene__layer {
+  position: absolute;
+  transform-origin: 0 0;
+  overflow: visible;
+}
+
+.wallpaper-engine-scene__layer-content {
+  position: absolute;
+  overflow: visible;
+}
+
+.wallpaper-engine-scene__layer--puppet .wallpaper-engine-scene__image {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.wallpaper-engine-scene__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.wallpaper-engine-scene__video {
+  background: transparent;
+}
+
+.wallpaper-engine-scene__flow-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.wallpaper-engine-scene__effect-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.wallpaper-engine-scene__layer--text {
+  overflow: visible;
+}
+
+.wallpaper-engine-scene__text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  text-align: center;
+  white-space: pre-wrap;
+  line-height: 1.05;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.28);
+}
+
+@keyframes wallpaper-engine-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app-shell__surface::before,
 .app-shell__surface::after {
   content: "";
@@ -7185,6 +7315,150 @@ select {
   height: 100vh;
   overflow: hidden;
   background: transparent;
+}
+
+.wallpaper-engine-wallpaper {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(83, 118, 186, 0.28), transparent 32%),
+    linear-gradient(160deg, rgba(8, 12, 20, 0.96), rgba(20, 28, 40, 0.92));
+}
+
+.wallpaper-engine-wallpaper__iframe,
+.wallpaper-engine-wallpaper__video,
+.wallpaper-engine-wallpaper__preview,
+.wallpaper-engine-wallpaper__fallback,
+.wallpaper-engine-wallpaper__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.wallpaper-engine-wallpaper__iframe {
+  border: 0;
+  background: transparent;
+}
+
+.wallpaper-engine-wallpaper__video,
+.wallpaper-engine-wallpaper__preview {
+  object-fit: cover;
+}
+
+.wallpaper-engine-wallpaper__fallback {
+  background:
+    radial-gradient(circle at 24% 18%, rgba(120, 176, 255, 0.3), transparent 28%),
+    radial-gradient(circle at 74% 26%, rgba(255, 172, 204, 0.24), transparent 26%),
+    linear-gradient(140deg, #0a1019, #101a29 52%, #111f31);
+}
+
+.wallpaper-engine-wallpaper__overlay {
+  background:
+    linear-gradient(180deg, rgba(4, 7, 14, 0.16), rgba(4, 7, 14, 0.58)),
+    radial-gradient(circle at center, transparent 0, rgba(2, 4, 10, 0.32) 100%);
+  backdrop-filter: blur(12px);
+}
+
+.wallpaper-engine-wallpaper__panel {
+  position: absolute;
+  left: clamp(24px, 4vw, 56px);
+  bottom: clamp(24px, 4vw, 56px);
+  z-index: 1;
+  width: min(720px, calc(100vw - 48px));
+  padding: 24px 28px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 28px;
+  color: rgba(246, 249, 255, 0.96);
+  background: rgba(8, 13, 22, 0.58);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(18px);
+}
+
+.wallpaper-engine-wallpaper__eyebrow,
+.wallpaper-engine-wallpaper__meta,
+.wallpaper-engine-wallpaper__description,
+.wallpaper-engine-wallpaper__grid span,
+.wallpaper-engine-wallpaper__entries code {
+  margin: 0;
+  opacity: 0.82;
+}
+
+.wallpaper-engine-wallpaper__eyebrow {
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.wallpaper-engine-wallpaper__title {
+  margin: 10px 0 8px;
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  line-height: 1.04;
+}
+
+.wallpaper-engine-wallpaper__meta {
+  font-size: 0.95rem;
+}
+
+.wallpaper-engine-wallpaper__description {
+  margin-top: 16px;
+  max-width: 64ch;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.wallpaper-engine-wallpaper__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  margin-top: 22px;
+}
+
+.wallpaper-engine-wallpaper__grid strong,
+.wallpaper-engine-wallpaper__grid span {
+  display: block;
+}
+
+.wallpaper-engine-wallpaper__grid strong {
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wallpaper-engine-wallpaper__grid span {
+  font-size: 0.94rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.wallpaper-engine-wallpaper__entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.wallpaper-engine-wallpaper__entries code {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 720px) {
+  .wallpaper-engine-wallpaper__panel {
+    width: calc(100vw - 32px);
+    padding: 20px;
+    left: 16px;
+    bottom: 16px;
+    border-radius: 22px;
+  }
+
+  .wallpaper-engine-wallpaper__grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .immersive-player--open {

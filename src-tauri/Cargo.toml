@@ -34,6 +34,14 @@ url = "2.5.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 symphonia = { version = "0.5.4", features = ["aac", "alac", "flac", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 rustfft = "6.4.0"
+bcdec_rs = "0.2.0"
+lz4_flex = "0.11.3"
+wgpu = "24.0.1"
+raw-window-handle = "0.6.2"
+pollster = "0.4.0"
+bytemuck = { version = "1.23.2", features = ["derive"] }
+fontdue = "0.9.3"
+rquickjs = { version = "0.9.0", features = ["full"] }
 
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = "2"
@@ -43,8 +51,10 @@ windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Dwm",
+  "Win32_Graphics_Dxgi",
   "Win32_Security",
   "Win32_System_Threading",
+  "Win32_UI_Controls",
   "Win32_UI_WindowsAndMessaging",
 ] }
 windows-sys = { version = "0.61.2", features = [

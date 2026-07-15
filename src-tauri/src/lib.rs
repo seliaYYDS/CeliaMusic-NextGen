@@ -4,6 +4,11 @@ mod media;
 mod media_proxy;
 mod settings;
 mod wallpaper;
+mod wallpaper_engine;
+mod wallpaper_engine_native;
+mod wallpaper_engine_native_renderer;
+mod wallpaper_engine_native_windows;
+mod wallpaper_engine_scene;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -32,6 +37,12 @@ use settings::{
     load_app_settings_or_default, reset_app_settings, save_app_settings, AppSettingsState,
     MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH,
 };
+use wallpaper_engine::{host_wallpaper_engine_web_project, inspect_wallpaper_engine_project};
+use wallpaper_engine_native::{
+    activate_wallpaper_engine_native_scene, deactivate_wallpaper_engine_native_scene,
+    get_wallpaper_engine_native_status, WallpaperEngineNativeState,
+};
+use wallpaper_engine_scene::prepare_wallpaper_engine_scene_runtime;
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -567,6 +578,7 @@ pub fn run() {
         .manage(LocalNeteaseApiState::default())
         .manage(MediaProxyState::default())
         .manage(AppRuntimeState::default())
+        .manage(WallpaperEngineNativeState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
@@ -663,6 +675,12 @@ pub fn run() {
             sync_local_netease_api_server,
             get_local_netease_api_server_status,
             get_media_proxy_server_status,
+            inspect_wallpaper_engine_project,
+            host_wallpaper_engine_web_project,
+            get_wallpaper_engine_native_status,
+            activate_wallpaper_engine_native_scene,
+            deactivate_wallpaper_engine_native_scene,
+            prepare_wallpaper_engine_scene_runtime,
             is_other_app_fullscreen,
             is_middle_mouse_pressed,
             enable_wallpaper_mode,
