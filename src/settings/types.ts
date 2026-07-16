@@ -23,6 +23,7 @@ export type LyricsRenderMode = "simple" | "balanced" | "advanced";
 export type PlaybackModeOption = "ordered" | "repeat-all" | "repeat-one" | "shuffle";
 export type PlaybackCacheMode = "stream" | "complete";
 export type SongTransitionMode = "simple-mix" | "auto-mix";
+export type EqualizerPreset = "rock" | "jazz" | "light" | "pop" | "bass" | "electronic" | "vocal" | "custom";
 export type DownloadQualityOption =
   | "standard"
   | "higher"
@@ -114,6 +115,9 @@ export type PlaybackSettings = {
   songTransitionStartMs: number;
   preferRemoteStreaming: boolean;
   preferredQuality: string;
+  equalizerEnabled: boolean;
+  equalizerPreset: EqualizerPreset;
+  equalizerCustomBands: number[];
   resumeQueueTrackIds: string[];
   resumeTrackId: string | null;
 };
@@ -262,6 +266,9 @@ export const createDefaultAppSettings = (): AppSettings => ({
     songTransitionStartMs: 4000,
     preferRemoteStreaming: false,
     preferredQuality: "high",
+    equalizerEnabled: false,
+    equalizerPreset: "rock",
+    equalizerCustomBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     resumeQueueTrackIds: [],
     resumeTrackId: null,
   },

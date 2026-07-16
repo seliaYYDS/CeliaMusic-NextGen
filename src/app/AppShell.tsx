@@ -130,6 +130,7 @@ import {
   type AppSettingsSnapshot,
   type DownloadLyricsMode,
   type DownloadQualityOption,
+  type EqualizerPreset,
   type GlobalParticleEffectType,
   type ImmersiveBackgroundMode,
   type PlaybackCacheMode,
@@ -226,7 +227,30 @@ const IMMERSIVE_WALLPAPER_WINDOW_LABEL = "immersive-wallpaper";
 const IMMERSIVE_WALLPAPER_DYNAMIC_SYNC_MIN_INTERVAL_MS = 120;
 const SHORTCUT_VOLUME_STEP = 6;
 const SHORTCUT_SEEK_STEP_SECONDS = 5;
-const ENABLE_SHARED_AUDIO_WEB_PROCESSING = false;
+const ENABLE_SHARED_AUDIO_WEB_PROCESSING = true;
+const EQUALIZER_FREQUENCY_VALUES = [60, 170, 310, 600, 1000, 3000, 6000, 12000, 14000, 16000] as const;
+const EQUALIZER_PRESET_BANDS: Record<EqualizerPreset, readonly number[]> = {
+  rock: [5, 3, 1, -1, -2, 1, 4, 5, 5, 4],
+  jazz: [3, 2, 1, 2, -1, -1, 0, 2, 3, 3],
+  light: [2, 1, 0, -1, -1, 0, 1, 2, 2, 1],
+  pop: [-1, 2, 4, 3, 1, -1, -1, 1, 2, 3],
+  bass: [7, 5, 3, 1, 0, -1, -2, -3, -3, -3],
+  electronic: [5, 3, 0, -2, 1, 3, 4, 5, 4, 3],
+  vocal: [-2, -1, 0, 2, 4, 4, 2, 0, -1, -2],
+  custom: [],
+};
+
+function resolveEqualizerBands(
+  enabled: boolean,
+  preset: EqualizerPreset,
+  customBands: readonly number[],
+) {
+  const source = preset === "custom" ? customBands : EQUALIZER_PRESET_BANDS[preset];
+  return EQUALIZER_FREQUENCY_VALUES.map((_, index) => {
+    const value = enabled ? source[index] ?? 0 : 0;
+    return Math.max(-12, Math.min(12, Number.isFinite(value) ? value : 0));
+  });
+}
 const BACKGROUND_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "bmp", "gif"] as const;
 const BACKGROUND_VIDEO_EXTENSIONS = ["mp4", "webm", "mov", "m4v", "ogv"] as const;
 const NETEASE_HOME_FEED_CACHE_LIMIT = 8;
@@ -338,6 +362,7 @@ type AudioProcessingChain = {
   source: MediaElementAudioSourceNode;
   highpass: BiquadFilterNode;
   lowpass: BiquadFilterNode;
+  equalizer: BiquadFilterNode[];
   gain: GainNode;
 };
 type ShortcutKeyboardKeySpec = {
@@ -845,6 +870,15 @@ const UI_COPY = {
           rememberQueueLabel: "记住播放队列",
           rememberQueueDescription: "重新打开后恢复上次队列。",
         },
+        equalizer: {
+          title: "EQ",
+          enabledLabel: "开启均衡器",
+          presetLabel: "均衡器预设",
+          customButton: "自定义均衡器",
+          dialogTitle: "自定义均衡器",
+          dialogReset: "重置",
+          dialogClose: "关闭",
+        },
         shortcuts: {
           eyebrow: "快捷键",
           title: "键盘控制",
@@ -1251,6 +1285,15 @@ const UI_COPY = {
           songTransitionTimingHelper: "Choose how long before the end of a song the transition should begin.",
           rememberQueueLabel: "Remember Queue",
           rememberQueueDescription: "Restore the previous queue after reopening the app.",
+        },
+        equalizer: {
+          title: "EQ",
+          enabledLabel: "Enable Equalizer",
+          presetLabel: "Equalizer Preset",
+          customButton: "Custom Equalizer",
+          dialogTitle: "Custom Equalizer",
+          dialogReset: "Reset",
+          dialogClose: "Close",
         },
         shortcuts: {
           eyebrow: "Shortcuts",
@@ -1677,6 +1720,7 @@ const THEME_PRESETS: Record<Exclude<ThemePresetId, "custom">, ThemeSeed> = {
 };
 
 const PLAYBACK_RESUME_STORAGE_KEY = "celia.playback-resume";
+const EQUALIZER_FREQUENCY_BANDS = ["60 Hz", "170 Hz", "310 Hz", "600 Hz", "1 kHz", "3 kHz", "6 kHz", "12 kHz", "14 kHz", "16 kHz"];
 
 function getThemePresetOptions(locale: string): UISelectOption[] {
   if (locale === "en-US") {
@@ -5479,6 +5523,14 @@ export function AppShell({
   const isHttpLikeMediaSource = (value: string | null | undefined) =>
     typeof value === "string" && /^https?:\/\//i.test(value.trim());
 
+  const isTauriAssetMediaSource = (value: string) => {
+    try {
+      return new URL(value).hostname === "asset.localhost";
+    } catch {
+      return false;
+    }
+  };
+
   const canUseWebAudioProcessingForElement = (audio: HTMLAudioElement | null) => {
     if (!audio) {
       return false;
@@ -5489,7 +5541,24 @@ export function AppShell({
     }
 
     const mediaSource = audio.currentSrc || audio.src || "";
-    return !isHttpLikeMediaSource(mediaSource);
+    if (!mediaSource) {
+      return false;
+    }
+
+    return !isHttpLikeMediaSource(mediaSource) || isTauriAssetMediaSource(mediaSource);
+  };
+
+  const configureProcessedEqualizer = (chain: AudioProcessingChain) => {
+    const targetBands = resolveEqualizerBands(
+      settings.playback.equalizerEnabled,
+      settings.playback.equalizerPreset,
+      settings.playback.equalizerCustomBands,
+    );
+    const now = chain.gain.context.currentTime;
+
+    chain.equalizer.forEach((filter, index) => {
+      filter.gain.setTargetAtTime(targetBands[index] ?? 0, now, 0.015);
+    });
   };
 
   const ensureAudioProcessingChain = (slot: AudioSlot, audio: HTMLAudioElement | null) => {
@@ -5529,19 +5598,34 @@ export function AppShell({
 
     const gain = context.createGain();
     gain.gain.value = 1;
+    const equalizer = EQUALIZER_FREQUENCY_VALUES.map((frequency) => {
+      const filter = context.createBiquadFilter();
+      filter.type = "peaking";
+      filter.frequency.value = frequency;
+      filter.Q.value = 1.4;
+      filter.gain.value = 0;
+      return filter;
+    });
 
     sourceNode.connect(highpass);
     highpass.connect(lowpass);
-    lowpass.connect(gain);
+    let previousNode: AudioNode = lowpass;
+    equalizer.forEach((filter) => {
+      previousNode.connect(filter);
+      previousNode = filter;
+    });
+    previousNode.connect(gain);
     gain.connect(context.destination);
 
     const chain = {
       source: sourceNode,
       highpass,
       lowpass,
+      equalizer,
       gain,
     };
     audioProcessingChainBySlotRef.current[slot] = chain;
+    configureProcessedEqualizer(chain);
     return chain;
   };
 
@@ -5608,6 +5692,7 @@ export function AppShell({
     chain.gain.gain.value = volumeRef.current / 100;
     chain.highpass.frequency.value = 20;
     chain.lowpass.frequency.value = 20000;
+    configureProcessedEqualizer(chain);
     audio.volume = 1;
   };
 
@@ -6344,6 +6429,7 @@ export function AppShell({
         audio.addEventListener("loadedmetadata", handleReady);
         audio.addEventListener("error", handleError);
         audio.dataset.trackId = trackId;
+        audio.crossOrigin = "anonymous";
         audio.src = candidate;
         audio.load();
       });
@@ -8858,7 +8944,8 @@ export function AppShell({
     const isPersistedTrack = isPersistedLibraryTrack(track.id);
     const cacheMode = settingsRef.current.playback.cacheMode;
     const shouldPreferCachedPlayback =
-      settingsRef.current.playback.songTransitionMode === "auto-mix";
+      settingsRef.current.playback.songTransitionMode === "auto-mix" ||
+      (settingsRef.current.playback.equalizerEnabled && track.source.kind === "remoteStream");
     let cachedPlaybackPath = playbackCachedAudioPathsRef.current[track.id] ?? null;
 
     if (cacheMode === "complete" || shouldPreferCachedPlayback) {
@@ -8982,6 +9069,63 @@ export function AppShell({
   useEffect(() => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
+
+  useEffect(() => {
+    if (!settings.playback.equalizerEnabled || currentTrack?.source.kind !== "remoteStream") {
+      return;
+    }
+
+    const audio = getActiveAudioElement();
+    const source = audio?.currentSrc || audio?.src || "";
+    if (!audio || !isHttpLikeMediaSource(source) || isTauriAssetMediaSource(source)) {
+      return;
+    }
+
+    const playbackPosition = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const shouldResume = !audio.paused;
+    let isDisposed = false;
+
+    void ensureTrackPlaybackCache(currentTrack, { waitForCompletion: true }).then((cachedPath) => {
+      if (isDisposed || !cachedPath || getActiveAudioElement() !== audio) {
+        return;
+      }
+
+      const cachedSource = convertFileSrc(cachedPath.replace(/\\/g, "/"));
+      if (audio.currentSrc === cachedSource || audio.src === cachedSource) {
+        return;
+      }
+
+      const restorePlayback = () => {
+        audio.removeEventListener("canplay", restorePlayback);
+        if (isDisposed) {
+          return;
+        }
+
+        try {
+          audio.currentTime = Math.min(
+            playbackPosition,
+            Number.isFinite(audio.duration) ? audio.duration : playbackPosition,
+          );
+        } catch {
+          // Some media backends reject seeks before their duration is finalized.
+        }
+        setProcessedAudioGain(audio, volumeRef.current / 100);
+        if (shouldResume) {
+          void audio.play().catch(() => undefined);
+        }
+      };
+
+      audio.pause();
+      audio.crossOrigin = "anonymous";
+      audio.addEventListener("canplay", restorePlayback, { once: true });
+      audio.src = cachedSource;
+      audio.load();
+    });
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [currentTrack, settings.playback.equalizerEnabled]);
 
   useEffect(() => {
     const keepTrackIds = collectPlaybackCacheProtectedTrackIds();
@@ -9774,6 +9918,28 @@ export function AppShell({
       { slot: "primary", audio: primaryAudioRef.current },
       { slot: "secondary", audio: secondaryAudioRef.current },
     ];
+
+    audioEntries.forEach(({ slot, audio }) => {
+      if (!audio || !(audio.currentSrc || audio.src)) {
+        return;
+      }
+
+      const chain = ensureAudioProcessingChain(slot, audio);
+      if (chain) {
+        configureProcessedEqualizer(chain);
+      }
+    });
+  }, [
+    settings.playback.equalizerEnabled,
+    settings.playback.equalizerPreset,
+    settings.playback.equalizerCustomBands,
+  ]);
+
+  useEffect(() => {
+    const audioEntries: Array<{ slot: AudioSlot; audio: HTMLAudioElement | null }> = [
+      { slot: "primary", audio: primaryAudioRef.current },
+      { slot: "secondary", audio: secondaryAudioRef.current },
+    ];
     const cleanupTasks: Array<() => void> = [];
 
     for (const entry of audioEntries) {
@@ -9870,6 +10036,11 @@ export function AppShell({
       };
 
       const handlePlay = () => {
+        const context = audioContextRef.current;
+        if (context?.state === "suspended") {
+          void context.resume().catch(() => undefined);
+        }
+
         if (!isActiveAudio()) {
           return;
         }
@@ -14893,6 +15064,7 @@ export function AppShell({
         downloadLyricsModeOptions={downloadLyricsModeOptions}
         playbackCacheModeOptions={playbackCacheModeOptions}
         settings={settings}
+        themeStyle={themeStyle}
         isLoading={isSettingsLoading}
         isSaving={isSettingsSaving}
         isTestingNeteaseApi={isTestingNeteaseApi}
@@ -15637,8 +15809,8 @@ export function AppShell({
         ) : null}
 
         <div className="playbar-shell">
-          <audio ref={primaryAudioRef} preload="metadata" />
-          <audio ref={secondaryAudioRef} preload="metadata" />
+          <audio ref={primaryAudioRef} crossOrigin="anonymous" preload="metadata" />
+          <audio ref={secondaryAudioRef} crossOrigin="anonymous" preload="metadata" />
           {autoMixBadgePhase !== "hidden" ? (
             <div
               id="playbar-automix-floating-badge"
@@ -17165,6 +17337,7 @@ function SettingsScreen({
   downloadLyricsModeOptions,
   playbackCacheModeOptions,
   settings,
+  themeStyle,
   isLoading,
   isSaving,
   isTestingNeteaseApi,
@@ -17192,6 +17365,7 @@ function SettingsScreen({
   downloadLyricsModeOptions: UISelectOption[];
   playbackCacheModeOptions: UISelectOption[];
   settings: AppSettings;
+  themeStyle: CSSProperties;
   isLoading: boolean;
   isSaving: boolean;
   isTestingNeteaseApi: boolean;
@@ -17234,6 +17408,7 @@ function SettingsScreen({
   const [neteaseAccountError, setNeteaseAccountError] = useState<string | null>(null);
   const [isReleasingMemoryCache, setIsReleasingMemoryCache] = useState(false);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
+  const [isEqualizerDialogOpen, setIsEqualizerDialogOpen] = useState(false);
   const [isDeferredSettingsContentReady, setIsDeferredSettingsContentReady] = useState(false);
   const [systemFontFamilies, setSystemFontFamilies] = useState<string[]>([]);
   const [isLoadingSystemFonts, setIsLoadingSystemFonts] = useState(false);
@@ -17810,6 +17985,14 @@ function SettingsScreen({
     settings.playback.songTransitionMode,
     settings.playback.songTransitionStartMs,
     settings.playback.rememberQueue,
+  ]);
+  const showEqualizerSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.settings.sections.equalizer.title,
+    copy.settings.sections.equalizer.enabledLabel,
+    copy.settings.sections.equalizer.presetLabel,
+    copy.settings.sections.equalizer.customButton,
+    settings.playback.equalizerEnabled,
+    settings.playback.equalizerPreset,
   ]);
   const showShortcutsSection = !isSearchingSettings || matchesSettingsSearch([
     copy.settings.sections.shortcuts.title,
@@ -19977,6 +20160,96 @@ function SettingsScreen({
         </section>
         ) : null}
 
+        {shouldRenderSecondarySettingsSections && showEqualizerSection ? (
+          <section className="settings-card">
+            <div className="settings-card__header">
+              <div>
+                <h3 className="settings-card__title">{copy.settings.sections.equalizer.title}</h3>
+              </div>
+            </div>
+            <div className="settings-card__body">
+              <UISwitch
+                label={copy.settings.sections.equalizer.enabledLabel}
+                checked={settings.playback.equalizerEnabled}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    playback: {
+                      ...current.playback,
+                      equalizerEnabled: checked,
+                    },
+                  }))
+                }
+              />
+              {settings.playback.equalizerEnabled ? (
+                <>
+                  <UISelect
+                    label={copy.settings.sections.equalizer.presetLabel}
+                    value={settings.playback.equalizerPreset}
+                    options={[
+                      { label: copy.locale === "en-US" ? "Rock" : "摇滚", value: "rock" },
+                      { label: copy.locale === "en-US" ? "Jazz" : "爵士", value: "jazz" },
+                      { label: copy.locale === "en-US" ? "Light Music" : "轻音乐", value: "light" },
+                      { label: copy.locale === "en-US" ? "Pop" : "流行", value: "pop" },
+                      { label: copy.locale === "en-US" ? "Bass" : "低音", value: "bass" },
+                      { label: copy.locale === "en-US" ? "Electronic" : "电音", value: "electronic" },
+                      { label: copy.locale === "en-US" ? "Vocal" : "人声", value: "vocal" },
+                      { label: copy.locale === "en-US" ? "Custom" : "自定义", value: "custom" },
+                    ]}
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        playback: {
+                          ...current.playback,
+                          equalizerPreset: value as EqualizerPreset,
+                        },
+                      }))
+                    }
+                  />
+                  {settings.playback.equalizerPreset === "custom" ? (
+                    <div className="settings-inline-actions">
+                      <UIButton variant="secondary" onClick={() => setIsEqualizerDialogOpen(true)}>
+                        {copy.settings.sections.equalizer.customButton}
+                      </UIButton>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {isEqualizerDialogOpen ? (
+          <EqualizerDialog
+            title={copy.settings.sections.equalizer.dialogTitle}
+            resetLabel={copy.settings.sections.equalizer.dialogReset}
+            closeLabel={copy.settings.sections.equalizer.dialogClose}
+            bands={settings.playback.equalizerCustomBands}
+            themeStyle={themeStyle}
+            onChange={(index, value) =>
+              onUpdate((current) => ({
+                ...current,
+                playback: {
+                  ...current.playback,
+                  equalizerCustomBands: current.playback.equalizerCustomBands.map((band, bandIndex) =>
+                    bandIndex === index ? Math.round(value) : band,
+                  ),
+                },
+              }))
+            }
+            onReset={() =>
+              onUpdate((current) => ({
+                ...current,
+                playback: {
+                  ...current.playback,
+                  equalizerCustomBands: Array.from({ length: 10 }, () => 0),
+                },
+              }))
+            }
+            onClose={() => setIsEqualizerDialogOpen(false)}
+          />
+        ) : null}
+
         {shouldRenderSecondarySettingsSections && showShortcutsSection ? (
           <ShortcutSettingsSection copy={copy} bindings={settings.shortcuts} onUpdate={onUpdate} />
         ) : null}
@@ -21479,6 +21752,203 @@ function applySettingsSearchVisibility(root: HTMLElement, normalizedQuery: strin
       setElementHidden(element, true);
     }
   });
+}
+
+function EqualizerDialog({
+  title,
+  resetLabel,
+  closeLabel,
+  bands,
+  themeStyle,
+  onChange,
+  onReset,
+  onClose,
+}: {
+  title: string;
+  resetLabel: string;
+  closeLabel: string;
+  bands: number[];
+  themeStyle: CSSProperties;
+  onChange: (index: number, value: number) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+
+  const requestClose = () => {
+    if (isClosing) {
+      return;
+    }
+
+    setIsClosing(true);
+    closeTimerRef.current = window.setTimeout(onClose, 180);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        requestClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  });
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className={["equalizer-dialog-backdrop", isClosing ? "equalizer-dialog-backdrop--closing" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      style={themeStyle}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          requestClose();
+        }
+      }}
+    >
+      <section
+        className={["equalizer-dialog", isClosing ? "equalizer-dialog--closing" : ""]
+          .filter(Boolean)
+          .join(" ")}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className="equalizer-dialog__header">
+          <h3 className="settings-card__title">{title}</h3>
+          <div className="equalizer-dialog__actions">
+            <UIButton className="equalizer-dialog__action" variant="ghost" size="sm" onClick={onReset}>
+              {resetLabel}
+            </UIButton>
+            <UIButton className="equalizer-dialog__action" variant="secondary" size="sm" onClick={requestClose}>
+              {closeLabel}
+            </UIButton>
+          </div>
+        </div>
+        <div className="equalizer-visualizer" aria-hidden="true">
+          <span className="equalizer-visualizer__zero" />
+          {EQUALIZER_FREQUENCY_BANDS.map((frequency, index) => {
+            const value = clampNumber(Math.round(bands[index] ?? 0), -12, 12);
+            return (
+              <span key={frequency} className="equalizer-visualizer__column">
+                <span
+                  className={[
+                    "equalizer-visualizer__bar",
+                    value < 0 ? "equalizer-visualizer__bar--negative" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  style={{ height: `${Math.abs(value / 12) * 46}%` }}
+                />
+              </span>
+            );
+          })}
+        </div>
+        <div className="equalizer-dialog__bands">
+          {EQUALIZER_FREQUENCY_BANDS.map((frequency, index) => (
+            <EqualizerBandSlider
+              key={frequency}
+              frequency={frequency}
+              value={bands[index] ?? 0}
+              onChange={(value) => onChange(index, value)}
+            />
+          ))}
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+function EqualizerBandSlider({
+  frequency,
+  value,
+  onChange,
+}: {
+  frequency: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const trackRef = useRef<HTMLSpanElement | null>(null);
+  const normalizedValue = clampNumber(Math.round(value), -12, 12);
+  const thumbPosition = ((normalizedValue + 12) / 24) * 100;
+
+  const updateValueFromPosition = (clientY: number) => {
+    const track = trackRef.current;
+    if (!track) {
+      return;
+    }
+
+    const rect = track.getBoundingClientRect();
+    const ratio = rect.height === 0 ? 0.5 : clamp01(1 - (clientY - rect.top) / rect.height);
+    onChange(Math.round(-12 + ratio * 24));
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateValueFromPosition(event.clientY);
+  };
+
+  return (
+    <div className="equalizer-band">
+      <span className="equalizer-band__frequency">{frequency}</span>
+      <span
+        ref={trackRef}
+        className="equalizer-band__track"
+        role="slider"
+        tabIndex={0}
+        aria-label={frequency}
+        aria-valuemin={-12}
+        aria-valuemax={12}
+        aria-valuenow={normalizedValue}
+        onPointerDown={handlePointerDown}
+        onPointerMove={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            updateValueFromPosition(event.clientY);
+          }
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onPointerCancel={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onKeyDown={(event) => {
+          const delta = event.key === "ArrowUp" || event.key === "ArrowRight" ? 1 : event.key === "ArrowDown" || event.key === "ArrowLeft" ? -1 : 0;
+          if (delta !== 0) {
+            event.preventDefault();
+            onChange(clampNumber(normalizedValue + delta, -12, 12));
+          }
+        }}
+      >
+        <span className="equalizer-band__rail" />
+        <span className="equalizer-band__thumb" style={{ bottom: `${thumbPosition}%` }} />
+      </span>
+      <span className="equalizer-band__value">{normalizedValue > 0 ? "+" : ""}{normalizedValue} dB</span>
+    </div>
+  );
 }
 
 function SettingsSearchItem({

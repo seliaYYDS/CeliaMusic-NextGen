@@ -163,6 +163,20 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
       defaultVolume: clampInteger(settings.playback.defaultVolume, 0, 100),
       systemMediaInfoSync: Boolean(settings.playback.systemMediaInfoSync),
       songTransitionStartMs: clampInteger(settings.playback.songTransitionStartMs, 1000, 12000),
+      equalizerEnabled: Boolean(settings.playback.equalizerEnabled),
+      equalizerPreset:
+        settings.playback.equalizerPreset === "jazz" ||
+        settings.playback.equalizerPreset === "light" ||
+        settings.playback.equalizerPreset === "pop" ||
+        settings.playback.equalizerPreset === "bass" ||
+        settings.playback.equalizerPreset === "electronic" ||
+        settings.playback.equalizerPreset === "vocal" ||
+        settings.playback.equalizerPreset === "custom"
+          ? settings.playback.equalizerPreset
+          : "rock",
+      equalizerCustomBands: Array.from({ length: 10 }, (_, index) =>
+        clampInteger(settings.playback.equalizerCustomBands?.[index] ?? 0, -12, 12),
+      ),
     },
     network: {
       ...settings.network,

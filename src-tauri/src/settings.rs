@@ -223,6 +223,9 @@ pub struct PlaybackSettings {
     pub spectrum_animation: String,
     pub prefer_remote_streaming: bool,
     pub preferred_quality: String,
+    pub equalizer_enabled: bool,
+    pub equalizer_preset: String,
+    pub equalizer_custom_bands: Vec<i8>,
     pub resume_queue_track_ids: Vec<String>,
     pub resume_track_id: Option<String>,
     pub resume_track_position_ms: u32,
@@ -251,6 +254,9 @@ impl Default for PlaybackSettings {
             spectrum_animation: "smooth".to_string(),
             prefer_remote_streaming: false,
             preferred_quality: "high".to_string(),
+            equalizer_enabled: false,
+            equalizer_preset: "rock".to_string(),
+            equalizer_custom_bands: vec![0; 10],
             resume_queue_track_ids: Vec::new(),
             resume_track_id: None,
             resume_track_position_ms: 0,
@@ -573,6 +579,14 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     );
     settings.playback.song_transition_start_ms =
         settings.playback.song_transition_start_ms.clamp(1000, 12000);
+    settings.playback.equalizer_preset = sanitize_limited_value(
+        settings.playback.equalizer_preset,
+        &["rock", "jazz", "light", "pop", "bass", "electronic", "vocal", "custom"],
+        "rock",
+    );
+    settings.playback.equalizer_custom_bands = (0..10)
+        .map(|index| settings.playback.equalizer_custom_bands.get(index).copied().unwrap_or(0).clamp(-12, 12))
+        .collect();
     settings.playback.spectrum_position = sanitize_limited_value(
         settings.playback.spectrum_position,
         &[
