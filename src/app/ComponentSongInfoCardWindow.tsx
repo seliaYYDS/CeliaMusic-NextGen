@@ -45,19 +45,14 @@ const EMPTY_SNAPSHOT: ComponentSongInfoCardSnapshot = {
 const SEPARATED_TOP_OFFSET = 18;
 const WINDOW_MEASURE_PADDING_X = 16;
 const WINDOW_MEASURE_PADDING_BOTTOM = 16;
-const CARD_BODY_HEIGHT = 96;
-const BOX_CARD_BODY_HEIGHT = 246;
+const CARD_BODY_HEIGHT = 100;
+const COMPACT_CARD_BODY_HEIGHT = 88;
+const MINIMAL_CARD_BODY_HEIGHT = 76;
+const BOX_CARD_BODY_HEIGHT = 296;
 const HIDE_NEARBY_THRESHOLD_PX = 72;
 const DEFAULT_CARD_WIDTH = 452;
-const DEFAULT_CARD_MIN_WIDTH = 400;
-const DEFAULT_CARD_MAX_WIDTH = 540;
 const MINIMAL_CARD_WIDTH = 360;
-const MINIMAL_CARD_MIN_WIDTH = 320;
-const MINIMAL_CARD_MAX_WIDTH = 460;
 const BOX_CARD_WIDTH = 220;
-const BOX_CARD_MIN_WIDTH = 220;
-const BOX_CARD_MAX_WIDTH = 260;
-const CARD_BODY_CONTENT_PADDING_X = 16;
 
 type CardPalette = {
   background: string;
@@ -235,27 +230,21 @@ function resolveCardPalette(
 function getCardMetrics(style: ComponentSongInfoCardSettings["style"]) {
   if (style === "box") {
     return {
-      defaultWidth: BOX_CARD_WIDTH,
-      minWidth: BOX_CARD_MIN_WIDTH,
-      maxWidth: BOX_CARD_MAX_WIDTH,
+      width: BOX_CARD_WIDTH,
       bodyHeight: BOX_CARD_BODY_HEIGHT,
     };
   }
 
   if (style === "minimal") {
     return {
-      defaultWidth: MINIMAL_CARD_WIDTH,
-      minWidth: MINIMAL_CARD_MIN_WIDTH,
-      maxWidth: MINIMAL_CARD_MAX_WIDTH,
-      bodyHeight: CARD_BODY_HEIGHT,
+      width: MINIMAL_CARD_WIDTH,
+      bodyHeight: MINIMAL_CARD_BODY_HEIGHT,
     };
   }
 
   return {
-    defaultWidth: DEFAULT_CARD_WIDTH,
-    minWidth: DEFAULT_CARD_MIN_WIDTH,
-    maxWidth: DEFAULT_CARD_MAX_WIDTH,
-    bodyHeight: CARD_BODY_HEIGHT,
+    width: DEFAULT_CARD_WIDTH,
+    bodyHeight: style === "compact" ? COMPACT_CARD_BODY_HEIGHT : CARD_BODY_HEIGHT,
   };
 }
 
@@ -286,21 +275,17 @@ export function ComponentSongInfoCardWindow() {
   const [isHiddenForMainWindow, setIsHiddenForMainWindow] = useState(false);
   const [isHiddenForFullscreenApp, setIsHiddenForFullscreenApp] = useState(false);
   const metrics = getCardMetrics(settings.style);
-  const [bodyWidth, setBodyWidth] = useState(metrics.defaultWidth);
   const [isDragHintVisible, setIsDragHintVisible] = useState(false);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [hasCustomPosition, setHasCustomPosition] = useState(() => readComponentSongInfoCardPosition() !== null);
   const palette = resolveCardPalette(settings, snapshot);
   const scale = settings.scale / 100;
+  const bodyWidth = metrics.width;
+  const bodyHeight = metrics.bodyHeight;
   const hasActivePlayback = snapshot.hasTrack && snapshot.isPlaying;
   const metaLabel = snapshot.artist?.trim() || snapshot.album?.trim() || "等待歌曲开始播放";
   const titleLabel = snapshot.hasTrack ? snapshot.title : "暂无播放";
   const progressValue = snapshot.hasTrack ? Math.max(0, Math.min(100, snapshot.progress)) : 0;
-  const measuredBodyNode =
-    typeof document !== "undefined"
-      ? (document.querySelector(".component-song-info-card__body") as HTMLDivElement | null)
-      : null;
-  const bodyHeight = measuredBodyNode ? Math.ceil(measuredBodyNode.scrollHeight) : metrics.bodyHeight;
 
   useEffect(() => {
     document.documentElement.style.background = "transparent";
@@ -355,44 +340,6 @@ export function ComponentSongInfoCardWindow() {
   }, [currentWindow]);
 
   useEffect(() => {
-    const updateBodyWidth = () => {
-      const selector =
-        settings.style === "box"
-          ? ".component-song-info-card__measure-box"
-          : settings.style === "minimal"
-            ? ".component-song-info-card__measure-minimal"
-            : ".component-song-info-card__measure-playback";
-      const measureNode = document.querySelector(selector) as HTMLDivElement | null;
-
-      const nextWidth = clampNumber(
-        Math.ceil((measureNode?.scrollWidth ?? metrics.defaultWidth) + CARD_BODY_CONTENT_PADDING_X),
-        metrics.minWidth,
-        metrics.maxWidth,
-      );
-
-      setBodyWidth((current) => (current === nextWidth ? current : nextWidth));
-    };
-
-    updateBodyWidth();
-    const frameId = window.requestAnimationFrame(updateBodyWidth);
-    const resizeTimer = window.setTimeout(updateBodyWidth, 120);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      window.clearTimeout(resizeTimer);
-    };
-  }, [
-    metaLabel,
-    metrics.defaultWidth,
-    metrics.maxWidth,
-    metrics.minWidth,
-    settings.style,
-    snapshot.durationLabel,
-    snapshot.elapsedLabel,
-    titleLabel,
-  ]);
-
-  useEffect(() => {
     const syncWindowBounds = async () => {
       const monitor = await currentMonitor().catch(() => null);
       if (!monitor) {
@@ -402,10 +349,8 @@ export function ComponentSongInfoCardWindow() {
       const scaleFactor = await currentWindow.scaleFactor().catch(() => monitor.scaleFactor);
       const monitorPosition = monitor.position.toLogical(scaleFactor);
       const monitorSize = monitor.size.toLogical(scaleFactor);
-      const windowWidth = Math.ceil(metrics.maxWidth * scale) + (WINDOW_MEASURE_PADDING_X * 2);
-      const measuredBodyHeight = bodyHeight;
-      const windowHeight =
-        Math.ceil(Math.max(bodyHeight, measuredBodyHeight) * scale) + WINDOW_MEASURE_PADDING_BOTTOM;
+      const windowWidth = Math.ceil(bodyWidth * scale) + (WINDOW_MEASURE_PADDING_X * 2);
+      const windowHeight = Math.ceil(bodyHeight * scale) + WINDOW_MEASURE_PADDING_BOTTOM;
       const centeredX = monitorPosition.x + Math.max(0, (monitorSize.width - windowWidth) / 2);
       const topOffset = monitorPosition.y + SEPARATED_TOP_OFFSET;
       const savedPosition = readComponentSongInfoCardPosition();
@@ -429,7 +374,7 @@ export function ComponentSongInfoCardWindow() {
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [bodyHeight, currentWindow, hasCustomPosition, metrics.maxWidth, scale]);
+  }, [bodyHeight, bodyWidth, currentWindow, hasCustomPosition, scale]);
 
   useEffect(() => {
     let disposed = false;
@@ -649,6 +594,7 @@ export function ComponentSongInfoCardWindow() {
           {
             "--component-song-info-card-scale": String(scale),
             "--component-song-info-card-width": `${bodyWidth}px`,
+            "--component-song-info-card-height": `${bodyHeight}px`,
             "--component-song-info-card-bg": palette.background,
             "--component-song-info-card-bg-secondary": palette.backgroundSecondary,
             "--component-song-info-card-gradient-start": palette.gradientStart,

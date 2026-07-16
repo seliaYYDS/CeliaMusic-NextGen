@@ -32,10 +32,19 @@ import {
   type ComponentSongInfoCardSettings,
   type ComponentSongInfoCardStyle,
 } from "./componentSongInfoCardSync";
+import {
+  COMPONENT_LYRICS_DISPLAY_WINDOW_LABEL,
+  clearComponentLyricsDisplayPosition,
+  emitComponentLyricsDisplaySettings,
+  openComponentLyricsDisplayWindow,
+  readComponentLyricsDisplaySettings,
+  writeComponentLyricsDisplaySettings,
+  type ComponentLyricsDisplaySettings,
+} from "./componentLyricsDisplaySync";
 import "./styles.css";
 import "./component-windows.css";
 
-type ComponentControlPage = "list" | "dynamic-island" | "song-info-card";
+type ComponentControlPage = "list" | "dynamic-island" | "song-info-card" | "lyrics-display";
 
 const COMPONENT_HUB_COPY = {
   title: "组件控制窗口",
@@ -70,6 +79,34 @@ const COMPONENT_HUB_COPY = {
   songInfoCardColorMode: "卡片配色",
   songInfoCardBackgroundMode: "背景模式",
   songInfoCardResetPosition: "重置卡片位置",
+  lyricsDisplayTitle: "歌词显示",
+  lyricsDisplayDescription: "开启独立的歌词显示窗口。",
+  lyricsDisplayEnabled: "开启歌词显示",
+  lyricsDisplayAlwaysOnTop: "歌词置顶",
+  lyricsDisplayHideOnMouseNearby: "鼠标靠近时隐藏",
+  lyricsDisplayHideWhenMainWindowVisible: "主窗口显示时隐藏",
+  lyricsDisplayHideWhenOtherAppsFullscreen: "其他应用全屏时隐藏",
+  lyricsDisplayHideWhenIdle: "无播放时隐藏",
+  lyricsDisplayScale: "歌词缩放",
+  lyricsDisplayAlignment: "歌词对齐方式",
+  lyricsDisplayFontSize: "歌词字体大小",
+  lyricsDisplayHeight: "歌词显示窗口高度",
+  lyricsDisplayTextShadow: "歌词阴影",
+  lyricsDisplayTextShadowIntensity: "歌词阴影强度",
+  lyricsDisplayGlow: "歌词发光",
+  lyricsDisplayGlowIntensity: "歌词发光强度",
+  lyricsDisplayScrollDelay: "歌词滚动延迟",
+  lyricsDisplayAnimationSpeed: "动画速度",
+  lyricsDisplayWordLyrics: "开启逐字歌词",
+  lyricsDisplayFadeLength: "歌词淡出长度",
+  lyricsDisplayLineGap: "歌词间距",
+  lyricsDisplayWidth: "歌词显示窗口宽度",
+  lyricsDisplayResetPosition: "重置歌词窗口位置",
+  lyricsDisplayAlignmentOptions: [
+    { value: "left", label: "左" },
+    { value: "center", label: "中" },
+    { value: "right", label: "右" },
+  ] satisfies UISelectOption[],
   cards: [
     { id: "dynamic-island", title: "灵动岛" },
     { id: "song-info-card", title: "歌曲信息卡片" },
@@ -119,6 +156,9 @@ export function ComponentControlWindow() {
   );
   const [songInfoCardSettings, setSongInfoCardSettings] = useState<ComponentSongInfoCardSettings>(
     () => readComponentSongInfoCardSettings(),
+  );
+  const [lyricsDisplaySettings, setLyricsDisplaySettings] = useState<ComponentLyricsDisplaySettings>(
+    () => readComponentLyricsDisplaySettings(),
   );
 
   useEffect(() => {
@@ -188,6 +228,46 @@ export function ComponentControlWindow() {
     };
 
     await persistSongInfoCardSettings(nextSettings);
+  };
+
+  const persistLyricsDisplaySettings = async (nextSettings: ComponentLyricsDisplaySettings) => {
+    setLyricsDisplaySettings(nextSettings);
+    writeComponentLyricsDisplaySettings(nextSettings);
+    const lyricsWindow = await WebviewWindow.getByLabel(COMPONENT_LYRICS_DISPLAY_WINDOW_LABEL).catch(
+      () => null,
+    );
+
+    if (nextSettings.enabled) {
+      if (!lyricsWindow) {
+        await openComponentLyricsDisplayWindow().catch(() => undefined);
+      }
+      await emitComponentLyricsDisplaySettings(nextSettings).catch(() => undefined);
+      return;
+    }
+
+    if (lyricsWindow) {
+      await emitComponentLyricsDisplaySettings(nextSettings).catch(() => undefined);
+      await lyricsWindow.destroy().catch(() => undefined);
+    }
+  };
+
+  const updateLyricsDisplaySettings = async (patch: Partial<ComponentLyricsDisplaySettings>) => {
+    await persistLyricsDisplaySettings({ ...lyricsDisplaySettings, ...patch });
+  };
+
+  const handleResetLyricsDisplayPosition = async () => {
+    clearComponentLyricsDisplayPosition();
+    const lyricsWindow = await WebviewWindow.getByLabel(COMPONENT_LYRICS_DISPLAY_WINDOW_LABEL).catch(
+      () => null,
+    );
+    if (lyricsWindow) {
+      await lyricsWindow.destroy().catch(() => undefined);
+    }
+
+    if (lyricsDisplaySettings.enabled) {
+      await openComponentLyricsDisplayWindow().catch(() => undefined);
+      await emitComponentLyricsDisplaySettings(lyricsDisplaySettings).catch(() => undefined);
+    }
   };
 
   const handleResetSongInfoCardPosition = async () => {
@@ -339,6 +419,8 @@ export function ComponentControlWindow() {
                           setPage("dynamic-island");
                         } else if (card.id === "song-info-card") {
                           setPage("song-info-card");
+                        } else if (card.id === "lyrics-display") {
+                          setPage("lyrics-display");
                         }
                       }}
                     >
@@ -591,6 +673,61 @@ export function ComponentControlWindow() {
                     }}
                   >
                     {COMPONENT_HUB_COPY.songInfoCardResetPosition}
+                  </UIButton>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {page === "lyrics-display" ? (
+            <div className="component-control-window__page">
+              <button
+                type="button"
+                className="component-control-window__back-button"
+                onClick={() => setPage("list")}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M9.5 3.5 5 8l4.5 4.5" />
+                </svg>
+                <span>{COMPONENT_HUB_COPY.backLabel}</span>
+              </button>
+
+              <div className="component-control-window__page-section">
+                <div className="component-control-window__section-copy">
+                  <h2>{COMPONENT_HUB_COPY.lyricsDisplayTitle}</h2>
+                  <p>{COMPONENT_HUB_COPY.lyricsDisplayDescription}</p>
+                </div>
+
+                <div className="component-control-window__settings-stack">
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayEnabled} checked={lyricsDisplaySettings.enabled} onChange={(enabled) => { void updateLyricsDisplaySettings({ enabled }); }} />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayWidth} value={lyricsDisplaySettings.width} min={360} max={900} step={10} valueSuffix="px" onChange={(width) => { void updateLyricsDisplaySettings({ width }); }} />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayHeight} value={lyricsDisplaySettings.height} min={480} max={1080} step={10} valueSuffix="px" onChange={(height) => { void updateLyricsDisplaySettings({ height }); }} />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayScale} value={lyricsDisplaySettings.scale} min={70} max={160} step={1} valueSuffix="%" onChange={(scale) => { void updateLyricsDisplaySettings({ scale }); }} />
+                  <UISelect
+                    label={COMPONENT_HUB_COPY.lyricsDisplayAlignment}
+                    options={COMPONENT_HUB_COPY.lyricsDisplayAlignmentOptions as UISelectOption[]}
+                    value={lyricsDisplaySettings.alignment}
+                    onChange={(alignment) => {
+                      void updateLyricsDisplaySettings({ alignment: alignment as ComponentLyricsDisplaySettings["alignment"] });
+                    }}
+                  />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayFontSize} value={lyricsDisplaySettings.fontSize} min={16} max={48} step={1} valueSuffix="px" onChange={(fontSize) => { void updateLyricsDisplaySettings({ fontSize }); }} />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayLineGap} value={lyricsDisplaySettings.lineGap} min={0} max={48} step={1} valueSuffix="px" onChange={(lineGap) => { void updateLyricsDisplaySettings({ lineGap }); }} />
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayWordLyrics} checked={lyricsDisplaySettings.wordLyricsEnabled} onChange={(wordLyricsEnabled) => { void updateLyricsDisplaySettings({ wordLyricsEnabled }); }} />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayFadeLength} value={lyricsDisplaySettings.fadeLength} min={1} max={8} step={1} onChange={(fadeLength) => { void updateLyricsDisplaySettings({ fadeLength }); }} />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayScrollDelay} value={lyricsDisplaySettings.scrollDelayMs} min={0} max={240} step={5} valueSuffix="ms" onChange={(scrollDelayMs) => { void updateLyricsDisplaySettings({ scrollDelayMs }); }} />
+                  <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayAnimationSpeed} value={lyricsDisplaySettings.animationSpeed} min={50} max={200} step={1} valueSuffix="%" onChange={(animationSpeed) => { void updateLyricsDisplaySettings({ animationSpeed }); }} />
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayTextShadow} checked={lyricsDisplaySettings.textShadow} onChange={(textShadow) => { void updateLyricsDisplaySettings({ textShadow }); }} />
+                  {lyricsDisplaySettings.textShadow ? <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayTextShadowIntensity} value={lyricsDisplaySettings.textShadowIntensity} min={0} max={100} step={1} valueSuffix="%" onChange={(textShadowIntensity) => { void updateLyricsDisplaySettings({ textShadowIntensity }); }} /> : null}
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayGlow} checked={lyricsDisplaySettings.glow} onChange={(glow) => { void updateLyricsDisplaySettings({ glow }); }} />
+                  {lyricsDisplaySettings.glow ? <UISlider label={COMPONENT_HUB_COPY.lyricsDisplayGlowIntensity} value={lyricsDisplaySettings.glowIntensity} min={0} max={100} step={1} valueSuffix="%" onChange={(glowIntensity) => { void updateLyricsDisplaySettings({ glowIntensity }); }} /> : null}
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayAlwaysOnTop} checked={lyricsDisplaySettings.alwaysOnTop} onChange={(alwaysOnTop) => { void updateLyricsDisplaySettings({ alwaysOnTop }); }} />
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayHideOnMouseNearby} checked={lyricsDisplaySettings.hideOnMouseNearby} onChange={(hideOnMouseNearby) => { void updateLyricsDisplaySettings({ hideOnMouseNearby }); }} />
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayHideWhenMainWindowVisible} checked={lyricsDisplaySettings.hideWhenMainWindowVisible} onChange={(hideWhenMainWindowVisible) => { void updateLyricsDisplaySettings({ hideWhenMainWindowVisible }); }} />
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayHideWhenOtherAppsFullscreen} checked={lyricsDisplaySettings.hideWhenOtherAppsFullscreen} onChange={(hideWhenOtherAppsFullscreen) => { void updateLyricsDisplaySettings({ hideWhenOtherAppsFullscreen }); }} />
+                  <UISwitch label={COMPONENT_HUB_COPY.lyricsDisplayHideWhenIdle} checked={lyricsDisplaySettings.hideWhenIdle} onChange={(hideWhenIdle) => { void updateLyricsDisplaySettings({ hideWhenIdle }); }} />
+                  <UIButton variant="secondary" onClick={() => { void handleResetLyricsDisplayPosition(); }}>
+                    {COMPONENT_HUB_COPY.lyricsDisplayResetPosition}
                   </UIButton>
                 </div>
               </div>

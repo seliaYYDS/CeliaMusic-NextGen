@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AppShell } from "./app/AppShell";
 import { ComponentControlWindow } from "./app/ComponentControlWindow";
 import { ComponentDynamicIslandWindow } from "./app/ComponentDynamicIslandWindow";
+import { ComponentLyricsDisplayWindow } from "./app/ComponentLyricsDisplayWindow";
 import { ComponentSongInfoCardWindow } from "./app/ComponentSongInfoCardWindow";
 import { ImmersiveWallpaperWindow } from "./app/ImmersiveWallpaperWindow";
 import { bootstrapMediaLibrary } from "./media/bootstrap";
@@ -14,6 +15,7 @@ import { getAppSettings } from "./settings/store";
 const SPECIAL_WINDOW_KINDS = [
   "component-control",
   "component-dynamic-island",
+  "component-lyrics-display",
   "component-song-info-card",
   "immersive-wallpaper",
 ] as const;
@@ -116,6 +118,10 @@ function App() {
 
   if (currentWindowKind === "component-dynamic-island") {
     return <ComponentDynamicIslandWindow />;
+  }
+
+  if (currentWindowKind === "component-lyrics-display") {
+    return <ComponentLyricsDisplayWindow />;
   }
 
   if (currentWindowKind === "component-song-info-card") {

@@ -152,6 +152,12 @@ import {
   type ComponentSongInfoCardSnapshot,
 } from "./componentSongInfoCardSync";
 import {
+  emitComponentLyricsDisplaySettings,
+  emitComponentLyricsDisplaySnapshot,
+  openComponentLyricsDisplayWindow,
+  readComponentLyricsDisplaySettings,
+} from "./componentLyricsDisplaySync";
+import {
   findBestKugouTrackMatch,
   parseKugouPlaylistJson,
   readKugouPlaylistFile,
@@ -367,6 +373,7 @@ type AudioProcessingChain = {
 };
 type ShortcutKeyboardKeySpec = {
   key: string;
+  groupAfter?: boolean;
   width?:
     | "xs"
     | "sm"
@@ -385,15 +392,15 @@ type ShortcutKeyboardKeySpec = {
 };
 
 const KEYBOARD_FUNCTION_ROW: ShortcutKeyboardKeySpec[] = [
-  { key: "Escape", width: "md" },
+  { key: "Escape", width: "md", groupAfter: true },
   { key: "F1", width: "xs" },
   { key: "F2", width: "xs" },
   { key: "F3", width: "xs" },
-  { key: "F4", width: "xs" },
+  { key: "F4", width: "xs", groupAfter: true },
   { key: "F5", width: "xs" },
   { key: "F6", width: "xs" },
   { key: "F7", width: "xs" },
-  { key: "F8", width: "xs" },
+  { key: "F8", width: "xs", groupAfter: true },
   { key: "F9", width: "xs" },
   { key: "F10", width: "xs" },
   { key: "F11", width: "xs" },
@@ -5641,7 +5648,8 @@ export function AppShell({
       return;
     }
 
-    const chain = ensureAudioProcessingChain(slot, audio);
+    // A reused media element can retain a processing chain after its source changes.
+    const chain = audioProcessingChainBySlotRef.current[slot] ?? ensureAudioProcessingChain(slot, audio);
     if (chain) {
       chain.gain.gain.value = normalizedValue;
       audio.volume = 1;
@@ -5683,7 +5691,7 @@ export function AppShell({
       return;
     }
 
-    const chain = ensureAudioProcessingChain(slot, audio);
+    const chain = audioProcessingChainBySlotRef.current[slot] ?? ensureAudioProcessingChain(slot, audio);
     if (!chain) {
       audio.volume = volumeRef.current / 100;
       return;
@@ -8149,6 +8157,17 @@ export function AppShell({
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    const componentLyricsDisplaySettings = readComponentLyricsDisplaySettings();
+    if (!componentLyricsDisplaySettings.enabled) {
+      return;
+    }
+
+    void openComponentLyricsDisplayWindow()
+      .then(() => emitComponentLyricsDisplaySettings(componentLyricsDisplaySettings))
+      .catch(() => undefined);
+  }, []);
+
   const buildComponentDynamicIslandSnapshot = (): ComponentDynamicIslandSnapshot => {
     const componentIslandThemeStyle = themeStyle as CSSProperties & Record<string, string | undefined>;
     const displayTrackId = playbarDisplayTrackIdRef.current;
@@ -8297,6 +8316,29 @@ export function AppShell({
         };
   };
 
+  const buildComponentLyricsDisplaySnapshot = () => {
+    const lines = currentTrackLyricsLines
+      .map((line, originalIndex) => ({
+        originalIndex,
+        text: line.text.trim(),
+        translatedText: line.translatedText?.trim() || null,
+        words: line.words.map((word) => ({
+          text: word.text,
+          startTimeMs: word.startTimeMs,
+          endTimeMs: word.endTimeMs,
+        })),
+      }))
+      .filter((line) => line.text.length > 0);
+    const activeLineIndex = lines.findIndex((line) => line.originalIndex === activeLyricLineIndex);
+
+    return {
+      isPlaying: isPlayingRef.current,
+      lines: lines.map(({ text, translatedText, words }) => ({ text, translatedText, words })),
+      activeLineIndex,
+      currentTimeMs: currentTrackLyricsTimeMs,
+    };
+  };
+
   useEffect(() => {
     const componentDynamicIslandSettings = readComponentDynamicIslandSettings();
     if (!componentDynamicIslandSettings.enabled) {
@@ -8336,6 +8378,26 @@ export function AppShell({
     settings.appearance.customThemeSurface,
     themeStyle,
   ]);
+
+  useEffect(() => {
+    if (!readComponentLyricsDisplaySettings().enabled) {
+      return;
+    }
+
+    void emitComponentLyricsDisplaySnapshot(buildComponentLyricsDisplaySnapshot()).catch(() => undefined);
+  }, [activeLyricLineIndex, currentTrackLyricsLines, currentTrackLyricsTimeMs, isPlaying]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!readComponentLyricsDisplaySettings().enabled) {
+        return;
+      }
+
+      void emitComponentLyricsDisplaySnapshot(buildComponentLyricsDisplaySnapshot()).catch(() => undefined);
+    }, 400);
+
+    return () => window.clearInterval(timer);
+  }, [activeLyricLineIndex, currentTrackLyricsLines, currentTrackLyricsTimeMs]);
 
   useEffect(() => {
     if (!readComponentDynamicIslandSettings().enabled) {
@@ -13259,7 +13321,7 @@ export function AppShell({
 
     if (audio.paused) {
       cancelPauseFade({ restoreVolume: true });
-      audio.volume = volumeRef.current / 100;
+      setProcessedAudioGain(audio, volumeRef.current / 100);
       void audio.play().catch((error) => {
         console.error("[player] failed to resume playback", error);
         setIsPlaying(false);
@@ -16930,6 +16992,7 @@ function renderShortcutKeyboardRow(
             className={[
               "shortcut-keyboard__key",
               `shortcut-keyboard__key--${spec.width ?? "sm"}`,
+              spec.groupAfter ? "shortcut-keyboard__key--group-after" : "",
               isShortcutArrowKey(spec.key) ? "shortcut-keyboard__key--arrow" : "",
               isActive ? "shortcut-keyboard__key--active" : "",
             ]
@@ -16949,6 +17012,7 @@ function renderShortcutKeyboardRow(
 
 function ShortcutKeyboardDialog({
   copy,
+  themeStyle,
   actionLabel,
   selectedKeys,
   isClosing,
@@ -16957,6 +17021,7 @@ function ShortcutKeyboardDialog({
   onClose,
 }: {
   copy: UiCopy;
+  themeStyle: CSSProperties;
   actionLabel: string;
   selectedKeys: string[];
   isClosing: boolean;
@@ -17007,6 +17072,7 @@ function ShortcutKeyboardDialog({
       ]
         .filter(Boolean)
         .join(" ")}
+      style={themeStyle}
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           event.preventDefault();
@@ -17122,10 +17188,12 @@ function ShortcutKeyboardDialog({
 function ShortcutSettingsSection({
   copy,
   bindings,
+  themeStyle,
   onUpdate,
 }: {
   copy: UiCopy;
   bindings: AppSettings["shortcuts"];
+  themeStyle: CSSProperties;
   onUpdate: (updater: (current: AppSettings) => AppSettings) => void;
 }) {
   const shortcutCopy = copy.settings.sections.shortcuts;
@@ -17316,6 +17384,7 @@ function ShortcutSettingsSection({
       {editingActionId ? (
         <ShortcutKeyboardDialog
           copy={copy}
+          themeStyle={themeStyle}
           actionLabel={actionLabels[editingActionId]}
           selectedKeys={bindings[editingActionId]}
           isClosing={isKeyboardDialogClosing}
@@ -20251,7 +20320,12 @@ function SettingsScreen({
         ) : null}
 
         {shouldRenderSecondarySettingsSections && showShortcutsSection ? (
-          <ShortcutSettingsSection copy={copy} bindings={settings.shortcuts} onUpdate={onUpdate} />
+          <ShortcutSettingsSection
+            copy={copy}
+            bindings={settings.shortcuts}
+            themeStyle={themeStyle}
+            onUpdate={onUpdate}
+          />
         ) : null}
 
         {shouldRenderSecondarySettingsSections && showLibrarySection ? (

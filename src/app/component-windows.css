@@ -499,9 +499,186 @@ body {
   pointer-events: none;
 }
 
+.component-lyrics-display-window {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  pointer-events: none;
+  position: relative;
+  overflow: hidden;
+  transition: opacity 180ms ease;
+}
+
+.component-lyrics-display-window--hidden {
+  opacity: 0;
+}
+
+.component-lyrics-display-window__content {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  transform: scale(var(--component-lyrics-display-scale, 1));
+  transform-origin: center;
+}
+
+.component-lyrics-display-window__viewport {
+  width: calc(100% - 40px);
+  height: calc(100% - 48px);
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+  text-align: var(--component-lyrics-display-text-align, center);
+  color: rgba(255, 255, 255, 0.58);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+}
+
+.component-lyrics-display-window__track {
+  position: absolute;
+  inset: 0;
+  left: 0;
+  right: 0;
+}
+
+.component-lyrics-display-window__line {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  min-height: var(--component-lyrics-display-line-height, 64px);
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 0 18px;
+  box-sizing: border-box;
+  font-size: var(--component-lyrics-display-font-size, 28px);
+  font-weight: 600;
+  line-height: 1.25;
+  transition:
+    opacity 280ms ease,
+    color 280ms ease,
+    transform 660ms cubic-bezier(0.14, 0.82, 0.16, 1.02);
+}
+
+.component-lyrics-display-window__line > span,
+.component-lyrics-display-window__line > small {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.component-lyrics-display-window__primary {
+  position: relative;
+  display: block;
+  isolation: isolate;
+}
+
+.component-lyrics-display-window__primary-shadow,
+.component-lyrics-display-window__primary-glow,
+.component-lyrics-display-window__primary-content {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.component-lyrics-display-window__primary-shadow,
+.component-lyrics-display-window__primary-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.component-lyrics-display-window__primary-shadow {
+  z-index: 0;
+  color: rgba(9, 14, 22, calc(var(--component-lyrics-display-shadow-alpha, 0) * 0.6));
+  opacity: clamp(0, calc(var(--component-lyrics-display-shadow-alpha, 0) * 1.8), 1);
+  filter: blur(0.016em);
+  text-shadow:
+    0 0.05em 0.08em rgba(8, 12, 20, calc(var(--component-lyrics-display-shadow-alpha, 0) * 0.42)),
+    0 0.12em 0.24em rgba(7, 12, 20, calc(var(--component-lyrics-display-shadow-alpha, 0) * 0.22));
+  transform: translate3d(0, 0.014em, 0);
+}
+
+.component-lyrics-display-window__primary-glow {
+  z-index: 1;
+  color: rgba(226, 242, 255, calc(var(--component-lyrics-display-glow-alpha, 0) * 0.82));
+  opacity: clamp(0, calc(var(--component-lyrics-display-glow-alpha, 0) * 3.3), 1);
+  filter: blur(0.032em) saturate(108%);
+  text-shadow:
+    0 0 0.18em rgba(255, 255, 255, calc(var(--component-lyrics-display-glow-alpha, 0) * 0.36)),
+    0 0 0.46em rgba(214, 236, 255, calc(var(--component-lyrics-display-glow-alpha, 0) * 0.42)),
+    0 0 0.94em rgba(186, 222, 255, calc(var(--component-lyrics-display-glow-alpha, 0) * 0.22));
+  mix-blend-mode: screen;
+}
+
+.component-lyrics-display-window__primary-content {
+  position: relative;
+  z-index: 2;
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.component-lyrics-display-window__words {
+  display: block;
+  white-space: normal;
+}
+
+.component-lyrics-display-window__word {
+  --component-lyrics-display-word-progress: 0;
+  color: transparent;
+  background:
+    linear-gradient(
+      90deg,
+      #ffffff 0%,
+      #ffffff calc(var(--component-lyrics-display-word-progress) * 100%),
+      rgba(255, 255, 255, 0.42) calc(var(--component-lyrics-display-word-progress) * 100%),
+      rgba(255, 255, 255, 0.42) 100%
+    );
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+.component-lyrics-display-window__line > small {
+  display: block;
+  color: inherit;
+  font-size: 0.74rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.component-lyrics-display-window__line--active {
+  color: #fff;
+  font-weight: 800;
+}
+
+.component-lyrics-display-window__empty {
+  color: rgba(255, 255, 255, 0.72);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.component-lyrics-display-window__size-hint {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  color: rgba(255, 255, 255, 0.82);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-size: 0.75rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.component-lyrics-display-window__drag-boundary {
+  position: absolute;
+  inset: 1px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.96);
+  pointer-events: none;
+}
+
 .component-song-info-card {
   --component-song-info-card-scale: 1;
   --component-song-info-card-width: 420px;
+  --component-song-info-card-height: 100px;
   --component-song-info-card-bg: #0d121a;
   --component-song-info-card-bg-secondary: #1a2330;
   --component-song-info-card-gradient-start: #0d121a;
@@ -515,7 +692,7 @@ body {
   --component-song-info-card-artwork-url: none;
   width: 100%;
   max-width: 540px;
-  min-height: 126px;
+  min-height: 0;
   display: grid;
   justify-items: center;
   align-items: start;
@@ -578,7 +755,9 @@ body {
 
 .component-song-info-card__body--playback {
   width: var(--component-song-info-card-width);
-  max-width: 540px;
+  height: var(--component-song-info-card-height);
+  min-height: 0;
+  max-width: none;
   border-radius: 12px;
   clip-path: inset(0 round 12px);
   padding: 10px;

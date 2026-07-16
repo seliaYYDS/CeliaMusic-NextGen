@@ -69,6 +69,9 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const COMPONENT_DYNAMIC_ISLAND_WINDOW_LABEL: &str = "component-dynamic-island";
 const COMPONENT_DYNAMIC_ISLAND_WINDOW_URL: &str = "index.html?window=component-dynamic-island";
 const COMPONENT_DYNAMIC_ISLAND_WINDOW_TITLE: &str = "Celia Component Dynamic Island";
+const COMPONENT_LYRICS_DISPLAY_WINDOW_LABEL: &str = "component-lyrics-display";
+const COMPONENT_LYRICS_DISPLAY_WINDOW_URL: &str = "index.html?window=component-lyrics-display";
+const COMPONENT_LYRICS_DISPLAY_WINDOW_TITLE: &str = "Celia Component Lyrics Display";
 const COMPONENT_SONG_INFO_CARD_WINDOW_LABEL: &str = "component-song-info-card";
 const COMPONENT_SONG_INFO_CARD_WINDOW_URL: &str = "index.html?window=component-song-info-card";
 const COMPONENT_SONG_INFO_CARD_WINDOW_TITLE: &str = "Celia Component Song Info Card";
@@ -81,6 +84,13 @@ const COMPONENT_DYNAMIC_ISLAND_WINDOW_WIDTH: f64 =
 const COMPONENT_DYNAMIC_ISLAND_WINDOW_HEIGHT: f64 =
     COMPONENT_DYNAMIC_ISLAND_BODY_HEIGHT + COMPONENT_DYNAMIC_ISLAND_WINDOW_PADDING_BOTTOM;
 const COMPONENT_DYNAMIC_ISLAND_TOP_OFFSET: f64 = 18.0;
+const COMPONENT_LYRICS_DISPLAY_WINDOW_WIDTH: f64 = 560.0;
+const COMPONENT_LYRICS_DISPLAY_WINDOW_MIN_WIDTH: f64 = 360.0;
+const COMPONENT_LYRICS_DISPLAY_WINDOW_MAX_WIDTH: f64 = 900.0;
+const COMPONENT_LYRICS_DISPLAY_WINDOW_HEIGHT: f64 = 720.0;
+const COMPONENT_LYRICS_DISPLAY_WINDOW_MIN_HEIGHT: f64 = 480.0;
+const COMPONENT_LYRICS_DISPLAY_WINDOW_MAX_HEIGHT: f64 = 1080.0;
+const COMPONENT_LYRICS_DISPLAY_TOP_OFFSET: f64 = 120.0;
 const COMPONENT_SONG_INFO_CARD_BODY_WIDTH: f64 = 452.0;
 const COMPONENT_SONG_INFO_CARD_BODY_HEIGHT: f64 = 118.0;
 const COMPONENT_SONG_INFO_CARD_WINDOW_PADDING_X: f64 = 16.0;
@@ -100,6 +110,8 @@ const TRAY_MENU_QUIT_ID: &str = "tray_quit";
 const COMPONENT_CONTROL_INIT_SCRIPT: &str = "window.__CELIA_WINDOW_KIND__ = 'component-control';";
 const COMPONENT_DYNAMIC_ISLAND_INIT_SCRIPT: &str =
     "window.__CELIA_WINDOW_KIND__ = 'component-dynamic-island';";
+const COMPONENT_LYRICS_DISPLAY_INIT_SCRIPT: &str =
+    "window.__CELIA_WINDOW_KIND__ = 'component-lyrics-display';";
 const COMPONENT_SONG_INFO_CARD_INIT_SCRIPT: &str =
     "window.__CELIA_WINDOW_KIND__ = 'component-song-info-card';";
 const MAIN_WINDOW_VISIBILITY_EVENT: &str = "app-window-visibility";
@@ -119,6 +131,9 @@ fn is_other_app_fullscreen(app: tauri::AppHandle) -> bool {
         .and_then(|window| window.hwnd().ok());
     let song_info_card_hwnd = app
         .get_webview_window(COMPONENT_SONG_INFO_CARD_WINDOW_LABEL)
+        .and_then(|window| window.hwnd().ok());
+    let lyrics_display_hwnd = app
+        .get_webview_window(COMPONENT_LYRICS_DISPLAY_WINDOW_LABEL)
         .and_then(|window| window.hwnd().ok());
     let main_hwnd = app
         .get_webview_window(MAIN_WINDOW_LABEL)
@@ -140,6 +155,7 @@ fn is_other_app_fullscreen(app: tauri::AppHandle) -> bool {
         }
 
         if island_hwnd.is_some_and(|hwnd| hwnd == foreground)
+            || lyrics_display_hwnd.is_some_and(|hwnd| hwnd == foreground)
             || song_info_card_hwnd.is_some_and(|hwnd| hwnd == foreground)
             || main_hwnd.is_some_and(|hwnd| hwnd == foreground)
         {
@@ -177,6 +193,27 @@ fn is_other_app_fullscreen(app: tauri::AppHandle) -> bool {
 
 #[cfg(windows)]
 fn reinforce_component_dynamic_island_topmost<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SET_WINDOW_POS_FLAGS(
+                SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0 | SWP_SHOWWINDOW.0,
+            ),
+        );
+    }
+}
+
+#[cfg(windows)]
+fn reinforce_component_lyrics_display_topmost<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     let Ok(hwnd) = window.hwnd() else {
         return;
     };
@@ -377,6 +414,72 @@ async fn open_component_dynamic_island_window(app: tauri::AppHandle) -> Result<(
             + ((monitor_size.width - COMPONENT_DYNAMIC_ISLAND_WINDOW_WIDTH) / 2.0).max(0.0);
         let target_y = monitor_position.y + COMPONENT_DYNAMIC_ISLAND_TOP_OFFSET;
         let _ = window.set_position(LogicalPosition::new(target_x, target_y));
+        } else {
+            let _ = window.center();
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_component_lyrics_display_window(app: tauri::AppHandle) -> Result<(), String> {
+    let (window, created_now) = if let Some(existing_window) =
+        app.get_webview_window(COMPONENT_LYRICS_DISPLAY_WINDOW_LABEL)
+    {
+        let _ = existing_window.show();
+        let _ = existing_window.unminimize();
+        (existing_window, false)
+    } else {
+        let new_window = WebviewWindowBuilder::new(
+            &app,
+            COMPONENT_LYRICS_DISPLAY_WINDOW_LABEL,
+            WebviewUrl::App(COMPONENT_LYRICS_DISPLAY_WINDOW_URL.into()),
+        )
+        .initialization_script(COMPONENT_LYRICS_DISPLAY_INIT_SCRIPT)
+        .title(COMPONENT_LYRICS_DISPLAY_WINDOW_TITLE)
+        .inner_size(
+            COMPONENT_LYRICS_DISPLAY_WINDOW_WIDTH,
+            COMPONENT_LYRICS_DISPLAY_WINDOW_HEIGHT,
+        )
+        .min_inner_size(
+            COMPONENT_LYRICS_DISPLAY_WINDOW_MIN_WIDTH,
+            COMPONENT_LYRICS_DISPLAY_WINDOW_MIN_HEIGHT,
+        )
+        .max_inner_size(
+            COMPONENT_LYRICS_DISPLAY_WINDOW_MAX_WIDTH,
+            COMPONENT_LYRICS_DISPLAY_WINDOW_MAX_HEIGHT,
+        )
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(true)
+        .fullscreen(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .visible(true)
+        .focused(false)
+        .build()
+        .map_err(|error| format!("failed to build component lyrics display window: {error}"))?;
+
+        (new_window, true)
+    };
+
+    let _ = window.set_ignore_cursor_events(true);
+    #[cfg(windows)]
+    reinforce_component_lyrics_display_topmost(&window);
+
+    if created_now {
+        if let Some(monitor) = app.primary_monitor().map_err(|error| error.to_string())? {
+            let monitor_position = monitor.position().to_logical::<f64>(monitor.scale_factor());
+            let monitor_size = monitor.size().to_logical::<f64>(monitor.scale_factor());
+            let target_x = monitor_position.x
+                + ((monitor_size.width - COMPONENT_LYRICS_DISPLAY_WINDOW_WIDTH) / 2.0).max(0.0);
+            let target_y = monitor_position.y + COMPONENT_LYRICS_DISPLAY_TOP_OFFSET;
+            let _ = window.set_position(LogicalPosition::new(target_x, target_y));
         } else {
             let _ = window.center();
         }
@@ -686,6 +789,7 @@ pub fn run() {
             enable_wallpaper_mode,
             open_immersive_wallpaper_window,
             open_component_dynamic_island_window,
+            open_component_lyrics_display_window,
             open_component_song_info_card_window
         ])
         .run(tauri::generate_context!())
