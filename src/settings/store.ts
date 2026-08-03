@@ -192,6 +192,10 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
         settings.library.downloadSaveDirectory.trim() || defaultSettings.library.downloadSaveDirectory,
       downloadQuality:
         settings.library.downloadQuality === "standard" ||
+        settings.library.downloadQuality === "128" ||
+        settings.library.downloadQuality === "320" ||
+        settings.library.downloadQuality === "flac" ||
+        settings.library.downloadQuality === "high" ||
         settings.library.downloadQuality === "higher" ||
         settings.library.downloadQuality === "exhigh" ||
         settings.library.downloadQuality === "lossless" ||

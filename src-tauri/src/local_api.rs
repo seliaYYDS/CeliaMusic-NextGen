@@ -24,7 +24,7 @@ const MAX_LOG_LINES: usize = 240;
 const MAX_PORT_SCAN_STEPS: u16 = 32;
 const LOCAL_API_STARTUP_TIMEOUT_SECS: u64 = 20;
 const LOCAL_API_STARTUP_EXTENDED_TIMEOUT_SECS: u64 = 180;
-const LOCAL_API_RUNTIME_REVISION: &str = "5";
+const LOCAL_API_RUNTIME_REVISION: &str = "6";
 const KUGOU_API_PACKAGE_URL: &str =
     "https://codeload.github.com/MakcRe/KuGouMusicApi/tar.gz/refs/heads/main";
 const KUGOU_BRIDGE_SOURCE: &str = include_str!("kugou_bridge.cjs");

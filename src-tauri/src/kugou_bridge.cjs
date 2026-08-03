@@ -13,6 +13,8 @@ process.env.platform = 'lite';
 const api = runtimeRequire('kugoumusicapi');
 const authKeys = new Set(['token', 'userid', 'user_id', 'dfid', 't1', 'vip_type', 'vip_token']);
 
+console.log(`KuGou bridge loading from ${runtimeDir}`);
+
 const parseCookie = value => Object.fromEntries(String(value || '').split(';').map(entry => {
   const index = entry.indexOf('=');
   return index > 0 ? [entry.slice(0, index).trim(), entry.slice(index + 1).trim()] : [];
@@ -113,6 +115,7 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${host}:${port}`);
     const operation = url.pathname.replace(/^\/+|\/+$/g, '').replaceAll('/', '_');
+    console.log(`${request.method || 'GET'} ${url.pathname}`);
     const params = Object.fromEntries(url.searchParams);
     const incoming = parseCookie(params.cookie || request.headers.authorization);
     delete params.cookie;
@@ -142,9 +145,10 @@ const server = http.createServer(async (request, response) => {
     return send(request, response, 200, body);
   } catch (error) {
     const body = error?.body ?? { status: 0, msg: error instanceof Error ? error.message : String(error) };
+    console.error(`${request.method || 'GET'} ${request.url || '/'} failed: ${body.msg || body.error_msg || body.error || 'Unknown error'}`);
     return send(request, response, Number(error?.status) || 502, body);
   }
 });
 
 persist();
-server.listen(port, host, () => console.log(`server running @ http://${host}:${port}`));
+server.listen(port, host, () => console.log(`KuGou bridge ready @ http://${host}:${port}`));

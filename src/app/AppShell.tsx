@@ -172,8 +172,9 @@ import {
   SHORTCUT_ACTION_IDS,
   type AppSettings,
   type AppSettingsSnapshot,
-  type DownloadLyricsMode,
   type DownloadQualityOption,
+  type DownloadLyricsMode,
+  type OnlineDownloadQualityOption,
   type EqualizerPreset,
   type GlobalParticleEffectType,
   type ImmersiveBackgroundMode,
@@ -2003,12 +2004,14 @@ type QueueDragState = {
 type PersistedPlaybackResumeState = {
   queueIds: string[];
   trackId: string | null;
+  kugouTracks: KugouSongDetail[];
 };
 
 type PlaybackRestoreSessionState = {
   status: "scheduled" | "hydrating" | "restoring";
   queueIds: string[];
   trackId: string | null;
+  kugouTracks: KugouSongDetail[];
   sequence: number;
 } | null;
 
@@ -5428,6 +5431,20 @@ export function AppShell({
   const downloadQualityOptions = [
     ...copy.options.downloadQuality,
   ] as UISelectOption[];
+  const kugouDownloadQualityOptions: UISelectOption[] =
+    copy.locale === "en-US"
+      ? [
+          { label: "Standard", value: "128", description: "128 kbps stream." },
+          { label: "High", value: "320", description: "320 kbps stream." },
+          { label: "Lossless", value: "flac", description: "Prefer FLAC, then lower qualities." },
+          { label: "Hi-Res", value: "high", description: "Prefer the highest KuGou stream." },
+        ]
+      : [
+          { label: "标准", value: "128", description: "128 kbps 音频流。" },
+          { label: "高品质", value: "320", description: "320 kbps 音频流。" },
+          { label: "无损", value: "flac", description: "优先 FLAC，不可用时自动降级。" },
+          { label: "Hi-Res", value: "high", description: "优先酷狗可用的最高音质。" },
+        ];
   const downloadLyricsModeOptions = [
     ...copy.options.downloadLyricsMode,
   ] as UISelectOption[];
@@ -7586,10 +7603,12 @@ export function AppShell({
       pollMs?: number;
     },
   ) => {
-    if (
-      !targetSettings.network.useLocalApiServer ||
-      !targetSettings.network.enabledSources.includes("netease")
-    ) {
+    const shouldWaitForLocalApi =
+      (targetSettings.network.useLocalApiServer &&
+        targetSettings.network.enabledSources.includes("netease")) ||
+      (targetSettings.network.useLocalKugouApiServer &&
+        targetSettings.network.enabledSources.includes("kugou"));
+    if (!shouldWaitForLocalApi) {
       return true;
     }
 
@@ -8595,6 +8614,7 @@ export function AppShell({
       status: "scheduled",
       queueIds: rawQueueIds,
       trackId: rawTrackIdCandidate,
+      kugouTracks: persistedState.kugouTracks,
       sequence: playbackRestoreSequenceRef.current + 1,
     });
   }, [
@@ -8642,10 +8662,50 @@ export function AppShell({
             }),
         ),
       );
+      const missingKugouTrackHashes = Array.from(
+        new Set(
+          [...rawQueueIds, rawTrackIdCandidate]
+            .filter((trackId): trackId is string => Boolean(trackId))
+            .flatMap((trackId) => {
+              if (findTrackById(trackId)) {
+                return [];
+              }
+
+              const kugouHash = parseKugouTrackHashFromCacheKey(trackId);
+              return kugouHash ? [kugouHash] : [];
+            }),
+        ),
+      );
+      const persistedKugouTracksByHash = new Map(
+        restoreSession.kugouTracks.map((detail) => [
+          detail.hash.trim().toUpperCase(),
+          detail,
+        ]),
+      );
+      const restorableKugouTracks = missingKugouTrackHashes
+        .map(
+          (hash) =>
+            persistedKugouTracksByHash.get(hash.trim().toUpperCase()) ?? null,
+        )
+        .filter((detail): detail is KugouSongDetail => detail !== null);
+      if (restorableKugouTracks.length > 0) {
+        cacheKugouSongDetails(restorableKugouTracks);
+        upsertTransientRemoteEntries(
+          restorableKugouTracks.map((detail) => ({
+            track: createTransientKugouTrack(detail),
+            artworkUrl: detail.artworkUrl ?? null,
+          })),
+        );
+      }
+      const unresolvedKugouTrackHashes = missingKugouTrackHashes.filter(
+        (hash) => !persistedKugouTracksByHash.has(hash.trim().toUpperCase()),
+      );
 
       if (
-        missingNeteaseTrackIds.length > 0 &&
-        settings.network.useLocalApiServer
+        (missingNeteaseTrackIds.length > 0 ||
+          unresolvedKugouTrackHashes.length > 0) &&
+        (settings.network.useLocalApiServer ||
+          settings.network.useLocalKugouApiServer)
       ) {
         try {
           await waitForLocalNeteaseApiReady(settings, {
@@ -8682,6 +8742,49 @@ export function AppShell({
         } catch (error) {
           console.error(
             "[player] failed to hydrate restorable remote queue",
+            error,
+          );
+        }
+      }
+
+      if (
+        unresolvedKugouTrackHashes.length > 0 &&
+        isKugouSourceEnabled(settings)
+      ) {
+        try {
+          const details: KugouSongDetail[] = [];
+          for (let index = 0; index < unresolvedKugouTrackHashes.length; index += 8) {
+            const batch = unresolvedKugouTrackHashes.slice(index, index + 8);
+            const batchDetails = await Promise.all(
+              batch.map((hash) =>
+                getKugouSongDetail(settings, {
+                  hash,
+                  albumAudioId: null,
+                  albumId: null,
+                }),
+              ),
+            );
+            details.push(
+              ...batchDetails.filter(
+                (detail): detail is KugouSongDetail => detail !== null,
+              ),
+            );
+          }
+          if (
+            !isDisposed &&
+            playbackRestoreSequenceRef.current < restoreSequence
+          ) {
+            cacheKugouSongDetails(details);
+            upsertTransientRemoteEntries(
+              details.map((detail) => ({
+                track: createTransientKugouTrack(detail),
+                artworkUrl: detail.artworkUrl ?? null,
+              })),
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[player] failed to hydrate restorable kugou queue",
             error,
           );
         }
@@ -12180,13 +12283,13 @@ export function AppShell({
 
   const readPersistedPlaybackResumeState = (): PersistedPlaybackResumeState => {
     if (typeof window === "undefined") {
-      return { queueIds: [], trackId: null };
+      return { queueIds: [], trackId: null, kugouTracks: [] };
     }
 
     try {
       const rawValue = window.localStorage.getItem(PLAYBACK_RESUME_STORAGE_KEY);
       if (!rawValue) {
-        return { queueIds: [], trackId: null };
+        return { queueIds: [], trackId: null, kugouTracks: [] };
       }
 
       const parsedValue = JSON.parse(
@@ -12203,17 +12306,28 @@ export function AppShell({
         parsedValue.trackId.trim().length > 0
           ? parsedValue.trackId
           : null;
+      const kugouTracks = Array.isArray(parsedValue?.kugouTracks)
+        ? parsedValue.kugouTracks.filter(
+            (track): track is KugouSongDetail =>
+              Boolean(track) &&
+              typeof track === "object" &&
+              typeof (track as KugouSongDetail).hash === "string" &&
+              (track as KugouSongDetail).hash.trim().length > 0 &&
+              typeof (track as KugouSongDetail).name === "string",
+          )
+        : [];
 
       return {
         queueIds,
         trackId,
+        kugouTracks,
       };
     } catch (error) {
       console.error(
         "[player] failed to read persisted playback resume state",
         error,
       );
-      return { queueIds: [], trackId: null };
+      return { queueIds: [], trackId: null, kugouTracks: [] };
     }
   };
 
@@ -12293,12 +12407,14 @@ export function AppShell({
       (trackId) =>
         Boolean(trackId) &&
         (findTrackById(trackId) !== null ||
-          parseNeteaseTrackIdFromCacheKey(trackId) !== null),
+          parseNeteaseTrackIdFromCacheKey(trackId) !== null ||
+          parseKugouTrackHashFromCacheKey(trackId) !== null),
     );
     const persistedCurrentTrackId =
       currentTrackId &&
       (findTrackById(currentTrackId) !== null ||
-        parseNeteaseTrackIdFromCacheKey(currentTrackId) !== null)
+        parseNeteaseTrackIdFromCacheKey(currentTrackId) !== null ||
+        parseKugouTrackHashFromCacheKey(currentTrackId) !== null)
         ? currentTrackId
         : null;
     const nextPlaybackState = {
@@ -12319,12 +12435,37 @@ export function AppShell({
     } satisfies AppSettings;
   };
 
+  const buildPersistedKugouResumeTracks = (queueIds: string[]) =>
+    dedupeKugouSongDetailsByHash(
+      queueIds.flatMap((trackId) => {
+        const hash = parseKugouTrackHashFromCacheKey(trackId);
+        if (!hash) {
+          return [];
+        }
+        const detail =
+          getCachedKugouSongDetail(hash) ??
+          (() => {
+            const track = findTrackById(trackId);
+            return track ? createKugouSongDetailFromTrack(track, hash) : null;
+          })();
+        return detail ? [detail] : [];
+      }),
+    );
+
   const persistPlaybackResumeSettings = async () => {
     const baseSettings = settingsRef.current;
     const nextSettings = buildPlaybackResumeSettings(baseSettings);
     writePersistedPlaybackResumeState({
       queueIds: nextSettings.playback.resumeQueueTrackIds,
       trackId: nextSettings.playback.resumeTrackId,
+      kugouTracks: buildPersistedKugouResumeTracks(
+        [
+          ...nextSettings.playback.resumeQueueTrackIds,
+          ...(nextSettings.playback.resumeTrackId
+            ? [nextSettings.playback.resumeTrackId]
+            : []),
+        ],
+      ),
     });
 
     settingsRef.current = nextSettings;
@@ -13938,7 +14079,9 @@ export function AppShell({
     void (async () => {
       try {
         const [resolved, lyrics] = await Promise.all([
-          resolveKugouTrack(settingsRef.current, song),
+          resolveKugouTrack(settingsRef.current, song, {
+            preferredQuality: settingsRef.current.library.downloadQuality,
+          }),
           settingsRef.current.library.downloadLyricsEnabled
             ? getKugouSongLyrics(
                 settingsRef.current,
@@ -14152,7 +14295,7 @@ export function AppShell({
           resolveNeteaseSongDownloadStream(
             settingsRef.current,
             neteaseTrackId,
-            settingsRef.current.library.downloadQuality,
+            settingsRef.current.library.downloadQuality as DownloadQualityOption,
           ),
           shouldDownloadLyrics
             ? getNeteaseSongLyrics(settingsRef.current, neteaseTrackId).catch(
@@ -14859,11 +15002,39 @@ export function AppShell({
     setCurrentTrackLyrics(null);
 
     if (shouldClearQueue) {
+      currentQueueIdsRef.current = [];
+      playbackQueueIdsRef.current = [];
       setPlaybackQueueIds([]);
       setShuffledQueueIds([]);
       setPlaybackQueueSourcePlaylist(null);
       setIsQueuePopoverOpen(false);
     }
+  };
+
+  const handleOnlineSourceChange = (source: "netease" | "kugou") => {
+    const currentSource = isKugouSourceEnabled(settingsRef.current)
+      ? "kugou"
+      : "netease";
+    if (currentSource !== source) {
+      clearPlaybackState();
+      writePersistedPlaybackResumeState({
+        queueIds: [],
+        trackId: null,
+        kugouTracks: [],
+      });
+    }
+    updateSettings((current) => ({
+      ...current,
+      playback: {
+        ...current.playback,
+        resumeQueueTrackIds: [],
+        resumeTrackId: null,
+      },
+      network: {
+        ...current.network,
+        enabledSources: [source],
+      },
+    }));
   };
 
   const handleVolumeChange = (nextVolume: number) => {
@@ -16948,6 +17119,12 @@ export function AppShell({
         setLocalKugouApiRuntimeBaseUrl(
           status.enabled ? status.url.replace(/\/+$/, "") : null,
         );
+        const isReady = await waitForLocalNeteaseApiReady(settings, {
+          timeoutMs: settings.network.requestTimeoutMs,
+        });
+        if (!isReady) {
+          throw new Error("Local KuGou API server did not become ready in time.");
+        }
       }
       await testKugouApiConnection(settings);
       pushDynamicIslandNotification(
@@ -18290,6 +18467,7 @@ export function AppShell({
         themeOptions={themeOptions}
         qualityOptions={qualityOptions}
         downloadQualityOptions={downloadQualityOptions}
+        kugouDownloadQualityOptions={kugouDownloadQualityOptions}
         downloadLyricsModeOptions={downloadLyricsModeOptions}
         playbackCacheModeOptions={playbackCacheModeOptions}
         settings={settings}
@@ -18301,6 +18479,7 @@ export function AppShell({
         localNeteaseApiStatus={localNeteaseApiStatus}
         isClearingLibrary={isImportingLibrary}
         onUpdate={updateSettings}
+        onOnlineSourceChange={handleOnlineSourceChange}
         onSave={() => void handleSaveSettings()}
         onReset={() => void handleResetSettings()}
         onTestNeteaseApi={() => void handleTestNeteaseApi()}
@@ -20999,6 +21178,7 @@ function SettingsScreen({
   themeOptions,
   qualityOptions,
   downloadQualityOptions,
+  kugouDownloadQualityOptions,
   downloadLyricsModeOptions,
   playbackCacheModeOptions,
   settings,
@@ -21011,6 +21191,7 @@ function SettingsScreen({
   isClearingLibrary,
   onReleaseMemoryCache,
   onUpdate,
+  onOnlineSourceChange,
   onSave,
   onReset,
   onTestNeteaseApi,
@@ -21031,6 +21212,7 @@ function SettingsScreen({
   themeOptions: UISelectOption[];
   qualityOptions: UISelectOption[];
   downloadQualityOptions: UISelectOption[];
+  kugouDownloadQualityOptions: UISelectOption[];
   downloadLyricsModeOptions: UISelectOption[];
   playbackCacheModeOptions: UISelectOption[];
   settings: AppSettings;
@@ -21043,6 +21225,7 @@ function SettingsScreen({
   isClearingLibrary: boolean;
   onReleaseMemoryCache: () => void;
   onUpdate: (updater: (current: AppSettings) => AppSettings) => void;
+  onOnlineSourceChange: (source: "netease" | "kugou") => void;
   onSave: () => void;
   onReset: () => void;
   onTestNeteaseApi: () => void;
@@ -21085,19 +21268,16 @@ function SettingsScreen({
   const isOnlineSourceEnabled = isNeteaseEnabled || isKugouEnabled;
   const isNeteaseSourceSelected = selectedOnlineSource === "netease";
   const isKugouSourceSelected = selectedOnlineSource === "kugou";
+  const activeDownloadQualityOptions = isKugouSourceSelected
+    ? kugouDownloadQualityOptions
+    : downloadQualityOptions;
   const showKugouLocalApiPanel =
     isKugouSourceSelected &&
     isKugouEnabled &&
     settings.network.useLocalKugouApiServer;
   const selectOnlineSource = (source: "netease" | "kugou") => {
     setSelectedOnlineSource(source);
-    onUpdate((current) => ({
-      ...current,
-      network: {
-        ...current.network,
-        enabledSources: [source],
-      },
-    }));
+    onOnlineSourceChange(source);
   };
 
   const [qrLoginSession, setQrLoginSession] =
@@ -24707,20 +24887,20 @@ function SettingsScreen({
                   copy.settings.sections.download.qualityLabel,
                   copy.settings.sections.download.qualityHelper,
                   settings.library.downloadQuality,
-                  ...getSearchableOptions(downloadQualityOptions),
+                  ...getSearchableOptions(activeDownloadQualityOptions),
                 ]}
               >
                 <UISelect
                   label={copy.settings.sections.download.qualityLabel}
                   value={settings.library.downloadQuality}
-                  options={downloadQualityOptions}
+                  options={activeDownloadQualityOptions}
                   helper={copy.settings.sections.download.qualityHelper}
                   onChange={(value) =>
                     onUpdate((current) => ({
                       ...current,
                       library: {
                         ...current.library,
-                        downloadQuality: value as DownloadQualityOption,
+                        downloadQuality: value as OnlineDownloadQualityOption,
                       },
                     }))
                   }

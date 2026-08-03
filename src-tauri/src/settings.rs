@@ -758,6 +758,10 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         settings.library.download_quality,
         &[
             "standard",
+            "128",
+            "320",
+            "flac",
+            "high",
             "higher",
             "exhigh",
             "lossless",

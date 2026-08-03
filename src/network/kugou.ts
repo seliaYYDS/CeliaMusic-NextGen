@@ -138,8 +138,13 @@ export async function testKugouApiConnection(settings: AppSettings) {
   assertKugouEnabled(settings);
   const response = await requestKugouJson(
     settings,
-    "/search/default",
-    {},
+    "/search",
+    {
+      keywords: "music",
+      type: "song",
+      page: 1,
+      pagesize: 1,
+    },
     { includeCookie: false },
   );
   const data = getPayloadData(response);
@@ -801,19 +806,141 @@ export async function getKugouSongLyrics(
   const lyricResponse = await requestKugouJson(settings, "/lyric", {
     id: lyricId,
     accesskey,
-    fmt: "lrc",
+    fmt: "krc",
     decode: "true",
     timestamp: Date.now(),
   });
   const lyricData = getPayloadData(lyricResponse);
-  return parseRawLyrics({
-    rawLyric: firstString(lyricData, ["decodeContent", "content", "lyric"]),
-  });
+  const rawLyric = firstString(lyricData, [
+    "decodeContent",
+    "content",
+    "lyric",
+  ]);
+  return parseKugouLyrics(rawLyric);
+}
+
+function parseKugouLyrics(rawLyric: string | null): KugouSongLyrics | null {
+  if (!rawLyric) {
+    return null;
+  }
+
+  const fallback = parseRawLyrics({ rawLyric });
+  const embeddedTracks = parseKugouEmbeddedLanguageTracks(rawLyric);
+  const lines = rawLyric
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .filter((rawLine) => /^\[\d+,\d+\]/.test(rawLine))
+    .map((rawLine, index) => {
+      const match = rawLine.match(/^\[(\d+),(\d+)\](.*)$/);
+      if (!match) {
+        return null;
+      }
+
+      const startTimeMs = Number(match[1]);
+      const durationMs = Number(match[2]);
+      const payload = match[3] ?? "";
+      if (!Number.isFinite(startTimeMs) || !Number.isFinite(durationMs)) {
+        return null;
+      }
+
+      const words = [...payload.matchAll(/<(\d+),(\d+)(?:,\d+)?>([^<]*)/g)]
+        .map((word) => {
+          const offsetMs = Number(word[1]);
+          const wordDurationMs = Number(word[2]);
+          if (!Number.isFinite(offsetMs) || !Number.isFinite(wordDurationMs)) {
+            return null;
+          }
+          return {
+            text: word[3] ?? "",
+            startTimeMs: startTimeMs + offsetMs,
+            durationMs: wordDurationMs,
+            endTimeMs: startTimeMs + offsetMs + wordDurationMs,
+          };
+        })
+        .filter(isPresent);
+      const text = words.length > 0
+        ? words.map((word) => word.text).join("")
+        : payload.trim();
+      if (!text) {
+        return null;
+      }
+
+      return {
+        text,
+        startTimeMs,
+        durationMs,
+        endTimeMs: startTimeMs + durationMs,
+        translatedText: embeddedTracks.translations[index] ?? null,
+        romanizedText: embeddedTracks.romanizations[index] ?? null,
+        words,
+      };
+    })
+    .filter(isPresent);
+
+  if (lines.length === 0) {
+    return fallback;
+  }
+
+  const timedTrack = (selector: (line: (typeof lines)[number]) => string | null) =>
+    lines
+      .map((line) => {
+        const text = selector(line)?.trim();
+        return text ? `[${formatKugouLyricTimestamp(line.startTimeMs)}]${text}` : null;
+      })
+      .filter(isPresent)
+      .join("\n") || null;
+
+  return {
+    lyric: rawLyric,
+    translatedLyric: timedTrack((line) => line.translatedText),
+    romanizedLyric: timedTrack((line) => line.romanizedText),
+    dynamicLyric: rawLyric,
+    metadataEntries: fallback?.metadataEntries ?? [],
+    lines,
+    source: "word",
+  };
+}
+
+function parseKugouEmbeddedLanguageTracks(rawLyric: string) {
+  const encoded = rawLyric.match(/\[language:([^\]]+)\]/i)?.[1]?.trim();
+  if (!encoded) {
+    return { translations: [] as string[], romanizations: [] as string[] };
+  }
+
+  try {
+    const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=");
+    const bytes = Uint8Array.from(atob(padded), (character) =>
+      character.charCodeAt(0),
+    );
+    const payload = JSON.parse(new TextDecoder().decode(bytes)) as {
+      content?: Array<{ type?: number; lyricContent?: unknown[] }>;
+    };
+    const readTrack = (type: number) =>
+      (payload.content ?? [])
+        .find((track) => track.type === type)
+        ?.lyricContent?.map((line) =>
+          Array.isArray(line) ? line.join("").trim() : String(line).trim(),
+        ) ?? [];
+    return {
+      translations: readTrack(1),
+      romanizations: readTrack(0),
+    };
+  } catch {
+    return { translations: [] as string[], romanizations: [] as string[] };
+  }
+}
+
+function formatKugouLyricTimestamp(timeMs: number) {
+  const minutes = Math.floor(timeMs / 60_000);
+  const seconds = Math.floor((timeMs % 60_000) / 1_000);
+  const centiseconds = Math.floor((timeMs % 1_000) / 10);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(centiseconds).padStart(2, "0")}`;
 }
 
 export async function getKugouSongStreams(
   settings: AppSettings,
   reference: KugouTrackReference,
+  preferredQuality = settings.playback.preferredQuality,
 ): Promise<KugouSongStream[]> {
   assertKugouEnabled(settings);
   const trackHash = summarizeKugouHash(reference.hash);
@@ -829,7 +956,7 @@ export async function getKugouSongStreams(
       : [{ album_id: "", album_audio_id: "" }];
   let lastError: unknown = null;
   for (const quality of getKugouPlaybackQualityCandidates(
-    settings.playback.preferredQuality,
+    preferredQuality,
   )) {
     for (const variant of variants) {
       try {
@@ -884,13 +1011,15 @@ export async function getKugouSongStreams(
 export async function resolveKugouTrack(
   settings: AppSettings,
   detail: KugouSongDetail,
-  options: { bypassCache?: boolean } = {},
+  options: { bypassCache?: boolean; preferredQuality?: string } = {},
 ): Promise<KugouResolvedTrack> {
   assertKugouEnabled(settings);
   const queueDetail = getCachedKugouSongDetail(detail.hash) ?? detail;
   const reference = toTrackReference(queueDetail);
   const trackHash = summarizeKugouHash(reference.hash);
-  const cacheKey = `${getKugouBaseUrl(settings)}::${settings.network.kugouCookie}::${settings.playback.preferredQuality}::${detail.hash}`;
+  const preferredQuality =
+    options.preferredQuality ?? settings.playback.preferredQuality;
+  const cacheKey = `${getKugouBaseUrl(settings)}::${settings.network.kugouCookie}::${preferredQuality}::${detail.hash}`;
   if (!options.bypassCache) {
     const cached = getTimedCacheValue(resolvedTrackCache, cacheKey);
     if (cached) {
@@ -915,7 +1044,7 @@ export async function resolveKugouTrack(
     });
     const [hydratedDetail, streams, lyrics] = await Promise.all([
       getKugouSongDetail(settings, reference).catch(() => null),
-      getKugouSongStreams(settings, reference),
+      getKugouSongStreams(settings, reference, preferredQuality),
       getKugouSongLyrics(settings, reference, {
         keywords: queueDetail.name,
         durationMs: queueDetail.durationMs,
@@ -1355,7 +1484,10 @@ function getKugouPlaybackQualityCandidates(quality: string) {
     case "lossless":
       return ["flac", "320", "128"];
     case "high":
+    case "320":
       return ["320", "128"];
+    case "flac":
+      return ["flac", "320", "128"];
     default:
       return ["128"];
   }

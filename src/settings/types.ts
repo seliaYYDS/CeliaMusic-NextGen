@@ -33,6 +33,10 @@ export type DownloadQualityOption =
   | "jyeffect"
   | "sky"
   | "jymaster";
+export type KugouDownloadQualityOption = "128" | "320" | "flac" | "high";
+export type OnlineDownloadQualityOption =
+  | DownloadQualityOption
+  | KugouDownloadQualityOption;
 export type DownloadLyricsMode = "embedded" | "sidecar";
 export const SHORTCUT_ACTION_IDS = [
   "togglePlayback",
@@ -129,7 +133,7 @@ export type LibrarySettings = {
   onlineLyricsCompletion: boolean;
   downloadEnabled: boolean;
   downloadSaveDirectory: string;
-  downloadQuality: DownloadQualityOption;
+  downloadQuality: OnlineDownloadQualityOption;
   downloadLyricsEnabled: boolean;
   downloadLyricsMode: DownloadLyricsMode;
 };
