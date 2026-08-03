@@ -251,6 +251,7 @@ export type KugouSongDetail = {
   year: number | null;
   mvId: string | null;
   fee: number | null;
+  fileId?: string | null;
   requiresVip: boolean;
   copyrightRestricted: boolean;
   unavailableMessage: string | null;
@@ -275,6 +276,7 @@ export type KugouPlaylistSummary = {
   creatorUserId: number | null;
   isDefault: boolean;
   isLiked: boolean;
+  isOwned?: boolean;
 };
 
 export type KugouSongStream = {
