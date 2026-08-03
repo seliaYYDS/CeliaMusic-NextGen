@@ -23,7 +23,8 @@ use local_api::{
 use media::{
     clear_media_library, delete_media_tracks, ensure_media_library, import_media_files,
     list_media_library, register_remote_track, save_song_config, cache_remote_audio_for_spectrum,
-    clear_cached_spectrum_audio, analyze_local_audio_spectrum, analyze_local_audio_track,
+    clear_cached_spectrum_audio, clear_song_cache, clear_song_cache_on_exit, get_song_cache_info,
+    analyze_local_audio_spectrum, analyze_local_audio_track,
     analyze_audio_alignment, inspect_local_song_metadata, load_local_lyrics,
     load_local_lyrics_bundle, save_local_lyrics, save_local_lyrics_bundle,
     save_local_song_metadata, read_text_file_for_tools, cache_remote_file_for_tools,
@@ -550,9 +551,16 @@ async fn open_component_song_info_card_window(app: tauri::AppHandle) -> Result<(
     Ok(())
 }
 
-fn shutdown_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+fn shutdown_app(app: &tauri::AppHandle) {
     let runtime_state = app.state::<AppRuntimeState>();
     runtime_state.exit_requested.store(true, Ordering::SeqCst);
+
+    if load_app_settings_or_default(app)
+        .map(|settings| settings.playback.auto_clear_song_cache_on_exit)
+        .unwrap_or(false)
+    {
+        let _ = clear_song_cache_on_exit(app);
+    }
 
     let local_api_state = app.state::<LocalNeteaseApiState>();
     shutdown_local_netease_api_server(&local_api_state);
@@ -758,6 +766,8 @@ pub fn run() {
             save_song_config,
             cache_remote_audio_for_spectrum,
             clear_cached_spectrum_audio,
+            get_song_cache_info,
+            clear_song_cache,
             analyze_local_audio_spectrum,
             analyze_local_audio_track,
             analyze_audio_alignment,

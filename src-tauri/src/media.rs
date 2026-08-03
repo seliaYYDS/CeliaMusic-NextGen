@@ -432,6 +432,14 @@ pub struct AudioSpectrumAnalysis {
     pub frames: Vec<Vec<u8>>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongCacheInfo {
+    pub path: String,
+    pub size_bytes: u64,
+    pub file_count: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioTrackAnalysis {
@@ -693,6 +701,22 @@ pub async fn clear_cached_spectrum_audio(
 }
 
 #[tauri::command]
+pub async fn get_song_cache_info(app: AppHandle) -> Result<SongCacheInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || song_cache_info_impl(&app))
+        .await
+        .map_err(|error| error_to_string(anyhow!("Failed to join song cache info task: {error}")))?
+        .map_err(error_to_string)
+}
+
+#[tauri::command]
+pub async fn clear_song_cache(app: AppHandle) -> Result<SongCacheInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || clear_song_cache_impl(&app))
+        .await
+        .map_err(|error| error_to_string(anyhow!("Failed to join song cache cleanup task: {error}")))?
+        .map_err(error_to_string)
+}
+
+#[tauri::command]
 pub async fn analyze_local_audio_spectrum(
     app: AppHandle,
     request: AudioSpectrumAnalysisRequest,
@@ -946,6 +970,55 @@ fn clear_cached_spectrum_audio_impl(app: &AppHandle, path: String) -> anyhow::Re
     })?;
 
     Ok(())
+}
+
+pub fn clear_song_cache_on_exit(app: &AppHandle) -> anyhow::Result<()> {
+    clear_song_cache_impl(app).map(|_| ())
+}
+
+fn song_cache_dir(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    Ok(app
+        .path()
+        .app_cache_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .context("Failed to resolve app cache directory")?
+        .join("spectrum-cache"))
+}
+
+fn song_cache_info_impl(app: &AppHandle) -> anyhow::Result<SongCacheInfo> {
+    let cache_dir = song_cache_dir(app)?;
+    let mut size_bytes: u64 = 0;
+    let mut file_count: u64 = 0;
+
+    if cache_dir.exists() {
+        for entry in fs::read_dir(&cache_dir)
+            .with_context(|| format!("Failed to read song cache directory {}", cache_dir.display()))?
+        {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_file() {
+                size_bytes = size_bytes.saturating_add(metadata.len());
+                file_count += 1;
+            }
+        }
+    }
+
+    Ok(SongCacheInfo {
+        path: cache_dir.display().to_string(),
+        size_bytes,
+        file_count,
+    })
+}
+
+fn clear_song_cache_impl(app: &AppHandle) -> anyhow::Result<SongCacheInfo> {
+    let cache_dir = song_cache_dir(app)?;
+    if cache_dir.exists() {
+        fs::remove_dir_all(&cache_dir)
+            .with_context(|| format!("Failed to clear song cache directory {}", cache_dir.display()))?;
+    }
+    fs::create_dir_all(&cache_dir)
+        .with_context(|| format!("Failed to create song cache directory {}", cache_dir.display()))?;
+    song_cache_info_impl(app)
 }
 
 fn resolve_audio_analysis_target_path(

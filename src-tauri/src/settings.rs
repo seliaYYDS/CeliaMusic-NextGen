@@ -11,7 +11,7 @@ use fontdb::Database;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 11;
+const SETTINGS_SCHEMA_VERSION: u32 = 12;
 const DEFAULT_SETTINGS_FILE: &str = "app-settings.json";
 pub const DEFAULT_WINDOW_WIDTH: u32 = 960;
 pub const DEFAULT_WINDOW_HEIGHT: u32 = 600;
@@ -208,6 +208,7 @@ pub struct PlaybackSettings {
     pub muted: bool,
     pub playback_mode: String,
     pub cache_mode: String,
+    pub auto_clear_song_cache_on_exit: bool,
     pub system_media_info_sync: bool,
     pub remember_queue: bool,
     pub remember_playback_position: bool,
@@ -239,6 +240,7 @@ impl Default for PlaybackSettings {
             muted: false,
             playback_mode: "ordered".to_string(),
             cache_mode: "stream".to_string(),
+            auto_clear_song_cache_on_exit: false,
             system_media_info_sync: true,
             remember_queue: true,
             remember_playback_position: true,
@@ -298,11 +300,15 @@ impl Default for LibrarySettings {
 pub struct NetworkSettings {
     pub enabled_sources: Vec<String>,
     pub use_local_api_server: bool,
+    pub use_local_kugou_api_server: bool,
     pub request_timeout_ms: u64,
     pub netease_api_base_url: String,
     pub netease_cookie: String,
     pub netease_proxy: String,
     pub netease_real_ip: String,
+    pub kugou_api_base_url: String,
+    pub kugou_cookie: String,
+    pub kugou_dfid: String,
 }
 
 impl Default for NetworkSettings {
@@ -310,11 +316,15 @@ impl Default for NetworkSettings {
         Self {
             enabled_sources: vec!["netease".to_string()],
             use_local_api_server: false,
+            use_local_kugou_api_server: false,
             request_timeout_ms: 15000,
             netease_api_base_url: "http://127.0.0.1:3000".to_string(),
             netease_cookie: String::new(),
             netease_proxy: String::new(),
             netease_real_ip: String::new(),
+            kugou_api_base_url: "http://127.0.0.1:3001".to_string(),
+            kugou_cookie: String::new(),
+            kugou_dfid: String::new(),
         }
     }
 }
@@ -771,6 +781,12 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     settings.network.netease_cookie = settings.network.netease_cookie.trim().to_string();
     settings.network.netease_proxy = settings.network.netease_proxy.trim().to_string();
     settings.network.netease_real_ip = settings.network.netease_real_ip.trim().to_string();
+    settings.network.kugou_api_base_url = sanitize_url_or_fallback(
+        settings.network.kugou_api_base_url,
+        "http://127.0.0.1:3001",
+    );
+    settings.network.kugou_cookie = settings.network.kugou_cookie.trim().to_string();
+    settings.network.kugou_dfid = settings.network.kugou_dfid.trim().to_string();
     settings.lyrics.delay_ms = settings.lyrics.delay_ms.clamp(-1000, 1000);
     settings.lyrics.font_family = sanitize_non_empty(settings.lyrics.font_family, "system-ui");
     settings.lyrics.font_weight = settings.lyrics.font_weight.clamp(100, 900);
@@ -947,12 +963,17 @@ fn sanitize_enabled_sources(values: Vec<String>) -> Vec<String> {
     let has_netease = deduped
         .iter()
         .any(|value| value.eq_ignore_ascii_case("netease"));
+    let has_kugou = deduped
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case("kugou"));
 
-    if has_netease {
-        vec!["netease".to_string()]
-    } else {
-        Vec::new()
-    }
+    [
+        has_netease.then(|| "netease".to_string()),
+        has_kugou.then(|| "kugou".to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn error_to_string(error: anyhow::Error) -> String {

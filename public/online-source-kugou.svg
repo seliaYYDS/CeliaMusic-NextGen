@@ -1,0 +1,9 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <mask id="kugou-cutout">
+      <rect width="24" height="24" fill="#ffffff"/>
+      <path fill="#000000" d="M7.5 5.5h3.4v4.45l4.12-4.45h3.9l-4.93 5.45 5.12 7.55h-3.95l-4.26-6.1v6.1H7.5z"/>
+    </mask>
+  </defs>
+  <rect x="2" y="2" width="20" height="20" rx="5" fill="#ffffff" mask="url(#kugou-cutout)"/>
+</svg>

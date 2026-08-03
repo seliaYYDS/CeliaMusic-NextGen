@@ -11,8 +11,8 @@ use anyhow::{anyhow, Context};
 use reqwest::{
     blocking::Client,
     header::{
-        HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_DISPOSITION,
-        CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE,
+        HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE,
+        CONTENT_TYPE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE,
     },
 };
 use serde::Serialize;
@@ -85,7 +85,9 @@ fn build_status(runtime: &MediaProxyRuntime) -> MediaProxyServerStatus {
     }
 }
 
-pub fn ensure_media_proxy_server(state: &MediaProxyState) -> anyhow::Result<MediaProxyServerStatus> {
+pub fn ensure_media_proxy_server(
+    state: &MediaProxyState,
+) -> anyhow::Result<MediaProxyServerStatus> {
     let mut runtime = state
         .runtime
         .lock()
@@ -95,8 +97,8 @@ pub fn ensure_media_proxy_server(state: &MediaProxyState) -> anyhow::Result<Medi
         return Ok(build_status(&runtime));
     }
 
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .context("failed to bind media proxy listener")?;
+    let listener =
+        TcpListener::bind(("127.0.0.1", 0)).context("failed to bind media proxy listener")?;
     let port = listener
         .local_addr()
         .context("failed to resolve media proxy listener address")?
@@ -142,11 +144,30 @@ fn handle_media_proxy_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     }
 
     if !request.method.eq_ignore_ascii_case("GET") && !request.method.eq_ignore_ascii_case("HEAD") {
-        write_text_response(&mut stream, 405, "Method Not Allowed", "Method not allowed.")?;
+        write_text_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "Method not allowed.",
+        )?;
         return Ok(());
     }
 
     let proxy_request = parse_proxy_target_request(&request.target)?;
+    let upstream_host = Url::parse(&proxy_request.remote_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_else(|| "invalid".to_string());
+    eprintln!(
+        "[media-proxy] forwarding method={} host={} range={}",
+        request.method,
+        upstream_host,
+        request
+            .headers
+            .get("range")
+            .map(String::as_str)
+            .unwrap_or("none")
+    );
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(12))
         .redirect(reqwest::redirect::Policy::limited(5))
@@ -190,6 +211,10 @@ fn handle_media_proxy_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     let mut upstream_response = match upstream_request.send() {
         Ok(response) => response,
         Err(error) => {
+            eprintln!(
+                "[media-proxy] upstream request failed host={} error={error}",
+                upstream_host
+            );
             write_text_response(
                 &mut stream,
                 502,
@@ -201,14 +226,28 @@ fn handle_media_proxy_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     };
 
     let upstream_status = upstream_response.status();
+    eprintln!(
+        "[media-proxy] upstream response method={} host={} status={} content_type={} content_length={}",
+        request.method,
+        upstream_host,
+        upstream_status.as_u16(),
+        upstream_response.headers().get(CONTENT_TYPE).and_then(header_value_to_string).unwrap_or_else(|| "unknown".to_string()),
+        upstream_response.headers().get(CONTENT_LENGTH).and_then(header_value_to_string).unwrap_or_else(|| "unknown".to_string()),
+    );
     let mut response_headers = Vec::<(String, String)>::new();
     response_headers.push(("Cache-Control".to_string(), "no-store".to_string()));
     response_headers.push(("Connection".to_string(), "close".to_string()));
 
     let upstream_headers = upstream_response.headers();
-    if let Some(value) = upstream_headers.get(CONTENT_TYPE).and_then(header_value_to_string) {
+    if let Some(value) = upstream_headers
+        .get(CONTENT_TYPE)
+        .and_then(header_value_to_string)
+    {
         response_headers.push(("Content-Type".to_string(), value));
-    } else if let Some(mime_type) = proxy_request.mime_type.filter(|value| !value.trim().is_empty()) {
+    } else if let Some(mime_type) = proxy_request
+        .mime_type
+        .filter(|value| !value.trim().is_empty())
+    {
         response_headers.push(("Content-Type".to_string(), mime_type));
     }
 
@@ -220,7 +259,10 @@ fn handle_media_proxy_connection(mut stream: TcpStream) -> anyhow::Result<()> {
         ETAG,
         LAST_MODIFIED,
     ] {
-        if let Some(value) = upstream_headers.get(&header_name).and_then(header_value_to_string) {
+        if let Some(value) = upstream_headers
+            .get(&header_name)
+            .and_then(header_value_to_string)
+        {
             response_headers.push((header_name.to_string(), value));
         }
     }
@@ -237,11 +279,20 @@ fn handle_media_proxy_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     )?;
 
     if request.method.eq_ignore_ascii_case("HEAD") {
+        eprintln!(
+            "[media-proxy] response completed method=HEAD host={} status={}",
+            upstream_host,
+            upstream_status.as_u16()
+        );
         return Ok(());
     }
 
-    io::copy(&mut upstream_response, &mut stream)
-        .context("failed to proxy media response body")?;
+    io::copy(&mut upstream_response, &mut stream).context("failed to proxy media response body")?;
+    eprintln!(
+        "[media-proxy] response body completed host={} status={}",
+        upstream_host,
+        upstream_status.as_u16()
+    );
     Ok(())
 }
 

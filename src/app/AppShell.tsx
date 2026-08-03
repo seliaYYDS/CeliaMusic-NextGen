@@ -40,6 +40,7 @@ import {
   analyzeLocalAudioTrack,
   type AudioTrackAnalysis,
   cacheRemoteAudio,
+  clearSongCache,
   clearCachedRemoteAudio,
   clearMediaLibrary,
   deleteMediaTracks,
@@ -48,6 +49,9 @@ import {
   listMediaLibrary,
   type LocalSongMetadataInspection,
   loadLocalLyricsBundle,
+  getSongCacheInfo,
+  getMediaProxyServerStatus,
+  type SongCacheInfo,
   saveLocalSongMetadata,
   saveLocalLyricsBundle,
 } from "../media/library";
@@ -98,6 +102,32 @@ import {
   updateNeteasePlaylistName,
 } from "../network/netease";
 import {
+  checkKugouQrLoginStatus,
+  buildKugouTrackCacheKey,
+  cacheKugouSongDetails,
+  createKugouQrLoginSession,
+  getKugouAlbumDetail,
+  getKugouAlbumSongsPage,
+  getKugouArtistAlbumsPage,
+  getKugouArtistDetail,
+  getKugouArtistSongsPage,
+  getCachedKugouSongDetail,
+  getKugouLoggedInAccount,
+  getKugouPlaylistTracks,
+  getKugouSongDetail,
+  getKugouUserPlaylists,
+  isKugouSourceEnabled,
+  mergeKugouLoginCookie,
+  parseKugouTrackHashFromCacheKey,
+  registerKugouDevice,
+  registerResolvedKugouTrackToLibrary,
+  refreshKugouLogin,
+  resolveKugouTrack,
+  searchKugouArtists,
+  setLocalKugouApiRuntimeBaseUrl,
+  testKugouApiConnection,
+} from "../network/kugou";
+import {
   downloadNeteaseSong,
   SONG_DOWNLOAD_PROGRESS_EVENT,
   type SongDownloadProgressEvent,
@@ -113,6 +143,14 @@ import type {
   NeteaseSongDetail,
   NeteaseSongLyrics,
   NeteaseSongSearchResult,
+  KugouAccountProfile,
+  KugouAlbumDetail,
+  KugouAlbumSummary,
+  KugouArtistDetail,
+  KugouPlaylistSummary,
+  KugouQrLoginSession,
+  KugouResolvedTrack,
+  KugouSongDetail,
 } from "../network/types";
 import {
   getAppSettings,
@@ -200,6 +238,20 @@ import playerIcon from "../../icon.png";
 import "./styles.css";
 
 const APP_DOCUMENT_TITLE = "Celia Music Next Gen";
+
+function summarizeKugouPlaybackHash(hash: string) {
+  const normalized = hash.trim();
+  return normalized.length <= 14 ? normalized : `${normalized.slice(0, 8)}...${normalized.slice(-6)}`;
+}
+
+function summarizePlaybackUrlHost(value: string) {
+  try {
+    return new URL(value).host || "unknown";
+  } catch {
+    return "invalid";
+  }
+}
+
 const SYSTEM_MEDIA_SYNC_SEEK_STEP_SECONDS = 5;
 
 const navItemIds = ["home", "explore", "favorites", "playlist", "library", "tools", "settings"] as const;
@@ -947,9 +999,12 @@ const UI_COPY = {
         },
         network: {
           eyebrow: "网络",
-          title: "网易云在线服务",
-          sourceLabel: "启用网易云在线源",
-          sourceDescription: "启用网易云在线功能。",
+          title: "在线音源",
+          sourceLabel: "启用在线音源",
+          sourceDescription: "启用在线搜索、歌曲解析与播放功能。",
+          sourceSelectorLabel: "当前音源",
+          neteaseSourceLabel: "网易云音乐",
+          kugouSourceLabel: "酷狗音乐",
           localApiLabel: "使用本地 API 服务器",
           localApiDescription: "启动时自动使用本地 API 服务。",
           localApiStatusTitle: "本地 API 状态",
@@ -996,6 +1051,10 @@ const UI_COPY = {
           accountVipActive: "已开通",
           accountVipInactive: "未开通",
           accountSignatureEmpty: "这个账号还没有设置个性签名。",
+          kugouApiBaseUrlLabel: "KuGouMusicApi 地址",
+          kugouApiBaseUrlHelper: "填写 KuGouMusicApi 服务地址，默认使用 http://127.0.0.1:3001。",
+          kugouCookieLabel: "酷狗登录凭证",
+          kugouCookieHelper: "包含 token、userid、dfid、t1 等登录和设备凭证。",
         },
       },
     },
@@ -1364,9 +1423,12 @@ const UI_COPY = {
         },
         network: {
           eyebrow: "Network",
-          title: "Netease Online Service",
-          sourceLabel: "Enable Netease Source",
-          sourceDescription: "Enable Netease-powered online search, track resolving, and streaming features.",
+          title: "Online Sources",
+          sourceLabel: "Enable Online Sources",
+          sourceDescription: "Enable online search, track resolving, and streaming features.",
+          sourceSelectorLabel: "Active Source",
+          neteaseSourceLabel: "Netease Cloud Music",
+          kugouSourceLabel: "KuGou Music",
           localApiLabel: "Use Local API Server",
           localApiDescription: "When enabled, the app starts a local NeteaseCloudMusicApi server through the system Node.js / npx environment on launch and prefers the local 127.0.0.1 endpoint.",
           localApiStatusTitle: "Local API Status",
@@ -1413,6 +1475,10 @@ const UI_COPY = {
           accountVipActive: "Active",
           accountVipInactive: "Inactive",
           accountSignatureEmpty: "This account has not set a signature yet.",
+          kugouApiBaseUrlLabel: "KuGouMusicApi Base URL",
+          kugouApiBaseUrlHelper: "Enter the KuGouMusicApi service address. The default is http://127.0.0.1:3001.",
+          kugouCookieLabel: "KuGou Credentials",
+          kugouCookieHelper: "Includes token, userid, dfid, t1, and other login and device credentials.",
         },
       },
     },
@@ -3225,6 +3291,9 @@ type ExploreDetailRequest =
       key: number;
     }
   | null;
+type KugouCatalogDetailRequest =
+  | { kind: "artist" | "album"; id: string; name: string; key: number }
+  | null;
 type KugouImportLogEntry = {
   sourceIndex: number;
   trackTitle: string;
@@ -3390,6 +3459,37 @@ function dedupeNeteaseSongDetailsById(songs: NeteaseSongDetail[]) {
 
     return collection;
   }, []);
+}
+
+function dedupeKugouSongDetailsByHash(songs: KugouSongDetail[]) {
+  return songs.reduce<KugouSongDetail[]>((collection, song) => {
+    if (!collection.some((item) => item.hash === song.hash)) collection.push(song);
+    return collection;
+  }, []);
+}
+
+function createKugouSongDetailFromTrack(track: TrackRecord, hash: string): KugouSongDetail {
+  return {
+    id: hash,
+    hash,
+    albumAudioId: null,
+    name: track.title,
+    artists: track.artist ? track.artist.split(" / ").map((value) => value.trim()).filter(Boolean) : [],
+    artistIds: [],
+    album: track.album,
+    albumId: null,
+    albumArtist: track.albumArtist,
+    durationMs: track.durationMs,
+    artworkUrl: null,
+    trackNumber: track.trackNumber,
+    discNumber: track.discNumber,
+    year: track.year,
+    mvId: null,
+    fee: null,
+    requiresVip: false,
+    copyrightRestricted: false,
+    unavailableMessage: null,
+  };
 }
 
 function formatDownloadProgressMessage(
@@ -4326,6 +4426,8 @@ export function AppShell({
     useState<LibraryNavigationRequest>(null);
   const [exploreDetailRequest, setExploreDetailRequest] =
     useState<ExploreDetailRequest>(null);
+  const [kugouCatalogDetailRequest, setKugouCatalogDetailRequest] =
+    useState<KugouCatalogDetailRequest>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [libraryView, setLibraryView] = useState<LibraryView>("hub");
   const [librarySelectedArtist, setLibrarySelectedArtist] = useState<string | null>(null);
@@ -4443,6 +4545,7 @@ export function AppShell({
   const [isPlaylistEditorClosing, setIsPlaylistEditorClosing] = useState(false);
   const [isSubmittingPlaylistEditor, setIsSubmittingPlaylistEditor] = useState(false);
   const [isTestingNeteaseApi, setIsTestingNeteaseApi] = useState(false);
+  const [isTestingKugouApi, setIsTestingKugouApi] = useState(false);
   const [localNeteaseApiStatus, setLocalNeteaseApiStatus] =
     useState<LocalNeteaseApiServerStatus | null>(null);
   const localNeteaseApiStatusRef = useRef<LocalNeteaseApiServerStatus | null>(null);
@@ -4616,7 +4719,10 @@ export function AppShell({
   const copy = getUiCopy(settings.appearance.language);
   const localeStrings = getLocaleStrings(copy.locale);
   const playlistEditorCopy = getPlaylistEditorCopy(copy.locale);
-  const isOnlineFeaturesAvailable = isNeteaseSourceEnabled(settings);
+  const isOnlineFeaturesAvailable = settings.network.enabledSources.some((source) => {
+    const normalizedSource = source.trim().toLowerCase();
+    return normalizedSource === "netease" || normalizedSource === "kugou";
+  });
   const hasSavedNeteaseCookie = settings.network.neteaseCookie.trim().length > 0;
   const navItems = navItemIds
     .filter(
@@ -7129,7 +7235,8 @@ export function AppShell({
     let pollTimer = 0;
     let hasReportedStartFailure = false;
     const shouldManageLocalApi =
-      settings.network.useLocalApiServer && settings.network.enabledSources.includes("netease");
+      (settings.network.useLocalApiServer && settings.network.enabledSources.includes("netease")) ||
+      (settings.network.useLocalKugouApiServer && settings.network.enabledSources.includes("kugou"));
     const disableLocalApiServerSetting = async () => {
       const currentSettings = settingsRef.current;
       if (!currentSettings.network.useLocalApiServer) {
@@ -7140,7 +7247,12 @@ export function AppShell({
         ...currentSettings,
         network: {
           ...currentSettings.network,
-          useLocalApiServer: false,
+          useLocalApiServer: currentSettings.network.enabledSources.includes("netease")
+            ? false
+            : currentSettings.network.useLocalApiServer,
+          useLocalKugouApiServer: currentSettings.network.enabledSources.includes("kugou")
+            ? false
+            : currentSettings.network.useLocalKugouApiServer,
         },
       };
 
@@ -7166,7 +7278,14 @@ export function AppShell({
 
         setLocalNeteaseApiStatus(status);
         setLocalNeteaseApiRuntimeBaseUrl(
-          status.enabled ? status.url.replace(/\/+$/, "") : null,
+          settings.network.enabledSources.includes("netease") && status.enabled
+            ? status.url.replace(/\/+$/, "")
+            : null,
+        );
+        setLocalKugouApiRuntimeBaseUrl(
+          settings.network.enabledSources.includes("kugou") && status.enabled
+            ? status.url.replace(/\/+$/, "")
+            : null,
         );
         if (
           shouldManageLocalApi &&
@@ -7187,6 +7306,7 @@ export function AppShell({
         console.error("[network] failed to sync local netease api server", error);
         setLocalNeteaseApiStatus(null);
         setLocalNeteaseApiRuntimeBaseUrl(null);
+        setLocalKugouApiRuntimeBaseUrl(null);
         if (shouldManageLocalApi && !hasReportedStartFailure) {
           hasReportedStartFailure = true;
           pushDynamicIslandNotification(localeStrings.notifications.localApiServerStartFailed);
@@ -7210,6 +7330,7 @@ export function AppShell({
     } else {
       setLocalNeteaseApiStatus(null);
       setLocalNeteaseApiRuntimeBaseUrl(null);
+      setLocalKugouApiRuntimeBaseUrl(null);
     }
 
     return () => {
@@ -7227,6 +7348,8 @@ export function AppShell({
     settings.network.neteaseProxy,
     settings.network.neteaseRealIp,
     settings.network.useLocalApiServer,
+    settings.network.kugouApiBaseUrl,
+    settings.network.useLocalKugouApiServer,
   ]);
 
   useEffect(() => {
@@ -9027,48 +9150,75 @@ export function AppShell({
     }
 
     const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(track.playback.cacheKey);
-    if (!neteaseTrackId || !isNeteaseSourceEnabled(settingsRef.current)) {
-      throw new Error("The selected track does not have any playable source.");
+    if (neteaseTrackId && isNeteaseSourceEnabled(settingsRef.current)) {
+      const resolvedTrack = await resolveNeteaseTrack(settingsRef.current, neteaseTrackId);
+      syncPlaybarArtworkOverrideUrl(resolvedTrack.detail.artworkUrl ?? null);
+
+      let readyTrack: TrackRecord;
+      if (!isPersistedTrack) {
+        const transientTrack = createTransientNeteaseTrack(resolvedTrack.detail, resolvedTrack);
+        upsertTransientRemoteEntries([
+          {
+            track: transientTrack,
+            artworkUrl: resolvedTrack.detail.artworkUrl ?? null,
+          },
+        ]);
+
+        if (options?.announceNotice !== false && resolvedTrack.notice) {
+          pushDynamicIslandNotification(resolvedTrack.notice);
+        }
+
+        readyTrack = transientTrack;
+      } else {
+        const updatedTrack = await registerResolvedNeteaseTrackToLibrary(resolvedTrack);
+        const refreshedLibrary = await refreshMediaLibrarySnapshot();
+        readyTrack =
+          refreshedLibrary.tracks.find((item) => item.playback.cacheKey === updatedTrack.playback.cacheKey) ??
+          refreshedLibrary.tracks.find((item) => item.id === updatedTrack.id) ??
+          updatedTrack;
+      }
+
+      if (cacheMode === "complete" || shouldPreferCachedPlayback) {
+        await ensureTrackPlaybackCache(readyTrack, {
+          waitForCompletion: true,
+        });
+      }
+
+      if (options?.announceNotice !== false && resolvedTrack.notice) {
+        pushDynamicIslandNotification(resolvedTrack.notice);
+      }
+
+      return readyTrack;
     }
 
-    const resolvedTrack = await resolveNeteaseTrack(settingsRef.current, neteaseTrackId);
-    syncPlaybarArtworkOverrideUrl(resolvedTrack.detail.artworkUrl ?? null);
-
-    let readyTrack: TrackRecord;
-    if (!isPersistedTrack) {
-      const transientTrack = createTransientNeteaseTrack(resolvedTrack.detail, resolvedTrack);
+    const kugouHash = parseKugouTrackHashFromCacheKey(track.playback.cacheKey);
+    if (kugouHash && isKugouSourceEnabled(settingsRef.current)) {
+      console.warn("[kugou-playback] resolving queued track", { hash: summarizeKugouPlaybackHash(kugouHash) });
+      const resolvedTrack = await resolveKugouTrack(
+        settingsRef.current,
+        createKugouSongDetailFromTrack(track, kugouHash),
+      );
+      const mediaProxy = await getMediaProxyServerStatus();
+      if (!mediaProxy.running || !mediaProxy.url.trim()) {
+        throw new Error(mediaProxy.message ?? "Media proxy is unavailable.");
+      }
+      const proxiedStreams = proxyKugouPlaybackStreams(resolvedTrack, mediaProxy.url);
+      const transientTrack = createTransientKugouTrack(resolvedTrack.detail, proxiedStreams);
       upsertTransientRemoteEntries([
         {
           track: transientTrack,
           artworkUrl: resolvedTrack.detail.artworkUrl ?? null,
         },
       ]);
-
-      if (options?.announceNotice !== false && resolvedTrack.notice) {
-        pushDynamicIslandNotification(resolvedTrack.notice);
-      }
-
-      readyTrack = transientTrack;
-    } else {
-      const updatedTrack = await registerResolvedNeteaseTrackToLibrary(resolvedTrack);
-      const refreshedLibrary = await refreshMediaLibrarySnapshot();
-      readyTrack =
-        refreshedLibrary.tracks.find((item) => item.playback.cacheKey === updatedTrack.playback.cacheKey) ??
-        refreshedLibrary.tracks.find((item) => item.id === updatedTrack.id) ??
-        updatedTrack;
-    }
-
-    if (cacheMode === "complete" || shouldPreferCachedPlayback) {
-      await ensureTrackPlaybackCache(readyTrack, {
-        waitForCompletion: true,
+      syncPlaybarArtworkOverrideUrl(resolvedTrack.detail.artworkUrl ?? null);
+      console.warn("[kugou-playback] queued track resolved", {
+        hash: summarizeKugouPlaybackHash(kugouHash),
+        fallbackCount: proxiedStreams.fallbackStreams.length,
       });
+      return transientTrack;
     }
 
-    if (options?.announceNotice !== false && resolvedTrack.notice) {
-      pushDynamicIslandNotification(resolvedTrack.notice);
-    }
-
-    return readyTrack;
+    throw new Error("The selected track does not have any playable source.");
   };
 
   const requestPreparedPlayback = async (
@@ -10020,6 +10170,9 @@ export function AppShell({
         if (audio.dataset.trackId) {
           schedulePlaybackLoadTimeout(audio, audio.dataset.trackId);
         }
+        if (audio.dataset.trackId?.startsWith("kugou:")) {
+          console.warn("[kugou-playback] audio load started", { slot: entry.slot, trackId: audio.dataset.trackId, sourceHost: summarizePlaybackUrlHost(audio.currentSrc || audio.src) });
+        }
         setIsPlaybackLoading(true);
       };
 
@@ -10029,6 +10182,9 @@ export function AppShell({
         }
 
         clearPlaybackLoadTimeout();
+        if (audio.dataset.trackId?.startsWith("kugou:")) {
+          console.warn("[kugou-playback] audio can play", { slot: entry.slot, trackId: audio.dataset.trackId, readyState: audio.readyState, sourceHost: summarizePlaybackUrlHost(audio.currentSrc || audio.src) });
+        }
         setIsPlaybackLoading(false);
       };
 
@@ -10037,6 +10193,9 @@ export function AppShell({
           return;
         }
 
+        if (audio.dataset.trackId?.startsWith("kugou:")) {
+          console.warn("[kugou-playback] audio playback started", { slot: entry.slot, trackId: audio.dataset.trackId, currentTime: audio.currentTime, sourceHost: summarizePlaybackUrlHost(audio.currentSrc || audio.src) });
+        }
         clearPlaybackLoadTimeout();
         const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
         syncPlaybackVisualState({
@@ -10135,6 +10294,9 @@ export function AppShell({
         if (!isActiveAudio()) {
           return;
         }
+        if (audio.dataset.trackId?.startsWith("kugou:")) {
+          console.warn("[kugou-playback] audio waiting", { slot: entry.slot, trackId: audio.dataset.trackId, readyState: audio.readyState, networkState: audio.networkState, sourceHost: summarizePlaybackUrlHost(audio.currentSrc || audio.src) });
+        }
 
         setIsPlaybackLoading(true);
       };
@@ -10142,6 +10304,9 @@ export function AppShell({
       const handleError = () => {
         if (!isActiveAudio()) {
           return;
+        }
+        if (audio.dataset.trackId?.startsWith("kugou:")) {
+          console.error("[kugou-playback] audio error", { slot: entry.slot, trackId: audio.dataset.trackId, errorCode: audio.error?.code ?? null, errorMessage: audio.error?.message ?? null, networkState: audio.networkState, readyState: audio.readyState, sourceHost: summarizePlaybackUrlHost(audio.currentSrc || audio.src) });
         }
         handlePlaybackLoadFailure(audio);
       };
@@ -12716,6 +12881,72 @@ export function AppShell({
     }
   };
 
+  const handlePlayKugouTrackSelection = async (
+    hash: string,
+    queueSongs: KugouSongDetail[],
+    sourcePlaylist?: PlaylistSelection,
+  ) => {
+    const sourceEnabled = isKugouSourceEnabled(settingsRef.current);
+    console.warn("[kugou-playback] selection requested", { hash: summarizeKugouPlaybackHash(hash), queueSize: queueSongs.length, sourceEnabled });
+    if (!sourceEnabled) {
+      pushDynamicIslandNotification(copy.locale === "en-US" ? "KuGou source is disabled" : "酷狗在线源已关闭");
+      return;
+    }
+    cancelPendingPlaybackRestore();
+    const requestId = beginPlaybackRequest();
+    try {
+      disableLockedQueuePlaybackMode();
+      pauseActiveTrackForTransition();
+      setIsPlaybackLoading(true);
+      const normalizedQueue = dedupeKugouSongDetailsByHash(queueSongs);
+      cacheKugouSongDetails(normalizedQueue);
+      const targetSeedDetail = normalizedQueue.find((song) => song.hash === hash) ?? null;
+      if (!targetSeedDetail) throw new Error("KuGou track was not found in the playback queue.");
+      const targetHash = targetSeedDetail.hash.trim().toUpperCase();
+      console.warn("[kugou-playback] selection started", { requestId, hash: summarizeKugouPlaybackHash(hash), queueSize: normalizedQueue.length });
+      const activeSettings = settingsRef.current;
+      const previewTrack = createTransientKugouTrack(targetSeedDetail);
+      upsertTransientRemoteEntries([{ track: previewTrack, artworkUrl: targetSeedDetail.artworkUrl }]);
+      previewPlaybarTrackLoading(previewTrack);
+      syncPlaybarArtworkOverrideUrl(targetSeedDetail.artworkUrl ?? null);
+      const targetResolution = await resolveKugouTrack(activeSettings, targetSeedDetail);
+      console.warn("[kugou-playback] resolver returned streams", {
+        requestId,
+        hash: summarizeKugouPlaybackHash(targetResolution.detail.hash),
+        primaryHost: summarizePlaybackUrlHost(targetResolution.stream.url),
+        fallbackCount: targetResolution.fallbackStreams.length,
+        fallbackHosts: targetResolution.fallbackStreams.map((stream) => summarizePlaybackUrlHost(stream.url)),
+      });
+      const mediaProxy = await getMediaProxyServerStatus();
+      console.warn("[kugou-playback] media proxy status", { requestId, running: mediaProxy.running, port: mediaProxy.port, message: mediaProxy.message ?? null });
+      if (!mediaProxy.running || !mediaProxy.url.trim()) throw new Error(mediaProxy.message ?? "Media proxy is unavailable.");
+      const playbackStreams = proxyKugouPlaybackStreams(targetResolution, mediaProxy.url);
+      console.warn("[kugou-playback] streams proxied", { requestId, proxyHost: summarizePlaybackUrlHost(playbackStreams.stream.url), streamCount: playbackStreams.fallbackStreams.length + 1 });
+      if (!isPlaybackRequestCurrent(requestId)) return;
+      const resolvedQueue = normalizedQueue.map((song) => {
+        const isTarget = song.hash.trim().toUpperCase() === targetHash;
+        const trackDetail = isTarget ? targetResolution.detail : song;
+        return {
+          track: createTransientKugouTrack(trackDetail, isTarget ? playbackStreams : undefined),
+          artworkUrl: trackDetail.artworkUrl ?? null,
+        };
+      });
+      upsertTransientRemoteEntries(resolvedQueue, { protectedTrackIds: sourcePlaylist ? resolvedQueue.map((entry) => entry.track.id) : undefined });
+      const injectedTrack = resolvedQueue.find((entry) => entry.track.id === buildKugouTrackCacheKey(targetHash))?.track ?? null;
+      console.warn("[kugou-playback] committing playback selection", { requestId, hash: summarizeKugouPlaybackHash(targetHash), queueSize: resolvedQueue.length, injectedPrimaryUri: Boolean(injectedTrack?.playback.primaryUri), injectedFallbackCount: injectedTrack?.playback.fallbackUris.length ?? 0 });
+      commitPlaybackSelection(buildKugouTrackCacheKey(targetHash), resolvedQueue.map((entry) => entry.track.id), { autoplay: true });
+      setPlaybackQueueSourcePlaylist(sourcePlaylist ?? null);
+      void registerResolvedKugouTrackToLibrary(targetResolution).then(() => refreshMediaLibrarySnapshot()).catch((error) => console.error("[player] failed to persist current kugou track", error));
+      if (targetResolution.notice) pushDynamicIslandNotification(targetResolution.notice);
+    } catch (error) {
+      if (!isPlaybackRequestCurrent(requestId)) return;
+      console.error("[player] failed to play kugou track", error);
+      console.error("[kugou-playback] selection failed", { requestId, hash: summarizeKugouPlaybackHash(hash), error: error instanceof Error ? error.message : String(error) });
+      setIsPlaybackLoading(false);
+      pushDynamicIslandNotification(localeStrings.notifications.playbackFailed);
+    }
+  };
+
   const bufferPersonalFmQueue = async (limit = 4) => {
     if (
       isPersonalFmBufferingRef.current ||
@@ -14237,6 +14468,73 @@ export function AppShell({
     }
   };
 
+  const handleTestKugouApi = async () => {
+    if (!settings.network.enabledSources.includes("kugou")) {
+      pushDynamicIslandNotification(copy.locale === "en-US" ? "KuGou source is disabled" : "酷狗在线源已关闭");
+      return;
+    }
+
+    setIsTestingKugouApi(true);
+    try {
+      if (settings.network.useLocalKugouApiServer) {
+        const status = await syncLocalNeteaseApiServer(settings);
+        setLocalNeteaseApiStatus(status);
+        setLocalKugouApiRuntimeBaseUrl(status.enabled ? status.url.replace(/\/+$/, "") : null);
+      }
+      await testKugouApiConnection(settings);
+      pushDynamicIslandNotification(copy.locale === "en-US" ? "KuGou API connected" : "酷狗 API 连接成功");
+    } catch (error) {
+      console.error("[network] failed to test kugou api", error);
+      pushDynamicIslandNotification(copy.locale === "en-US" ? "Failed to connect to KuGou API" : "酷狗 API 连接失败");
+    } finally {
+      setIsTestingKugouApi(false);
+    }
+  };
+
+  const createTransientKugouTrack = (
+    detail: KugouSongDetail,
+    resolved?: Pick<KugouResolvedTrack, "stream" | "fallbackStreams"> | null,
+  ): TrackRecord => {
+    const cacheKey = buildKugouTrackCacheKey(detail.hash);
+    const now = Date.now();
+    const primaryUri = resolved?.stream.url ?? "";
+    const fallbackUris = resolved?.fallbackStreams.map((stream) => stream.url).filter((url, index, collection) => Boolean(url) && collection.indexOf(url) === index) ?? [];
+    return {
+      id: cacheKey,
+      source: { kind: "remoteStream", url: primaryUri, mimeType: inferMimeType(resolved?.stream.type ?? null), headers: {} },
+      playback: { mode: "remoteStream", primaryUri, fallbackUri: fallbackUris[0] ?? null, fallbackUris, cacheKey },
+      title: detail.name,
+      artist: detail.artists.join(" / ") || null,
+      album: detail.album,
+      albumArtist: detail.albumArtist,
+      durationMs: detail.durationMs,
+      trackNumber: detail.trackNumber,
+      discNumber: detail.discNumber,
+      year: detail.year,
+      genre: null,
+      artworkIds: [],
+      config: createDefaultSongConfig(),
+      importedAtMs: now,
+      updatedAtMs: now,
+    };
+  };
+
+  const proxyKugouPlaybackStreams = (
+    resolved: Pick<KugouResolvedTrack, "stream" | "fallbackStreams">,
+    proxyBaseUrl: string,
+  ): Pick<KugouResolvedTrack, "stream" | "fallbackStreams"> => {
+    const proxyStream = (stream: KugouResolvedTrack["stream"]) => {
+      const query = new URLSearchParams({ url: stream.url });
+      const mimeType = inferMimeType(stream.type ?? null);
+      if (mimeType) query.set("mime", mimeType);
+      return { ...stream, url: `${proxyBaseUrl.replace(/\/+$/, "")}/media-proxy?${query.toString()}` };
+    };
+    return {
+      stream: proxyStream(resolved.stream),
+      fallbackStreams: resolved.fallbackStreams.map(proxyStream),
+    };
+  };
+
   const handleSaveNeteaseCookie = async (cookie: string) => {
     try {
       const trimmedCookie = cookie.trim();
@@ -14259,6 +14557,41 @@ export function AppShell({
       pushDynamicIslandNotification(localeStrings.notifications.neteaseLoginSaveFailed);
       throw error;
     }
+  };
+
+  const handleSaveKugouCookie = async (cookie: string) => {
+    const normalizedCookie = cookie.trim();
+    const nextSettings: AppSettings = {
+      ...settingsRef.current,
+      network: {
+        ...settingsRef.current.network,
+        enabledSources: settingsRef.current.network.enabledSources.includes("kugou")
+          ? settingsRef.current.network.enabledSources
+          : ["kugou"],
+        kugouCookie: normalizedCookie,
+        kugouDfid: getCookieParameter(normalizedCookie, "dfid") ?? settingsRef.current.network.kugouDfid,
+      },
+    };
+    const snapshot = await saveAppSettings(nextSettings);
+    applySavedSettingsSnapshot(nextSettings, snapshot);
+    settingsRef.current = snapshot.settings;
+    setSettings(snapshot.settings);
+    return snapshot.settings;
+  };
+
+  const handleClearKugouCookie = async () => {
+    const nextSettings: AppSettings = {
+      ...settingsRef.current,
+      network: {
+        ...settingsRef.current.network,
+        kugouCookie: "",
+        kugouDfid: "",
+      },
+    };
+    const snapshot = await saveAppSettings(nextSettings);
+    applySavedSettingsSnapshot(nextSettings, snapshot);
+    settingsRef.current = snapshot.settings;
+    setSettings(snapshot.settings);
   };
 
   const handleClearNeteaseCookie = async () => {
@@ -14526,6 +14859,46 @@ export function AppShell({
     setActiveNav("explore");
   };
 
+  const openKugouCatalogView = (
+    kind: Exclude<KugouCatalogDetailRequest, null>["kind"],
+    id: string,
+    name: string,
+  ) => {
+    if (!id.trim()) {
+      return;
+    }
+    const isReplacingKugouDetail = activeNav === "explore" && kugouCatalogDetailRequest !== null;
+    if (!isReplacingKugouDetail) {
+      setExploreReturnSnapshot(captureNavigationSnapshot());
+      setPlaylistReturnSnapshot(null);
+    }
+    setExploreDetailRequest(null);
+    setActiveNav("explore");
+    setKugouCatalogDetailRequest({ kind, id, name, key: Date.now() });
+  };
+
+  const openKugouArtistView = async (artistId: string | null, artistName: string) => {
+    const normalizedName = artistName.trim();
+    if (!normalizedName) {
+      return;
+    }
+    let targetArtistId = artistId;
+    if (!targetArtistId) {
+      const candidates = await searchKugouArtists(settingsRef.current, normalizedName, { limit: 10 }).catch(() => []);
+      targetArtistId = candidates.find((candidate) => candidate.name === normalizedName)?.id ?? null;
+    }
+    if (targetArtistId) {
+      openKugouCatalogView("artist", targetArtistId, normalizedName);
+      return;
+    }
+    pushDynamicIslandNotification(copy.locale === "en-US" ? "KuGou artist was not found" : "未找到对应的酷狗歌手");
+  };
+
+  const handleBackFromKugouCatalogDetail = () => {
+    setKugouCatalogDetailRequest(null);
+    handleBackFromExploreDetail();
+  };
+
   const openLibraryArtistView = (artistName: string) => {
     const normalizedArtist = artistName.trim();
     if (!normalizedArtist) {
@@ -14609,6 +14982,23 @@ export function AppShell({
       return;
     }
 
+    const kugouHash = parseKugouTrackHashFromCacheKey(track.playback.cacheKey);
+    if (kugouHash && isKugouSourceEnabled(settingsRef.current)) {
+      setWorkspaceLoadingMessage(localeStrings.notifications.loadingArtistView);
+      try {
+        const detail = getCachedKugouSongDetail(kugouHash) ?? await getKugouSongDetail(
+          settingsRef.current,
+          createKugouSongDetailFromTrack(track, kugouHash),
+        ).catch(() => null);
+        const targetArtistId = detail?.artistIds[artistIndex] ?? (detail?.artists.length === 1 ? detail.artistIds[0] : null) ?? null;
+        const targetArtistName = detail?.artists[artistIndex] ?? detail?.artists[0] ?? artistName;
+        await openKugouArtistView(targetArtistId, targetArtistName);
+      } finally {
+        setWorkspaceLoadingMessage(null);
+      }
+      return;
+    }
+
     const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(track.playback.cacheKey);
     if (!neteaseTrackId) {
       openLibraryArtistView(artistName);
@@ -14618,7 +15008,7 @@ export function AppShell({
     setWorkspaceLoadingMessage(localeStrings.notifications.loadingArtistView);
     try {
       const detail = await getNeteaseSongDetail(settingsRef.current, neteaseTrackId).catch(() => null);
-      const targetArtistId = detail?.artistIds[artistIndex] ?? detail?.artistIds[0] ?? null;
+      const targetArtistId = detail?.artistIds[artistIndex] ?? (detail?.artists.length === 1 ? detail.artistIds[0] : null) ?? null;
       const targetArtistName = detail?.artists[artistIndex] ?? detail?.artists[0] ?? artistName;
 
       if (targetArtistId) {
@@ -14640,6 +15030,27 @@ export function AppShell({
 
     if (track.source.kind === "localFile") {
       openLibraryAlbumView(albumName);
+      return;
+    }
+
+    const kugouHash = parseKugouTrackHashFromCacheKey(track.playback.cacheKey);
+    if (kugouHash && isKugouSourceEnabled(settingsRef.current)) {
+      setWorkspaceLoadingMessage(localeStrings.notifications.loadingAlbumView);
+      try {
+        const detail = getCachedKugouSongDetail(kugouHash) ?? await getKugouSongDetail(
+          settingsRef.current,
+          createKugouSongDetailFromTrack(track, kugouHash),
+        ).catch(() => null);
+        const targetAlbumId = detail?.albumId ?? null;
+        const targetAlbumName = detail?.album ?? albumName;
+        if (targetAlbumId) {
+          openKugouCatalogView("album", targetAlbumId, targetAlbumName);
+          return;
+        }
+        openLibraryAlbumView(targetAlbumName);
+      } finally {
+        setWorkspaceLoadingMessage(null);
+      }
       return;
     }
 
@@ -15079,6 +15490,9 @@ export function AppShell({
     activeNav === "tools" ? toolsView : "",
     activeNav === "library" ? libraryView : "",
     activeNav === "playlist" ? selectedPlaylist?.id ?? "browse" : "",
+    activeNav === "explore" && kugouCatalogDetailRequest
+      ? `kugou-${kugouCatalogDetailRequest.kind}-${kugouCatalogDetailRequest.id}-${kugouCatalogDetailRequest.key}`
+      : "",
   ]
     .filter(Boolean)
     .join(":");
@@ -15130,12 +15544,16 @@ export function AppShell({
         isLoading={isSettingsLoading}
         isSaving={isSettingsSaving}
         isTestingNeteaseApi={isTestingNeteaseApi}
+        isTestingKugouApi={isTestingKugouApi}
         localNeteaseApiStatus={localNeteaseApiStatus}
         isClearingLibrary={isImportingLibrary}
         onUpdate={updateSettings}
         onSave={() => void handleSaveSettings()}
         onReset={() => void handleResetSettings()}
         onTestNeteaseApi={() => void handleTestNeteaseApi()}
+        onTestKugouApi={() => void handleTestKugouApi()}
+        onSaveKugouCookie={(cookie) => handleSaveKugouCookie(cookie)}
+        onClearKugouCookie={() => handleClearKugouCookie()}
         onSaveNeteaseCookie={(cookie) => handleSaveNeteaseCookie(cookie)}
         onClearNeteaseCookie={() => handleClearNeteaseCookie()}
         onPickScanDirectory={() => void handlePickScanDirectory()}
@@ -15180,6 +15598,19 @@ export function AppShell({
         onTrackContextMenu={handleTrackContextMenu}
         onPlaylistContextMenu={handlePlaylistContextMenu}
       />
+    ) : activeNav === "playlist" && isKugouSourceEnabled(settings) ? (
+      <KugouPlaylistScreen
+        copy={copy}
+        settings={settings}
+        dataVersion={neteaseUiVersion}
+        initialSelection={selectedPlaylist}
+        onSelectPlaylist={setSelectedPlaylist}
+        onBack={handleBackFromPlaylist}
+        backLabel={getPlaylistBackLabel(copy.locale, playlistReturnSnapshot)}
+        onOpenArtist={(id, name) => void openKugouArtistView(id, name)}
+        onOpenAlbum={(id, name) => openKugouCatalogView("album", id, name)}
+        onPlayTrack={(hash, queueSongs) => void handlePlayKugouTrackSelection(hash, queueSongs, selectedPlaylist)}
+      />
     ) : activeNav === "playlist" ? (
       <PlaylistScreen
         copy={copy}
@@ -15204,6 +15635,15 @@ export function AppShell({
         onPlaylistContextMenu={handlePlaylistContextMenu}
         onCreatePlaylist={openCreatePlaylistEditor}
         onEditPlaylist={openEditPlaylistEditor}
+      />
+    ) : activeNav === "favorites" && isKugouSourceEnabled(settings) ? (
+      <KugouLikedSongsScreen
+        copy={copy}
+        settings={settings}
+        dataVersion={neteaseUiVersion}
+        onPlayTrack={(hash, queueSongs, playlist) => void handlePlayKugouTrackSelection(hash, queueSongs, playlist)}
+        onOpenArtist={(id, name) => void openKugouArtistView(id, name)}
+        onOpenAlbum={(id, name) => openKugouCatalogView("album", id, name)}
       />
     ) : activeNav === "favorites" ? (
       <LikedSongsScreen
@@ -15329,6 +15769,16 @@ export function AppShell({
         onOpenTrackAlbum={(track) => void handleOpenTrackAlbum(track)}
         isNavigatingToRemoteDetail={workspaceLoadingMessage !== null}
         onTrackContextMenu={handleTrackContextMenu}
+      />
+    ) : activeNav === "explore" && isKugouSourceEnabled(settings) && kugouCatalogDetailRequest ? (
+      <KugouCatalogDetailScreen
+        copy={copy}
+        settings={settings}
+        request={kugouCatalogDetailRequest}
+        onBack={handleBackFromKugouCatalogDetail}
+        onOpenArtist={(id, name) => void openKugouArtistView(id, name)}
+        onOpenAlbum={(id, name) => openKugouCatalogView("album", id, name)}
+        onPlayTrack={(hash, queueSongs) => void handlePlayKugouTrackSelection(hash, queueSongs)}
       />
     ) : activeNav === "explore" ? (
       <ExploreScreen
@@ -15715,6 +16165,9 @@ export function AppShell({
                 onClick={() => {
                   setPlaylistReturnSnapshot(null);
                   setExploreReturnSnapshot(null);
+                  if (item.id !== "explore") {
+                    setKugouCatalogDetailRequest(null);
+                  }
                   setActiveNav(item.id);
                   if (item.id === "playlist") {
                     setSelectedPlaylist(null);
@@ -17410,6 +17863,7 @@ function SettingsScreen({
   isLoading,
   isSaving,
   isTestingNeteaseApi,
+  isTestingKugouApi,
   localNeteaseApiStatus,
   isClearingLibrary,
   onReleaseMemoryCache,
@@ -17417,6 +17871,9 @@ function SettingsScreen({
   onSave,
   onReset,
   onTestNeteaseApi,
+  onTestKugouApi,
+  onSaveKugouCookie,
+  onClearKugouCookie,
   onSaveNeteaseCookie,
   onClearNeteaseCookie,
   onPickScanDirectory,
@@ -17438,6 +17895,7 @@ function SettingsScreen({
   isLoading: boolean;
   isSaving: boolean;
   isTestingNeteaseApi: boolean;
+  isTestingKugouApi: boolean;
   localNeteaseApiStatus: LocalNeteaseApiServerStatus | null;
   isClearingLibrary: boolean;
   onReleaseMemoryCache: () => void;
@@ -17445,6 +17903,9 @@ function SettingsScreen({
   onSave: () => void;
   onReset: () => void;
   onTestNeteaseApi: () => void;
+  onTestKugouApi: () => void;
+  onSaveKugouCookie: (cookie: string) => Promise<AppSettings>;
+  onClearKugouCookie: () => Promise<void>;
   onSaveNeteaseCookie: (cookie: string) => Promise<void>;
   onClearNeteaseCookie: () => Promise<void>;
   onPickScanDirectory: () => void;
@@ -17464,7 +17925,29 @@ function SettingsScreen({
   const settingsSearchObserverRef = useRef<MutationObserver | null>(null);
   const [matchedSettingsKeys, setMatchedSettingsKeys] = useState<Set<string>>(() => new Set());
   const settingsSearchInstanceId = useId();
+  const [selectedOnlineSource, setSelectedOnlineSource] = useState<"netease" | "kugou">(
+    settings.network.enabledSources.includes("kugou") && !settings.network.enabledSources.includes("netease")
+      ? "kugou"
+      : "netease",
+  );
   const isNeteaseEnabled = settings.network.enabledSources.includes("netease");
+  const isKugouEnabled = settings.network.enabledSources.includes("kugou");
+  const isOnlineSourceEnabled = isNeteaseEnabled || isKugouEnabled;
+  const isNeteaseSourceSelected = selectedOnlineSource === "netease";
+  const isKugouSourceSelected = selectedOnlineSource === "kugou";
+  const showKugouLocalApiPanel =
+    isKugouSourceSelected && isKugouEnabled && settings.network.useLocalKugouApiServer;
+  const selectOnlineSource = (source: "netease" | "kugou") => {
+    setSelectedOnlineSource(source);
+    onUpdate((current) => ({
+      ...current,
+      network: {
+        ...current.network,
+        enabledSources: [source],
+      },
+    }));
+  };
+
   const [qrLoginSession, setQrLoginSession] = useState<NeteaseQrLoginSession | null>(null);
   const [qrLoginState, setQrLoginState] = useState<
     "idle" | "creating" | "waiting" | "scanned" | "authorizing" | "authorized" | "expired" | "failed"
@@ -17475,7 +17958,37 @@ function SettingsScreen({
   const [neteaseAccount, setNeteaseAccount] = useState<NeteaseAccountProfile | null>(null);
   const [isLoadingNeteaseAccount, setIsLoadingNeteaseAccount] = useState(false);
   const [neteaseAccountError, setNeteaseAccountError] = useState<string | null>(null);
+  const [kugouAccount, setKugouAccount] = useState<KugouAccountProfile | null>(null);
+  const [isLoadingKugouAccount, setIsLoadingKugouAccount] = useState(false);
+  const [kugouAccountError, setKugouAccountError] = useState<string | null>(null);
+  const [kugouQrLoginSession, setKugouQrLoginSession] = useState<KugouQrLoginSession | null>(null);
+  const [kugouQrLoginState, setKugouQrLoginState] = useState<
+    "idle" | "creating" | "waiting" | "scanned" | "authorizing" | "authorized" | "expired" | "failed"
+  >("idle");
+  const [kugouQrLoginMessage, setKugouQrLoginMessage] = useState<string | null>(null);
+  const [isKugouQrLoginBusy, setIsKugouQrLoginBusy] = useState(false);
   const [isReleasingMemoryCache, setIsReleasingMemoryCache] = useState(false);
+  const [songCacheInfo, setSongCacheInfo] = useState<SongCacheInfo | null>(null);
+  const [isLoadingSongCacheInfo, setIsLoadingSongCacheInfo] = useState(true);
+  const [isClearingSongCache, setIsClearingSongCache] = useState(false);
+  const [songCacheError, setSongCacheError] = useState<string | null>(null);
+
+  const refreshSongCacheInfo = async () => {
+    setIsLoadingSongCacheInfo(true);
+    try {
+      setSongCacheInfo(await getSongCacheInfo());
+      setSongCacheError(null);
+    } catch (error) {
+      console.error("[cache] failed to load song cache info", error);
+      setSongCacheError(copy.locale === "en-US" ? "Unable to read the song cache." : "无法读取歌曲缓存信息。");
+    } finally {
+      setIsLoadingSongCacheInfo(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshSongCacheInfo();
+  }, []);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
   const [isEqualizerDialogOpen, setIsEqualizerDialogOpen] = useState(false);
   const [isDeferredSettingsContentReady, setIsDeferredSettingsContentReady] = useState(false);
@@ -17487,7 +18000,8 @@ function SettingsScreen({
     [copy.locale, systemFontFamilies],
   );
   const hasSavedNeteaseCookie = settings.network.neteaseCookie.trim().length > 0;
-  const showLocalApiPanel = isNeteaseEnabled && settings.network.useLocalApiServer;
+  const hasSavedKugouCookie = settings.network.kugouCookie.trim().length > 0;
+  const showLocalApiPanel = isNeteaseSourceSelected && isNeteaseEnabled && settings.network.useLocalApiServer;
   const localApiStatusLabel = copy.locale === "en-US"
     ? localNeteaseApiStatus?.starting
       ? "Starting"
@@ -18055,6 +18569,13 @@ function SettingsScreen({
     settings.playback.songTransitionStartMs,
     settings.playback.rememberQueue,
   ]);
+  const showSongCacheSection = !isSearchingSettings || matchesSettingsSearch([
+    copy.locale === "en-US" ? "Song Cache" : "歌曲缓存",
+    copy.locale === "en-US" ? "Cache location" : "缓存位置",
+    copy.locale === "en-US" ? "Clear cache before exiting" : "退出应用前自动清理缓存",
+    copy.locale === "en-US" ? "Clear cache" : "清理缓存",
+    settings.playback.autoClearSongCacheOnExit,
+  ]);
   const showEqualizerSection = !isSearchingSettings || matchesSettingsSearch([
     copy.settings.sections.equalizer.title,
     copy.settings.sections.equalizer.enabledLabel,
@@ -18089,7 +18610,7 @@ function SettingsScreen({
     settings.library.onlineLyricsCompletion,
   ]);
   const showDownloadSection =
-    isNeteaseEnabled &&
+    isOnlineSourceEnabled &&
     (!isSearchingSettings || matchesSettingsSearch([
       copy.settings.sections.download.title,
       copy.settings.sections.download.pickDirectory,
@@ -18247,6 +18768,146 @@ function SettingsScreen({
     setNeteaseAccountError(null);
     setIsLoadingNeteaseAccount(false);
   }, [isNeteaseEnabled]);
+
+  const refreshKugouAccount = async (targetSettings = settings) => {
+    if (!isKugouEnabled || !targetSettings.network.kugouCookie.trim()) {
+      setKugouAccount(null);
+      setKugouAccountError(copy.locale === "en-US" ? "No KuGou login information is available." : "暂无可用的酷狗登录信息。");
+      return false;
+    }
+
+    setIsLoadingKugouAccount(true);
+    try {
+      const account = await getKugouLoggedInAccount(targetSettings);
+      setKugouAccount(account);
+      setKugouAccountError(account ? null : (copy.locale === "en-US" ? "No KuGou account was returned." : "未获取到酷狗用户信息。"));
+      return account !== null;
+    } catch (error) {
+      console.error("[network] failed to load kugou account", error);
+      setKugouAccount(null);
+      setKugouAccountError(error instanceof Error ? error.message : null);
+      return false;
+    } finally {
+      setIsLoadingKugouAccount(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isKugouEnabled || !settings.network.kugouCookie.trim()) {
+      setKugouAccount(null);
+      setKugouAccountError(null);
+      return;
+    }
+    void refreshKugouAccount();
+  }, [isKugouEnabled, settings.network.kugouApiBaseUrl, settings.network.kugouCookie]);
+
+  useEffect(() => {
+    if (!kugouQrLoginSession || !isKugouEnabled) {
+      return;
+    }
+
+    let isDisposed = false;
+    let isRequesting = false;
+    let pollTimer = 0;
+    const pollStatus = async () => {
+      if (isDisposed || isRequesting) return;
+      isRequesting = true;
+      try {
+        const status = await checkKugouQrLoginStatus(settings, kugouQrLoginSession.key);
+        if (isDisposed) return;
+
+        setKugouQrLoginMessage(status.message);
+        if (status.code === 1) {
+          setKugouQrLoginState("waiting");
+          return;
+        }
+        if (status.code === 2 || status.code === 3) {
+          setKugouQrLoginState("scanned");
+          return;
+        }
+        if (status.code === 0) {
+          setKugouQrLoginState("expired");
+          window.clearInterval(pollTimer);
+          return;
+        }
+
+        setKugouQrLoginState("authorizing");
+        window.clearInterval(pollTimer);
+        if (!status.cookie) {
+          setKugouQrLoginState("failed");
+          return;
+        }
+
+        let savedSettings = await onSaveKugouCookie(status.cookie);
+        try {
+          const dfid = await registerKugouDevice(savedSettings);
+          savedSettings = await onSaveKugouCookie(
+            mergeKugouLoginCookie(savedSettings.network.kugouCookie, { dfid }),
+          );
+        } catch (error) {
+          console.warn("[network] failed to register kugou device", error);
+        }
+        try {
+          const refreshedCookie = await refreshKugouLogin(savedSettings);
+          if (refreshedCookie !== savedSettings.network.kugouCookie) {
+            savedSettings = await onSaveKugouCookie(refreshedCookie);
+          }
+        } catch (error) {
+          console.warn("[network] failed to refresh kugou login credentials", error);
+        }
+        if (isDisposed) return;
+        const hasLoadedAccount = await refreshKugouAccount(savedSettings);
+        if (isDisposed) return;
+        setKugouQrLoginState("authorized");
+        if (!hasLoadedAccount) {
+          setKugouQrLoginMessage(copy.locale === "en-US"
+            ? "Login was saved, but account information could not be loaded."
+            : "登录状态已保存，但用户信息暂未获取成功。")
+        }
+        setKugouQrLoginSession(null);
+      } catch (error) {
+        if (isDisposed) return;
+        console.error("[network] failed to poll kugou qr login", error);
+        setKugouQrLoginState("failed");
+        setKugouQrLoginMessage(error instanceof Error ? error.message : null);
+        window.clearInterval(pollTimer);
+      } finally {
+        isRequesting = false;
+      }
+    };
+
+    void pollStatus();
+    pollTimer = window.setInterval(() => void pollStatus(), 2500);
+    return () => {
+      isDisposed = true;
+      window.clearInterval(pollTimer);
+    };
+  }, [isKugouEnabled, kugouQrLoginSession, settings.network.kugouApiBaseUrl, settings.network.requestTimeoutMs]);
+
+  const handleGenerateKugouQrLogin = async () => {
+    if (!isKugouEnabled) return;
+    setIsKugouQrLoginBusy(true);
+    setKugouQrLoginState("creating");
+    setKugouQrLoginMessage(null);
+    try {
+      const session = await createKugouQrLoginSession(settings);
+      setKugouQrLoginSession(session);
+      setKugouQrLoginState("waiting");
+    } catch (error) {
+      console.error("[network] failed to create kugou qr login", error);
+      setKugouQrLoginSession(null);
+      setKugouQrLoginState("failed");
+      setKugouQrLoginMessage(error instanceof Error ? error.message : null);
+    } finally {
+      setIsKugouQrLoginBusy(false);
+    }
+  };
+
+  const handleStopKugouQrLoginPolling = () => {
+    setKugouQrLoginSession(null);
+    setKugouQrLoginState(hasSavedKugouCookie ? "authorized" : "idle");
+    setKugouQrLoginMessage(null);
+  };
 
   useEffect(() => {
     if (
@@ -18451,11 +19112,25 @@ function SettingsScreen({
     }
   };
 
+  const handleClearSongCache = async () => {
+    setIsClearingSongCache(true);
+    try {
+      setSongCacheInfo(await clearSongCache());
+      setSongCacheError(null);
+    } catch (error) {
+      console.error("[cache] failed to clear song cache", error);
+      setSongCacheError(copy.locale === "en-US" ? "Unable to clear the song cache." : "无法清理歌曲缓存。");
+    } finally {
+      setIsClearingSongCache(false);
+    }
+  };
+
   const qrLoginStatusLabel = resolveNeteaseQrLoginStatusLabel(copy.locale, qrLoginState, {
     loggedIn: hasSavedNeteaseCookie,
   });
   const showNeteaseQrLogin = !hasSavedNeteaseCookie;
   const showAccountSection =
+    isNeteaseSourceSelected &&
     isNeteaseEnabled &&
     (!isSearchingSettings || matchesSettingsSearch([
       copy.settings.sections.network.loginTitle,
@@ -18476,6 +19151,7 @@ function SettingsScreen({
     showDynamicIslandSection,
     showLyricsSection,
     showPlaybackSection,
+    showSongCacheSection,
     showShortcutsSection,
     showLibrarySection,
     showDownloadSection,
@@ -20075,7 +20751,7 @@ function SettingsScreen({
           </div>
 
           <div className="settings-card__body">
-            {isNeteaseEnabled ? (
+            {isOnlineSourceEnabled ? (
               <UISelect
                 label={copy.settings.sections.playback.qualityLabel}
                 value={settings.playback.preferredQuality}
@@ -20091,7 +20767,7 @@ function SettingsScreen({
                 }
               />
             ) : null}
-            {isNeteaseEnabled ? (
+            {isOnlineSourceEnabled ? (
               <>
                 <UISelect
                   label={copy.settings.sections.playback.cacheModeLabel}
@@ -20126,7 +20802,7 @@ function SettingsScreen({
                 }))
               }
             />
-            {isNeteaseEnabled ? (
+            {isOnlineSourceEnabled ? (
               <UISwitch
                 label={copy.settings.sections.playback.preferRemoteLabel}
                 description={copy.settings.sections.playback.preferRemoteDescription}
@@ -20397,7 +21073,7 @@ function SettingsScreen({
                 }
               />
             </SettingsSearchItem>
-            {isNeteaseEnabled ? (
+            {isOnlineSourceEnabled ? (
               <SettingsSearchItem
                 itemKey="library-online-lyrics"
                 instanceId={settingsSearchInstanceId}
@@ -20601,25 +21277,69 @@ function SettingsScreen({
                 copy.settings.sections.network.sourceLabel,
                 copy.settings.sections.network.sourceDescription,
                 "netease",
-                ...getSearchableBooleanState(isNeteaseEnabled),
+                "kugou",
+                ...getSearchableBooleanState(isOnlineSourceEnabled),
               ]}
             >
               <UISwitch
                 label={copy.settings.sections.network.sourceLabel}
                 description={copy.settings.sections.network.sourceDescription}
-                checked={isNeteaseEnabled}
+                checked={isOnlineSourceEnabled}
                 onChange={(checked) =>
                   onUpdate((current) => ({
                     ...current,
                     network: {
                       ...current.network,
-                      enabledSources: checked ? ["netease"] : [],
+                      enabledSources: checked ? [selectedOnlineSource] : [],
                     },
                   }))
                 }
               />
             </SettingsSearchItem>
-            {isNeteaseEnabled ? (
+            {isOnlineSourceEnabled ? (
+              <SettingsSearchItem
+                itemKey="network-source-selector"
+                instanceId={settingsSearchInstanceId}
+                visible={matchesSettingKey("network-source-selector")}
+                searchParts={[
+                  copy.settings.sections.network.sourceSelectorLabel,
+                  copy.settings.sections.network.neteaseSourceLabel,
+                  copy.settings.sections.network.kugouSourceLabel,
+                ]}
+              >
+                <div className="ui-field">
+                  <span className="ui-field__label">{copy.settings.sections.network.sourceSelectorLabel}</span>
+                  <div
+                    className={`online-source-selector online-source-selector--${selectedOnlineSource}`}
+                    role="radiogroup"
+                    aria-label={copy.settings.sections.network.sourceSelectorLabel}
+                  >
+                    <span className="online-source-selector__indicator" aria-hidden="true" />
+                    <button
+                      className="online-source-selector__option"
+                      type="button"
+                      role="radio"
+                      aria-checked={isNeteaseSourceSelected}
+                      onClick={() => selectOnlineSource("netease")}
+                    >
+                      <img className="online-source-selector__icon" src="/online-source-netease.svg" alt="" />
+                      {copy.settings.sections.network.neteaseSourceLabel}
+                    </button>
+                    <button
+                      className="online-source-selector__option"
+                      type="button"
+                      role="radio"
+                      aria-checked={isKugouSourceSelected}
+                      onClick={() => selectOnlineSource("kugou")}
+                    >
+                      <img className="online-source-selector__icon" src="/online-source-kugou.svg" alt="" />
+                      {copy.settings.sections.network.kugouSourceLabel}
+                    </button>
+                  </div>
+                </div>
+              </SettingsSearchItem>
+            ) : null}
+            {isNeteaseSourceSelected && isNeteaseEnabled ? (
               <>
                 <SettingsSearchItem
                   itemKey="network-local-api"
@@ -20832,8 +21552,269 @@ function SettingsScreen({
                 </div>
               </>
             ) : null}
+            {isKugouSourceSelected && isKugouEnabled ? (
+              <>
+                <SettingsSearchItem
+                  itemKey="kugou-local-api"
+                  instanceId={settingsSearchInstanceId}
+                  visible={matchesSettingKey("kugou-local-api")}
+                  searchParts={[
+                    copy.locale === "en-US" ? "Use Local KuGou API Server" : "使用本地酷狗 API 服务",
+                    copy.locale === "en-US"
+                      ? "Starts KuGouMusicApi through the system Node.js environment."
+                      : "通过系统 Node.js 环境启动 KuGouMusicApi。",
+                    ...getSearchableBooleanState(settings.network.useLocalKugouApiServer),
+                  ]}
+                >
+                  <UISwitch
+                    label={copy.locale === "en-US" ? "Use Local KuGou API Server" : "使用本地酷狗 API 服务"}
+                    description={copy.locale === "en-US"
+                      ? "Starts KuGouMusicApi through the system Node.js environment."
+                      : "通过系统 Node.js 环境启动 KuGouMusicApi。"}
+                    checked={settings.network.useLocalKugouApiServer}
+                    onChange={(checked) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        network: {
+                          ...current.network,
+                          useLocalKugouApiServer: checked,
+                        },
+                      }))
+                    }
+                  />
+                </SettingsSearchItem>
+                {showKugouLocalApiPanel ? (
+                  <div className="local-api-console">
+                    <div className="local-api-console__header">
+                      <div className="local-api-console__status">
+                        <span
+                          className={`local-api-console__status-dot local-api-console__status-dot--${localApiStatusTone}`}
+                        />
+                        <strong>{copy.locale === "en-US" ? "Local KuGou API" : "本地酷狗 API"}</strong>
+                        <span>{localApiStatusLabel}</span>
+                      </div>
+                      <span className="local-api-console__address">
+                        {(localNeteaseApiStatus?.url || "http://127.0.0.1:3001").replace(/\/$/, "")}
+                      </span>
+                    </div>
+                    <p className="local-api-console__message">{localApiMessage}</p>
+                    <div className="local-api-console__output" aria-label={copy.locale === "en-US" ? "Local API Output" : "本地 API 输出"}>
+                      {localNeteaseApiStatus?.logLines.length ? (
+                        localNeteaseApiStatus.logLines.map((line, index) => (
+                          <div key={`${index}-${line}`} className="local-api-console__line">{line}</div>
+                        ))
+                      ) : (
+                        <div className="local-api-console__placeholder">
+                          {copy.locale === "en-US" ? "Waiting for server output" : "等待服务输出"}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+                {!settings.network.useLocalKugouApiServer ? (
+                  <SettingsSearchItem
+                    itemKey="kugou-api-base-url"
+                    instanceId={settingsSearchInstanceId}
+                    visible={matchesSettingKey("kugou-api-base-url")}
+                    searchParts={[
+                      copy.settings.sections.network.kugouApiBaseUrlLabel,
+                      copy.settings.sections.network.kugouApiBaseUrlHelper,
+                      settings.network.kugouApiBaseUrl,
+                      "http://127.0.0.1:3001",
+                    ]}
+                  >
+                    <UITextField
+                      label={copy.settings.sections.network.kugouApiBaseUrlLabel}
+                      value={settings.network.kugouApiBaseUrl}
+                      placeholder="http://127.0.0.1:3001"
+                      helper={copy.settings.sections.network.kugouApiBaseUrlHelper}
+                      onChange={(value) =>
+                        onUpdate((current) => ({
+                          ...current,
+                          network: {
+                            ...current.network,
+                            kugouApiBaseUrl: value,
+                          },
+                        }))
+                      }
+                    />
+                  </SettingsSearchItem>
+                ) : null}
+                <SettingsSearchItem
+                  itemKey="kugou-cookie"
+                  instanceId={settingsSearchInstanceId}
+                  visible={matchesSettingKey("kugou-cookie")}
+                  searchParts={[
+                    copy.settings.sections.network.kugouCookieLabel,
+                    copy.settings.sections.network.kugouCookieHelper,
+                    settings.network.kugouCookie,
+                    "token",
+                    "userid",
+                    "dfid",
+                    "t1",
+                  ]}
+                >
+                  <UITextField
+                    label={copy.settings.sections.network.kugouCookieLabel}
+                    value={settings.network.kugouCookie}
+                    placeholder="token=...; userid=...; dfid=...; t1=..."
+                    helper={copy.settings.sections.network.kugouCookieHelper}
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        network: {
+                          ...current.network,
+                          kugouCookie: value,
+                          kugouDfid: getCookieParameter(value, "dfid") ?? "",
+                        },
+                      }))
+                    }
+                  />
+                </SettingsSearchItem>
+                <SettingsSearchItem
+                  itemKey="kugou-timeout"
+                  instanceId={settingsSearchInstanceId}
+                  visible={matchesSettingKey("kugou-timeout")}
+                  searchParts={[
+                    copy.settings.sections.network.timeoutLabel,
+                    copy.settings.sections.network.timeoutHelper,
+                    settings.network.requestTimeoutMs,
+                  ]}
+                >
+                  <UITextField
+                    label={copy.settings.sections.network.timeoutLabel}
+                    value={String(settings.network.requestTimeoutMs)}
+                    placeholder="15000"
+                    helper={copy.settings.sections.network.timeoutHelper}
+                    onChange={(value) =>
+                      onUpdate((current) => ({
+                        ...current,
+                        network: {
+                          ...current.network,
+                          requestTimeoutMs: sanitizePositiveNumber(
+                            value,
+                            current.network.requestTimeoutMs,
+                          ),
+                        },
+                      }))
+                    }
+                  />
+                </SettingsSearchItem>
+                <div className="settings-inline-actions">
+                  <UIButton
+                    variant="secondary"
+                    onClick={onTestKugouApi}
+                    disabled={isLoading || isSaving || isTestingKugouApi || !isKugouEnabled}
+                  >
+                    {isTestingKugouApi
+                      ? copy.settings.sections.network.testingLabel
+                      : copy.settings.sections.network.testLabel}
+                  </UIButton>
+                </div>
+              </>
+            ) : null}
           </div>
         </section>
+        ) : null}
+
+        {isKugouSourceSelected && isKugouEnabled ? (
+          <section className="settings-card">
+            <div className="settings-card__header">
+              <div>
+                <h3 className="settings-card__title">
+                  {copy.locale === "en-US" ? "KuGou Account" : "酷狗用户信息"}
+                </h3>
+              </div>
+            </div>
+            <div className="settings-card__body">
+              {hasSavedKugouCookie ? (
+                <>
+                  <div className="settings-inline-actions">
+                    <UIButton
+                      variant="secondary"
+                      onClick={() => void refreshKugouAccount()}
+                      disabled={isLoadingKugouAccount}
+                    >
+                      {copy.settings.sections.network.accountRefresh}
+                    </UIButton>
+                    <UIButton variant="ghost" onClick={() => void onClearKugouCookie()}>
+                      {copy.settings.sections.network.loginClear}
+                    </UIButton>
+                  </div>
+                  {isLoadingKugouAccount ? (
+                    <UILoadingBlock label={copy.settings.sections.network.accountLoading} variant="inline" />
+                  ) : kugouAccount ? (
+                    <div className="netease-account-card">
+                      <div className="netease-account-card__header">
+                        <div className="netease-account-card__avatar">
+                          {kugouAccount.avatarUrl ? (
+                            <img src={kugouAccount.avatarUrl} alt={kugouAccount.nickname} />
+                          ) : (
+                            <span>{kugouAccount.nickname.slice(0, 1)}</span>
+                          )}
+                        </div>
+                        <div className="netease-account-card__identity">
+                          <strong>{kugouAccount.nickname}</strong>
+                          <span>{copy.settings.sections.network.accountIdLabel}: {kugouAccount.userId}</span>
+                        </div>
+                      </div>
+                      <div className="netease-account-card__meta">
+                        <span className="netease-account-card__chip">
+                          {copy.settings.sections.network.accountLevelLabel}: {kugouAccount.level ?? "--"}
+                        </span>
+                        <span className="netease-account-card__chip">
+                          {copy.settings.sections.network.accountVipLabel}: {kugouAccount.vipType && kugouAccount.vipType > 0
+                            ? copy.settings.sections.network.accountVipActive
+                            : copy.settings.sections.network.accountVipInactive}
+                        </span>
+                      </div>
+                      {kugouAccount.signature ? <p className="netease-account-card__signature">{kugouAccount.signature}</p> : null}
+                    </div>
+                  ) : (
+                    <p className="library-empty">{kugouAccountError || copy.settings.sections.network.accountEmpty}</p>
+                  )}
+                </>
+              ) : (
+                <div className="netease-login-panel">
+                  <div className="netease-login-panel__preview">
+                    {kugouQrLoginSession?.qrImage ? (
+                      <img
+                        className="netease-login-panel__qr-image"
+                        src={kugouQrLoginSession.qrImage}
+                        alt={copy.locale === "en-US" ? "KuGou QR login" : "酷狗二维码登录"}
+                      />
+                    ) : (
+                      <div className="netease-login-panel__qr-placeholder">
+                        <span>{kugouQrLoginState === "scanned" ? (copy.locale === "en-US" ? "Scanned" : "已扫码") : (copy.locale === "en-US" ? "Waiting" : "等待登录")}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="netease-login-panel__content">
+                    <div className="netease-login-panel__status">
+                      <strong>{kugouQrLoginState === "expired" ? (copy.locale === "en-US" ? "QR code expired" : "二维码已过期") : kugouQrLoginState === "scanned" ? (copy.locale === "en-US" ? "Scanned, confirm on your phone" : "已扫码，请在手机上确认") : kugouQrLoginState === "failed" ? (copy.locale === "en-US" ? "Login failed" : "登录失败") : (copy.locale === "en-US" ? "Scan to sign in" : "扫码登录")}</strong>
+                      <span>{kugouQrLoginMessage || (copy.locale === "en-US" ? "Use the KuGou app to scan this code." : "请使用酷狗音乐 App 扫描二维码。")}</span>
+                    </div>
+                    <div className="settings-inline-actions">
+                      <UIButton
+                        variant="primary"
+                        onClick={() => void handleGenerateKugouQrLogin()}
+                        disabled={isKugouQrLoginBusy || isSaving || isLoading}
+                      >
+                        {kugouQrLoginSession ? copy.settings.sections.network.loginRefresh : copy.settings.sections.network.loginGenerate}
+                      </UIButton>
+                      <UIButton
+                        variant="secondary"
+                        onClick={handleStopKugouQrLoginPolling}
+                        disabled={!kugouQrLoginSession}
+                      >
+                        {copy.settings.sections.network.loginStop}
+                      </UIButton>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
         ) : null}
 
         {showAccountSection ? (
@@ -21022,6 +22003,67 @@ function SettingsScreen({
             </div>
           </div>
         </section>
+        ) : null}
+
+        {showSongCacheSection ? (
+          <section className="settings-card settings-card--wide">
+            <div className="settings-card__header">
+              <div>
+                <h3 className="settings-card__title">
+                  {copy.locale === "en-US" ? "Song Cache" : "歌曲缓存"}
+                </h3>
+              </div>
+            </div>
+
+            <div className="settings-card__body">
+              <div className="ui-field">
+                <span className="ui-field__label">
+                  {copy.locale === "en-US" ? "Cache location" : "缓存位置"}
+                </span>
+                <div className="theme-background-path">
+                  {isLoadingSongCacheInfo
+                    ? (copy.locale === "en-US" ? "Loading..." : "正在读取...")
+                    : (songCacheInfo?.path ?? "--")}
+                </div>
+                <span className="ui-field__helper">
+                  {isLoadingSongCacheInfo
+                    ? ""
+                    : copy.locale === "en-US"
+                      ? `${formatSongCacheSize(songCacheInfo?.sizeBytes ?? 0)} in ${songCacheInfo?.fileCount ?? 0} files`
+                      : `${formatSongCacheSize(songCacheInfo?.sizeBytes ?? 0)}，共 ${songCacheInfo?.fileCount ?? 0} 个文件`}
+                </span>
+              </div>
+              <UISwitch
+                label={copy.locale === "en-US" ? "Clear cache before exiting" : "退出应用前自动清理缓存"}
+                description={copy.locale === "en-US"
+                  ? "Removes cached remote audio when you choose Exit from the tray menu."
+                  : "从托盘菜单退出应用时，自动删除已缓存的远程歌曲音频。"}
+                checked={settings.playback.autoClearSongCacheOnExit}
+                onChange={(checked) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    playback: {
+                      ...current.playback,
+                      autoClearSongCacheOnExit: checked,
+                    },
+                  }))
+                }
+              />
+              {songCacheError ? <span className="ui-field__helper">{songCacheError}</span> : null}
+              <div className="settings-inline-actions">
+                <UIButton
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void handleClearSongCache()}
+                  disabled={isLoadingSongCacheInfo || isClearingSongCache}
+                >
+                  {isClearingSongCache
+                    ? (copy.locale === "en-US" ? "Clearing..." : "正在清理...")
+                    : (copy.locale === "en-US" ? "Clear cache" : "清理缓存")}
+                </UIButton>
+              </div>
+            </div>
+          </section>
         ) : null}
 
         {isSearchingSettings && visibleMainSettingsSectionCount === 0 ? (
@@ -22936,6 +23978,490 @@ function PlaylistBrowserSection({
       )}
     </section>
   );
+}
+
+function KugouPlaylistScreen({
+  copy,
+  settings,
+  dataVersion,
+  initialSelection,
+  onSelectPlaylist,
+  onBack,
+  backLabel,
+  onOpenArtist,
+  onOpenAlbum,
+  onPlayTrack,
+}: {
+  copy: UiCopy;
+  settings: AppSettings;
+  dataVersion: number;
+  initialSelection: PlaylistSelection;
+  onSelectPlaylist: (playlist: PlaylistSelection) => void;
+  onBack: () => void;
+  backLabel: string;
+  onOpenArtist: (id: string | null, name: string) => void;
+  onOpenAlbum: (id: string, name: string) => void;
+  onPlayTrack: (hash: string, queueSongs: KugouSongDetail[]) => void;
+}) {
+  const playlistCopy = getPlaylistCopy(copy.locale);
+  const isKugouEnabled = isKugouSourceEnabled(settings);
+  const hasCredentials = settings.network.kugouCookie.trim().length > 0;
+  const kugouRequestSettingsKey = [
+    settings.network.kugouCookie,
+    settings.network.kugouApiBaseUrl,
+    settings.network.useLocalKugouApiServer,
+    settings.network.requestTimeoutMs,
+  ].join("|");
+  const [account, setAccount] = useState<KugouAccountProfile | null>(null);
+  const [playlists, setPlaylists] = useState<KugouPlaylistSummary[]>([]);
+  const [tracks, setTracks] = useState<KugouSongDetail[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingTracks, setIsLoadingTracks] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [trackError, setTrackError] = useState<string | null>(null);
+  const [playlistPage, setPlaylistPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
+  const retryActionLabel = getRetryActionLabel(copy.locale);
+
+  useEffect(() => {
+    let isDisposed = false;
+    if (!isKugouEnabled || !hasCredentials) {
+      setAccount(null);
+      setPlaylists([]);
+      setError(null);
+      setIsLoading(false);
+      return () => { isDisposed = true; };
+    }
+    setIsLoading(true);
+    setError(null);
+    const userId = Number(getCookieParameter(settings.network.kugouCookie, "userid") || 0);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      setAccount(null);
+      setPlaylists([]);
+      setError(copy.locale === "en-US" ? "KuGou credentials do not contain a valid userid." : "酷狗登录凭证中缺少有效的 userid。");
+      setIsLoading(false);
+      return () => { isDisposed = true; };
+    }
+    void Promise.all([getKugouLoggedInAccount(settings).catch(() => null), getKugouUserPlaylists(settings, userId)])
+      .then(([nextAccount, nextPlaylists]) => {
+        if (isDisposed) return;
+        setAccount(nextAccount ?? { userId, nickname: String(userId), avatarUrl: null, backgroundUrl: null, signature: null, level: null, vipType: null });
+        setPlaylists(nextPlaylists);
+      })
+      .catch((reason: unknown) => {
+        if (isDisposed) return;
+        setAccount(null);
+        setPlaylists([]);
+        setError(reason instanceof Error ? reason.message : playlistCopy.loading);
+      })
+      .finally(() => { if (!isDisposed) setIsLoading(false); });
+    return () => { isDisposed = true; };
+  }, [dataVersion, hasCredentials, isKugouEnabled, kugouRequestSettingsKey, playlistCopy.loading, reloadKey]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    if (!initialSelection?.id || !isKugouEnabled || !hasCredentials) {
+      setTracks([]);
+      setTrackError(null);
+      setIsLoadingTracks(false);
+      return () => { isDisposed = true; };
+    }
+    const playlist = playlists.find((item) => item.id === initialSelection.id);
+    if (!playlist) {
+      setTracks([]);
+      setTrackError(null);
+      setIsLoadingTracks(false);
+      return () => { isDisposed = true; };
+    }
+    setIsLoadingTracks(true);
+    setTrackError(null);
+    void getKugouPlaylistTracks(settings, playlist.collectionId)
+      .then((nextTracks) => { if (!isDisposed) setTracks(nextTracks); })
+      .catch((reason: unknown) => {
+        if (isDisposed) return;
+        setTracks([]);
+        setTrackError(reason instanceof Error ? reason.message : playlistCopy.loadingTracks);
+      })
+      .finally(() => { if (!isDisposed) setIsLoadingTracks(false); });
+    return () => { isDisposed = true; };
+  }, [hasCredentials, initialSelection?.id, isKugouEnabled, kugouRequestSettingsKey, playlistCopy.loadingTracks, playlists, reloadKey]);
+
+  const selectedPlaylist = initialSelection
+    ? playlists.find((playlist) => playlist.id === initialSelection.id) ?? {
+      id: initialSelection.id,
+      collectionId: String(initialSelection.id),
+      name: initialSelection.title,
+      description: null,
+      artworkUrl: null,
+      trackCount: null,
+      playCount: null,
+      creatorName: null,
+      creatorUserId: null,
+      isDefault: false,
+      isLiked: false,
+    }
+    : null;
+  const tracksPerPage = 50;
+  const totalTrackPages = Math.max(1, Math.ceil(tracks.length / tracksPerPage));
+  const visibleTracks = tracks.slice(
+    (playlistPage - 1) * tracksPerPage,
+    playlistPage * tracksPerPage,
+  );
+
+  useEffect(() => {
+    setPlaylistPage(1);
+  }, [initialSelection?.id]);
+
+  useEffect(() => {
+    if (playlistPage > totalTrackPages) {
+      setPlaylistPage(totalTrackPages);
+    }
+  }, [playlistPage, totalTrackPages]);
+
+  return (
+    <section className="playlist-screen">
+      {!isKugouEnabled ? (
+        <p className="library-empty">{playlistCopy.notEnabled}</p>
+      ) : !hasCredentials ? (
+        isLoading ? <UILoadingBlock label={playlistCopy.loading} variant="grid" /> : <p className="library-empty">{playlistCopy.notLoggedIn}</p>
+      ) : error ? (
+        <NetworkSectionError message={error} actionLabel={retryActionLabel} onRetry={() => setReloadKey((value) => value + 1)} disabled={isLoading} />
+      ) : initialSelection === null ? (
+        isLoading ? <UILoadingBlock label={playlistCopy.loading} variant="grid" /> : (
+          <div className="playlist-waterfall-grid playlist-browser-grid">
+            {playlists.length === 0 ? <p className="library-empty">{playlistCopy.empty}</p> : playlists.map((playlist) => (
+              <PlaylistPreviewCard
+                key={playlist.id}
+                title={playlist.name}
+                description={playlist.description ?? ""}
+                artworkUrl={playlist.artworkUrl}
+                primaryMeta={`${playlist.trackCount?.toLocaleString(copy.locale) ?? "--"} ${playlistCopy.countSuffix}`}
+                secondaryMeta={`${playlistCopy.ownerPrefix} ${playlist.creatorName || account?.nickname || "--"}`}
+                onClick={() => onSelectPlaylist({ id: playlist.id, title: playlist.name })}
+              />
+            ))}
+          </div>
+        )
+      ) : (
+        <div className="playlist-detail-view">
+          <UIButton variant="secondary" onClick={onBack}>{backLabel}</UIButton>
+          <section className="playlist-detail-card">
+            <div className="playlist-detail-card__hero">
+              <div className="playlist-detail-card__artwork" aria-hidden="true">
+                {selectedPlaylist?.artworkUrl ? <img src={selectedPlaylist.artworkUrl} alt="" loading="lazy" /> : <span className="playlist-detail-card__fallback"><AlbumsTileIcon /></span>}
+              </div>
+              <div className="playlist-detail-card__meta">
+                <h3 className="settings-screen__title">{selectedPlaylist?.name}</h3>
+                {selectedPlaylist?.description ? <p className="settings-screen__description playlist-detail-card__description">{selectedPlaylist.description}</p> : null}
+                <div className="playlist-detail-card__stats">
+                  <div className="home-stat-card">
+                    <span>{playlistCopy.ownerPrefix}</span>
+                    <strong>{selectedPlaylist?.creatorName || account?.nickname || "--"}</strong>
+                  </div>
+                  <div className="home-stat-card">
+                    <span>{playlistCopy.countSuffix}</span>
+                    <strong>{selectedPlaylist?.trackCount?.toLocaleString(copy.locale) ?? "--"}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="home-section__header">
+              <h3 className="settings-card__title">{selectedPlaylist?.name}</h3>
+              {!isLoadingTracks && tracks.length > 0 ? <span className="home-section__hint">{playlistCopy.pageLabel} {playlistPage} / {totalTrackPages}</span> : null}
+            </div>
+            {isLoadingTracks ? <UILoadingBlock label={playlistCopy.loadingTracks} variant="list" /> : trackError ? (
+              <NetworkSectionError message={trackError} actionLabel={retryActionLabel} onRetry={() => setReloadKey((value) => value + 1)} />
+            ) : tracks.length === 0 ? <p className="library-empty">{playlistCopy.emptyTracks}</p> : (
+              <>
+                <div className="home-song-list">
+                  {visibleTracks.map((track, index) => (
+                    <div key={`${track.hash}:${index}`} className="home-song-card" role="button" tabIndex={0} onClick={() => onPlayTrack(track.hash, tracks)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onPlayTrack(track.hash, tracks); } }}>
+                      <span className="home-song-card__cover" aria-hidden="true">{track.artworkUrl ? <img src={track.artworkUrl} alt="" loading="lazy" /> : <span className="home-song-card__cover-fallback"><SongsTileIcon /></span>}</span>
+                      <span className="home-song-card__copy"><span className="home-song-card__title">{track.name}</span><span className="home-song-card__subtitle"><SongArtistLinks fallback={copy.library.songFields.unknownArtist} artists={track.artists.map((name, artistIndex) => ({ key: `${track.hash}:artist:${artistIndex}`, name, onClick: () => onOpenArtist(getKugouArtistIdForIndex(track, artistIndex), name) }))} /></span></span>
+                      <span className="home-song-card__meta"><SongMetaButton label={track.album || copy.library.songFields.unknownAlbum} onClick={track.albumId ? () => onOpenAlbum(track.albumId!, track.album || copy.library.songFields.unknownAlbum) : undefined} disabled={!track.albumId} /></span>
+                      <span className="home-song-card__duration">{formatDurationMs(track.durationMs)}</span>
+                      <span className="home-song-card__badge">#{(playlistPage - 1) * tracksPerPage + index + 1}</span>
+                    </div>
+                  ))}
+                </div>
+                <UIPagination
+                  currentPage={playlistPage}
+                  totalPages={totalTrackPages}
+                  pageLabel={playlistCopy.pageLabel}
+                  firstPageLabel={copy.locale === "en-US" ? "First page" : "首页"}
+                  previousPageLabel={playlistCopy.prevPage}
+                  nextPageLabel={playlistCopy.nextPage}
+                  lastPageLabel={copy.locale === "en-US" ? "Last page" : "尾页"}
+                  onPageChange={setPlaylistPage}
+                />
+              </>
+            )}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function KugouCatalogDetailScreen({
+  copy,
+  settings,
+  request,
+  onBack,
+  onOpenArtist,
+  onOpenAlbum,
+  onPlayTrack,
+}: {
+  copy: UiCopy;
+  settings: AppSettings;
+  request: Exclude<KugouCatalogDetailRequest, null>;
+  onBack: () => void;
+  onOpenArtist: (id: string | null, name: string) => void;
+  onOpenAlbum: (id: string, name: string) => void;
+  onPlayTrack: (hash: string, queueSongs: KugouSongDetail[]) => void;
+}) {
+  const playlistCopy = getPlaylistCopy(copy.locale);
+  const kugouRequestSettingsKey = [
+    settings.network.kugouCookie,
+    settings.network.kugouApiBaseUrl,
+    settings.network.useLocalKugouApiServer,
+    settings.network.requestTimeoutMs,
+  ].join("|");
+  const [artistDetail, setArtistDetail] = useState<KugouArtistDetail | null>(null);
+  const [artistSongs, setArtistSongs] = useState<KugouSongDetail[]>([]);
+  const [artistAlbums, setArtistAlbums] = useState<KugouAlbumSummary[]>([]);
+  const [artistSongTotal, setArtistSongTotal] = useState(0);
+  const [artistAlbumTotal, setArtistAlbumTotal] = useState(0);
+  const [albumDetail, setAlbumDetail] = useState<KugouAlbumDetail | null>(null);
+  const [albumSongs, setAlbumSongs] = useState<KugouSongDetail[]>([]);
+  const [albumSongTotal, setAlbumSongTotal] = useState(0);
+  const [artistSongPage, setArtistSongPage] = useState(1);
+  const [artistAlbumPage, setArtistAlbumPage] = useState(1);
+  const [albumSongPage, setAlbumSongPage] = useState(1);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [isLoadingSongs, setIsLoadingSongs] = useState(false);
+  const [isLoadingAlbums, setIsLoadingAlbums] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [songsError, setSongsError] = useState<string | null>(null);
+  const [albumsError, setAlbumsError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const artistPageSize = 50;
+  const albumPageSize = 18;
+  const albumSongPageSize = 50;
+
+  useEffect(() => {
+    setArtistSongPage(1);
+    setArtistAlbumPage(1);
+    setAlbumSongPage(1);
+    setArtistDetail(null);
+    setArtistSongs([]);
+    setArtistAlbums([]);
+    setAlbumDetail(null);
+    setAlbumSongs([]);
+    setDetailError(null);
+    setSongsError(null);
+    setAlbumsError(null);
+  }, [request.id, request.kind]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    setIsLoadingDetail(true);
+    setDetailError(null);
+    if (request.kind === "artist") {
+      setAlbumDetail(null);
+      void getKugouArtistDetail(settings, request.id).then((detail) => {
+        if (!isDisposed) setArtistDetail(detail);
+      }).catch((reason: unknown) => {
+        if (!isDisposed) setDetailError(reason instanceof Error ? reason.message : playlistCopy.loading);
+      }).finally(() => { if (!isDisposed) setIsLoadingDetail(false); });
+    } else {
+      setArtistDetail(null);
+      void getKugouAlbumDetail(settings, request.id).then((detail) => {
+        if (!isDisposed) setAlbumDetail(detail);
+      }).catch((reason: unknown) => {
+        if (!isDisposed) setDetailError(reason instanceof Error ? reason.message : playlistCopy.loading);
+      }).finally(() => { if (!isDisposed) setIsLoadingDetail(false); });
+    }
+    return () => { isDisposed = true; };
+  }, [kugouRequestSettingsKey, playlistCopy.loading, reloadKey, request.id, request.kind]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    setIsLoadingSongs(true);
+    setSongsError(null);
+    const pageRequest = request.kind === "artist"
+      ? getKugouArtistSongsPage(settings, request.id, { limit: artistPageSize, offset: (artistSongPage - 1) * artistPageSize })
+      : getKugouAlbumSongsPage(settings, request.id, { limit: albumSongPageSize, offset: (albumSongPage - 1) * albumSongPageSize });
+    void pageRequest.then((page) => {
+      if (isDisposed) return;
+      if (request.kind === "artist") {
+        setArtistSongs(page.items);
+        setArtistSongTotal(page.total ?? (page.hasMore ? artistSongPage * artistPageSize + 1 : (artistSongPage - 1) * artistPageSize + page.items.length));
+      } else {
+        setAlbumSongs(page.items);
+        setAlbumSongTotal(page.total ?? (page.hasMore ? albumSongPage * albumSongPageSize + 1 : (albumSongPage - 1) * albumSongPageSize + page.items.length));
+      }
+    }).catch((reason: unknown) => {
+      if (!isDisposed) setSongsError(reason instanceof Error ? reason.message : playlistCopy.loading);
+    }).finally(() => { if (!isDisposed) setIsLoadingSongs(false); });
+    return () => { isDisposed = true; };
+  }, [albumSongPage, albumSongPageSize, artistPageSize, artistSongPage, kugouRequestSettingsKey, playlistCopy.loading, reloadKey, request.id, request.kind]);
+
+  useEffect(() => {
+    if (request.kind !== "artist") {
+      setArtistAlbums([]);
+      setArtistAlbumTotal(0);
+      setAlbumsError(null);
+      setIsLoadingAlbums(false);
+      return;
+    }
+    let isDisposed = false;
+    setIsLoadingAlbums(true);
+    setAlbumsError(null);
+    void getKugouArtistAlbumsPage(settings, request.id, { limit: albumPageSize, offset: (artistAlbumPage - 1) * albumPageSize }).then((page) => {
+      if (isDisposed) return;
+      setArtistAlbums(page.items);
+      setArtistAlbumTotal(page.total ?? (page.hasMore ? artistAlbumPage * albumPageSize + 1 : (artistAlbumPage - 1) * albumPageSize + page.items.length));
+    }).catch((reason: unknown) => {
+      if (!isDisposed) setAlbumsError(reason instanceof Error ? reason.message : playlistCopy.loading);
+    }).finally(() => { if (!isDisposed) setIsLoadingAlbums(false); });
+    return () => { isDisposed = true; };
+  }, [albumPageSize, artistAlbumPage, kugouRequestSettingsKey, playlistCopy.loading, reloadKey, request.id, request.kind]);
+
+  const artistSongPages = Math.max(1, Math.ceil(artistSongTotal / artistPageSize));
+  const artistAlbumPages = Math.max(1, Math.ceil(artistAlbumTotal / albumPageSize));
+  const albumSongPages = Math.max(1, Math.ceil(albumSongTotal / albumSongPageSize));
+  const isArtist = request.kind === "artist";
+  const tracks = isArtist ? artistSongs : albumSongs;
+  const trackPage = isArtist ? artistSongPage : albumSongPage;
+  const trackPageSize = isArtist ? artistPageSize : albumSongPageSize;
+  const trackTotalPages = isArtist ? artistSongPages : albumSongPages;
+  const title = isArtist ? artistDetail?.name ?? request.name : albumDetail?.name ?? request.name;
+  const artworkUrl = isArtist
+    ? artistDetail?.coverUrl ?? artistDetail?.avatarUrl ?? tracks.find((track) => track.artworkUrl)?.artworkUrl ?? artistAlbums.find((album) => album.artworkUrl)?.artworkUrl ?? null
+    : albumDetail?.artworkUrl ?? tracks.find((track) => track.artworkUrl)?.artworkUrl ?? null;
+  const description = isArtist
+    ? artistDetail?.description ?? artistDetail?.briefDesc ?? playlistCopy.detailDescription
+    : albumDetail?.description ?? albumDetail?.artistName ?? playlistCopy.detailDescription;
+
+  return (
+    <section className="playlist-screen">
+      <div className="playlist-detail-view">
+        <UIButton variant="secondary" onClick={onBack}>{copy.locale === "en-US" ? "Back to Playlist" : "返回歌单"}</UIButton>
+        <section className="playlist-detail-card">
+          <div className="playlist-detail-card__hero">
+            <div className="playlist-detail-card__artwork" aria-hidden="true">
+              {artworkUrl ? <img src={artworkUrl} alt="" loading="lazy" /> : <span className="playlist-detail-card__fallback"><AlbumsTileIcon /></span>}
+            </div>
+            <div className="playlist-detail-card__meta">
+              <h3 className="settings-screen__title">{title}</h3>
+              <p className="settings-screen__description playlist-detail-card__description">{description}</p>
+              <div className="playlist-detail-card__stats">
+                <div className="home-stat-card"><span>{playlistCopy.countSuffix}</span><strong>{isArtist ? artistDetail?.musicCount?.toLocaleString(copy.locale) ?? "--" : (albumDetail?.trackCount ?? (albumSongTotal > 0 ? albumSongTotal : null))?.toLocaleString(copy.locale) ?? "--"}</strong></div>
+                <div className="home-stat-card"><span>{isArtist ? (copy.locale === "en-US" ? "Albums" : "专辑") : playlistCopy.ownerPrefix}</span><strong>{isArtist ? artistDetail?.albumCount?.toLocaleString(copy.locale) ?? "--" : albumDetail?.artistName ?? "--"}</strong></div>
+              </div>
+            </div>
+          </div>
+          {detailError ? <NetworkSectionError message={detailError} actionLabel={getRetryActionLabel(copy.locale)} onRetry={() => setReloadKey((value) => value + 1)} /> : null}
+          {isLoadingDetail && !artistDetail && !albumDetail ? <UILoadingBlock label={playlistCopy.loading} variant="list" /> : null}
+          <>
+              <div className="home-section__header"><h3 className="settings-card__title">{isArtist ? (copy.locale === "en-US" ? "Songs" : "歌曲") : title}</h3><span className="home-section__hint">{playlistCopy.pageLabel} {trackPage} / {trackTotalPages}</span></div>
+              {songsError ? <NetworkSectionError message={songsError} actionLabel={getRetryActionLabel(copy.locale)} onRetry={() => setReloadKey((value) => value + 1)} /> : isLoadingSongs && tracks.length === 0 ? <UILoadingBlock label={playlistCopy.loading} variant="list" /> : tracks.length === 0 ? <p className="library-empty">{playlistCopy.emptyTracks}</p> : <div className="home-song-list">{tracks.map((track, index) => (
+                <div key={`${track.hash}:${index}`} className="home-song-card" role="button" tabIndex={0} onClick={() => onPlayTrack(track.hash, tracks)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onPlayTrack(track.hash, tracks); } }}>
+                  <span className="home-song-card__cover" aria-hidden="true">{track.artworkUrl ? <img src={track.artworkUrl} alt="" loading="lazy" /> : <span className="home-song-card__cover-fallback"><SongsTileIcon /></span>}</span>
+                  <span className="home-song-card__copy"><span className="home-song-card__title">{track.name}</span><span className="home-song-card__subtitle"><SongArtistLinks fallback={copy.library.songFields.unknownArtist} artists={track.artists.map((name, artistIndex) => ({ key: `${track.hash}:artist:${artistIndex}`, name, onClick: () => onOpenArtist(getKugouArtistIdForIndex(track, artistIndex), name) }))} /></span></span>
+                  <span className="home-song-card__meta"><SongMetaButton label={track.album || copy.library.songFields.unknownAlbum} onClick={track.albumId ? () => onOpenAlbum(track.albumId!, track.album || copy.library.songFields.unknownAlbum) : undefined} disabled={!track.albumId} /></span>
+                  <span className="home-song-card__duration">{formatDurationMs(track.durationMs)}</span>
+                  <span className="home-song-card__badge">#{(trackPage - 1) * trackPageSize + index + 1}</span>
+                </div>
+              ))}</div>}
+              {tracks.length > 0 ? <UIPagination currentPage={trackPage} totalPages={trackTotalPages} pageLabel={playlistCopy.pageLabel} firstPageLabel={copy.locale === "en-US" ? "First page" : "首页"} previousPageLabel={playlistCopy.prevPage} nextPageLabel={playlistCopy.nextPage} lastPageLabel={copy.locale === "en-US" ? "Last page" : "尾页"} onPageChange={isArtist ? setArtistSongPage : setAlbumSongPage} /> : null}
+              {isArtist ? <>
+                <div className="home-section__header"><h3 className="settings-card__title">{copy.locale === "en-US" ? "Albums" : "专辑"}</h3><span className="home-section__hint">{playlistCopy.pageLabel} {artistAlbumPage} / {artistAlbumPages}</span></div>
+                {albumsError ? <NetworkSectionError message={albumsError} actionLabel={getRetryActionLabel(copy.locale)} onRetry={() => setReloadKey((value) => value + 1)} /> : isLoadingAlbums && artistAlbums.length === 0 ? <UILoadingBlock label={playlistCopy.loading} variant="list" /> : artistAlbums.length === 0 ? <p className="library-empty">{copy.locale === "en-US" ? "No albums available." : "暂时没有可显示的专辑。"}</p> : <div className="playlist-waterfall-grid playlist-browser-grid">{artistAlbums.map((album) => <PlaylistPreviewCard key={album.id} title={album.name} description={album.artistName || copy.library.songFields.unknownArtist} artworkUrl={album.artworkUrl} primaryMeta={album.publishYear ? String(album.publishYear) : ""} secondaryMeta="" onClick={() => onOpenAlbum(album.id, album.name)} />)}</div>}
+                {artistAlbums.length > 0 ? <UIPagination currentPage={artistAlbumPage} totalPages={artistAlbumPages} pageLabel={playlistCopy.pageLabel} firstPageLabel={copy.locale === "en-US" ? "First page" : "首页"} previousPageLabel={playlistCopy.prevPage} nextPageLabel={playlistCopy.nextPage} lastPageLabel={copy.locale === "en-US" ? "Last page" : "尾页"} onPageChange={setArtistAlbumPage} /> : null}
+              </> : null}
+          </>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function KugouLikedSongsScreen({
+  copy,
+  settings,
+  dataVersion,
+  onPlayTrack,
+  onOpenArtist,
+  onOpenAlbum,
+}: {
+  copy: UiCopy;
+  settings: AppSettings;
+  dataVersion: number;
+  onPlayTrack: (hash: string, queueSongs: KugouSongDetail[], playlist: PlaylistSelection) => void;
+  onOpenArtist: (id: string | null, name: string) => void;
+  onOpenAlbum: (id: string, name: string) => void;
+}) {
+  const likedSongsCopy = getLikedSongsCopy(copy.locale);
+  const isEnabled = isKugouSourceEnabled(settings);
+  const hasCredentials = settings.network.kugouCookie.trim().length > 0;
+  const requestKey = [settings.network.kugouCookie, settings.network.kugouApiBaseUrl, settings.network.useLocalKugouApiServer, settings.network.requestTimeoutMs, dataVersion].join("|");
+  const [playlist, setPlaylist] = useState<KugouPlaylistSummary | null>(null);
+  const [tracks, setTracks] = useState<KugouSongDetail[]>([]);
+  const [isLoadingCollection, setIsLoadingCollection] = useState(false);
+  const [isLoadingTracks, setIsLoadingTracks] = useState(false);
+  const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [trackError, setTrackError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
+  const userId = Number(getCookieParameter(settings.network.kugouCookie, "userid") || 0);
+  const pageSize = 50;
+
+  useEffect(() => {
+    let disposed = false;
+    if (!isEnabled || !hasCredentials || !Number.isFinite(userId) || userId <= 0) {
+      setPlaylist(null);
+      setTracks([]);
+      setIsLoadingCollection(false);
+      return () => { disposed = true; };
+    }
+    setIsLoadingCollection(true);
+    setCollectionError(null);
+    void getKugouUserPlaylists(settings, userId).then((playlists) => {
+      if (disposed) return;
+      setPlaylist(playlists.find((item) => item.isLiked) ?? null);
+    }).catch((reason: unknown) => {
+      if (!disposed) setCollectionError(reason instanceof Error ? reason.message : likedSongsCopy.loading);
+    }).finally(() => { if (!disposed) setIsLoadingCollection(false); });
+    return () => { disposed = true; };
+  }, [hasCredentials, isEnabled, likedSongsCopy.loading, reloadKey, requestKey, userId]);
+
+  useEffect(() => {
+    let disposed = false;
+    setPage(1);
+    if (!playlist) {
+      setTracks([]);
+      setIsLoadingTracks(false);
+      return () => { disposed = true; };
+    }
+    setIsLoadingTracks(true);
+    setTrackError(null);
+    void getKugouPlaylistTracks(settings, playlist.collectionId).then((items) => {
+      if (!disposed) setTracks(items);
+    }).catch((reason: unknown) => {
+      if (!disposed) setTrackError(reason instanceof Error ? reason.message : likedSongsCopy.loadingTracks);
+    }).finally(() => { if (!disposed) setIsLoadingTracks(false); });
+    return () => { disposed = true; };
+  }, [likedSongsCopy.loadingTracks, playlist?.collectionId, reloadKey, requestKey]);
+
+  const totalPages = Math.max(1, Math.ceil(tracks.length / pageSize));
+  const visibleTracks = tracks.slice((page - 1) * pageSize, page * pageSize);
+  const selectedPlaylist: PlaylistSelection = playlist ? { id: playlist.id, title: playlist.name } : null;
+
+  return <section className="playlist-screen">
+    {!isEnabled ? <p className="library-empty">{likedSongsCopy.notEnabled}</p> : !hasCredentials || userId <= 0 ? <p className="library-empty">{likedSongsCopy.notLoggedIn}</p> : collectionError ? <NetworkSectionError message={collectionError} actionLabel={getRetryActionLabel(copy.locale)} onRetry={() => setReloadKey((value) => value + 1)} /> : isLoadingCollection ? <UILoadingBlock label={likedSongsCopy.loading} variant="grid" /> : !playlist ? <p className="library-empty">{likedSongsCopy.empty}</p> : <div className="playlist-detail-view"><section className="playlist-detail-card"><div className="playlist-detail-card__hero"><div className="playlist-detail-card__artwork" aria-hidden="true">{playlist.artworkUrl ? <img src={playlist.artworkUrl} alt="" loading="lazy" /> : <span className="playlist-detail-card__fallback"><AlbumsTileIcon /></span>}</div><div className="playlist-detail-card__meta"><h3 className="settings-screen__title">{playlist.name}</h3><p className="settings-screen__description playlist-detail-card__description">{playlist.description || likedSongsCopy.detailDescription}</p><div className="playlist-detail-card__stats"><div className="home-stat-card"><span>{likedSongsCopy.ownerPrefix}</span><strong>{playlist.creatorName || "--"}</strong></div><div className="home-stat-card"><span>{likedSongsCopy.countSuffix}</span><strong>{playlist.trackCount?.toLocaleString(copy.locale) ?? "--"}</strong></div></div></div></div><div className="home-section__header"><h3 className="settings-card__title">{likedSongsCopy.title}</h3>{!isLoadingTracks && tracks.length > 0 ? <span className="home-section__hint">{likedSongsCopy.pageLabel} {page} / {totalPages}</span> : null}</div>{trackError ? <NetworkSectionError message={trackError} actionLabel={getRetryActionLabel(copy.locale)} onRetry={() => setReloadKey((value) => value + 1)} /> : isLoadingTracks ? <UILoadingBlock label={likedSongsCopy.loadingTracks} variant="list" items={5} /> : tracks.length === 0 ? <p className="library-empty">{likedSongsCopy.emptyTracks}</p> : <><div className="home-song-list">{visibleTracks.map((track, index) => <div key={track.hash} className="home-song-card" role="button" tabIndex={0} onClick={() => onPlayTrack(track.hash, tracks, selectedPlaylist)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onPlayTrack(track.hash, tracks, selectedPlaylist); } }}><span className="home-song-card__cover" aria-hidden="true">{track.artworkUrl ? <img src={track.artworkUrl} alt="" loading="lazy" /> : <span className="home-song-card__cover-fallback"><SongsTileIcon /></span>}</span><span className="home-song-card__copy"><span className="home-song-card__title">{track.name}</span><span className="home-song-card__subtitle"><SongArtistLinks fallback={copy.library.songFields.unknownArtist} artists={track.artists.map((name, artistIndex) => ({ key: `${track.hash}:artist:${artistIndex}`, name, onClick: () => onOpenArtist(getKugouArtistIdForIndex(track, artistIndex), name) }))} /></span></span><span className="home-song-card__meta"><SongMetaButton label={track.album || copy.library.songFields.unknownAlbum} onClick={track.albumId ? () => onOpenAlbum(track.albumId!, track.album || copy.library.songFields.unknownAlbum) : undefined} disabled={!track.albumId} /></span><span className="home-song-card__duration">{formatDurationMs(track.durationMs)}</span><span className="home-song-card__badge">#{(page - 1) * pageSize + index + 1}</span></div>)}</div><UIPagination currentPage={page} totalPages={totalPages} pageLabel={likedSongsCopy.pageLabel} firstPageLabel={copy.locale === "en-US" ? "First page" : "首页"} previousPageLabel={likedSongsCopy.prevPage} nextPageLabel={likedSongsCopy.nextPage} lastPageLabel={copy.locale === "en-US" ? "Last page" : "尾页"} onPageChange={setPage} /></>}</section></div>}
+  </section>;
 }
 
 function PlaylistScreen({
@@ -26340,6 +27866,32 @@ function formatHomeCount(value: number, locale: string) {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function formatSongCacheSize(sizeBytes: number) {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = sizeBytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function getCookieParameter(cookie: string, name: string) {
+  return cookie
+    .split(";")
+    .map((entry) => entry.trim().split(/=(.*)/s))
+    .find(([key]) => key === name)?.[1]?.trim() || null;
+}
+
+function getKugouArtistIdForIndex(track: KugouSongDetail, artistIndex: number) {
+  return track.artistIds[artistIndex] ?? (track.artists.length === 1 && track.artistIds.length === 1 ? track.artistIds[0] : null);
 }
 
 function SongArtwork({

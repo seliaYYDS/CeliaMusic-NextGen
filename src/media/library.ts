@@ -15,6 +15,13 @@ export type RemoteAudioCacheRequest = {
   cacheKey?: string | null;
 };
 
+export type MediaProxyServerStatus = {
+  running: boolean;
+  url: string;
+  port: number;
+  message: string | null;
+};
+
 export type AudioTrackAnalysis = {
   sourcePath: string;
   durationMs: number;
@@ -100,6 +107,9 @@ export const registerRemoteTrack = async (
     draft,
   });
 
+export const getMediaProxyServerStatus = async (): Promise<MediaProxyServerStatus> =>
+  invoke("get_media_proxy_server_status");
+
 export const saveSongConfig = async (
   trackId: string,
   config: SongConfig,
@@ -120,6 +130,18 @@ export const clearCachedRemoteAudio = async (path: string): Promise<void> =>
   invoke("clear_cached_spectrum_audio", {
     path,
   });
+
+export type SongCacheInfo = {
+  path: string;
+  sizeBytes: number;
+  fileCount: number;
+};
+
+export const getSongCacheInfo = async (): Promise<SongCacheInfo> =>
+  invoke("get_song_cache_info");
+
+export const clearSongCache = async (): Promise<SongCacheInfo> =>
+  invoke("clear_song_cache");
 
 export const analyzeLocalAudioTrack = async (path: string): Promise<AudioTrackAnalysis> =>
   invoke("analyze_local_audio_track", {

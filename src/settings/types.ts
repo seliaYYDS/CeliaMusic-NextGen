@@ -108,6 +108,7 @@ export type PlaybackSettings = {
   muted: boolean;
   playbackMode: PlaybackModeOption;
   cacheMode: PlaybackCacheMode;
+  autoClearSongCacheOnExit: boolean;
   systemMediaInfoSync: boolean;
   rememberQueue: boolean;
   songTransitionEnabled: boolean;
@@ -136,11 +137,15 @@ export type LibrarySettings = {
 export type NetworkSettings = {
   enabledSources: string[];
   useLocalApiServer: boolean;
+  useLocalKugouApiServer: boolean;
   requestTimeoutMs: number;
   neteaseApiBaseUrl: string;
   neteaseCookie: string;
   neteaseProxy: string;
   neteaseRealIp: string;
+  kugouApiBaseUrl: string;
+  kugouCookie: string;
+  kugouDfid: string;
 };
 
 export type LyricsSettings = {
@@ -259,6 +264,7 @@ export const createDefaultAppSettings = (): AppSettings => ({
     muted: false,
     playbackMode: "ordered",
     cacheMode: "stream",
+    autoClearSongCacheOnExit: false,
     systemMediaInfoSync: true,
     rememberQueue: true,
     songTransitionEnabled: false,
@@ -285,11 +291,15 @@ export const createDefaultAppSettings = (): AppSettings => ({
   network: {
     enabledSources: ["netease"],
     useLocalApiServer: false,
+    useLocalKugouApiServer: false,
     requestTimeoutMs: 15000,
     neteaseApiBaseUrl: "http://127.0.0.1:3000",
     neteaseCookie: "",
     neteaseProxy: "",
     neteaseRealIp: "",
+    kugouApiBaseUrl: "http://127.0.0.1:3001",
+    kugouCookie: "",
+    kugouDfid: "",
   },
   lyrics: {
     delayMs: 0,

@@ -4703,12 +4703,15 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
-  transition: color 160ms ease;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
 }
 
 .song-meta-link:hover:not(:disabled),
 .song-meta-link:focus-visible:not(:disabled) {
   color: var(--accent-strong, #2d5fa8);
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-underline-offset: 2px;
 }
 
 .song-meta-link:disabled {
