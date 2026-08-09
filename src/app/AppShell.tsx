@@ -8407,7 +8407,6 @@ export function AppShell({
     isSettingsLoading,
     settings.network.enabledSources.join("|"),
     settings.network.neteaseApiBaseUrl,
-    settings.network.neteaseCookie,
     settings.network.neteaseProxy,
     settings.network.neteaseRealIp,
     settings.network.useLocalApiServer,
@@ -17224,9 +17223,12 @@ export function AppShell({
 
       const snapshot = await saveAppSettings(nextSettings);
       applySavedSettingsSnapshot(nextSettings, snapshot);
+      settingsRef.current = snapshot.settings;
+      setSettings(snapshot.settings);
       pushDynamicIslandNotification(
         localeStrings.notifications.neteaseLoginSaved,
       );
+      return snapshot.settings;
     } catch (error) {
       console.error("[settings] failed to save netease cookie", error);
       pushDynamicIslandNotification(
@@ -17287,6 +17289,8 @@ export function AppShell({
 
       const snapshot = await saveAppSettings(nextSettings);
       applySavedSettingsSnapshot(nextSettings, snapshot);
+      settingsRef.current = snapshot.settings;
+      setSettings(snapshot.settings);
       pushDynamicIslandNotification(
         localeStrings.notifications.neteaseLoginCleared,
       );
@@ -21232,7 +21236,7 @@ function SettingsScreen({
   onTestKugouApi: () => void;
   onSaveKugouCookie: (cookie: string) => Promise<AppSettings>;
   onClearKugouCookie: () => Promise<void>;
-  onSaveNeteaseCookie: (cookie: string) => Promise<void>;
+  onSaveNeteaseCookie: (cookie: string) => Promise<AppSettings>;
   onClearNeteaseCookie: () => Promise<void>;
   onPickScanDirectory: () => void;
   onPickDownloadDirectory: () => void;
@@ -22369,53 +22373,61 @@ function SettingsScreen({
     setKugouQrLoginMessage(null);
   };
 
-  useEffect(() => {
-    if (
-      !shouldRenderSecondarySettingsSections ||
-      !isNeteaseEnabled ||
-      !settings.network.neteaseCookie.trim()
-    ) {
-      setNeteaseAccount(null);
-      setNeteaseAccountError(null);
-      setIsLoadingNeteaseAccount(false);
-      return;
+  const refreshNeteaseAccount = async (
+    targetSettings = settings,
+    canApplyResult: () => boolean = () => true,
+  ) => {
+    if (!isNeteaseEnabled || !targetSettings.network.neteaseCookie.trim()) {
+      if (canApplyResult()) {
+        setNeteaseAccount(null);
+        setNeteaseAccountError(null);
+        setIsLoadingNeteaseAccount(false);
+      }
+      return false;
     }
 
-    let isDisposed = false;
-    setIsLoadingNeteaseAccount(true);
-    setNeteaseAccountError(null);
+    if (canApplyResult()) {
+      setIsLoadingNeteaseAccount(true);
+      setNeteaseAccountError(null);
+    }
 
-    void getNeteaseLoggedInAccount(settings)
-      .then((account) => {
-        if (isDisposed) {
-          return;
-        }
-
-        setNeteaseAccount(account);
-        setNeteaseAccountError(
-          account ? null : copy.settings.sections.network.accountEmpty,
-        );
-      })
-      .catch((error) => {
-        if (isDisposed) {
-          return;
-        }
-
-        console.error("[network] failed to load netease account", error);
+    try {
+      const account = await getNeteaseLoggedInAccount(targetSettings);
+      if (!canApplyResult()) {
+        return false;
+      }
+      setNeteaseAccount(account);
+      setNeteaseAccountError(
+        account ? null : copy.settings.sections.network.accountEmpty,
+      );
+      return account !== null;
+    } catch (error) {
+      console.error("[network] failed to load netease account", error);
+      if (canApplyResult()) {
         setNeteaseAccount(null);
         setNeteaseAccountError(
           error instanceof Error && error.message
             ? error.message
             : copy.settings.sections.network.accountLoadFailed,
         );
-      })
-      .finally(() => {
-        if (isDisposed) {
-          return;
-        }
-
+      }
+      return false;
+    } finally {
+      if (canApplyResult()) {
         setIsLoadingNeteaseAccount(false);
-      });
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!shouldRenderSecondarySettingsSections) {
+      return;
+    }
+
+    let isDisposed = false;
+    void refreshNeteaseAccount(settings, () => !isDisposed).catch(() => {
+      // The helper stores the request failure in component state.
+    });
 
     return () => {
       isDisposed = true;
@@ -22484,13 +22496,26 @@ function SettingsScreen({
           return;
         }
 
-        await onSaveNeteaseCookie(status.cookie);
+        const savedSettings = await onSaveNeteaseCookie(status.cookie);
+
+        if (isDisposed) {
+          return;
+        }
+
+        const hasLoadedAccount = await refreshNeteaseAccount(savedSettings);
 
         if (isDisposed) {
           return;
         }
 
         setQrLoginState("authorized");
+        if (!hasLoadedAccount) {
+          setQrLoginMessage(
+            copy.locale === "en-US"
+              ? "Login was saved, but account information could not be loaded."
+              : "登录状态已保存，但用户信息暂未获取成功。",
+          );
+        }
         setQrLoginSession(null);
       } catch (error) {
         if (isDisposed) {
@@ -22558,6 +22583,9 @@ function SettingsScreen({
 
     try {
       await onClearNeteaseCookie();
+      setNeteaseAccount(null);
+      setNeteaseAccountError(null);
+      setIsLoadingNeteaseAccount(false);
       setQrLoginSession(null);
       setQrLoginState("idle");
       setQrLoginMessage(null);
@@ -22634,32 +22662,7 @@ function SettingsScreen({
   ].filter(Boolean).length;
 
   const handleRefreshNeteaseAccount = async () => {
-    if (!isNeteaseEnabled || !settings.network.neteaseCookie.trim()) {
-      setNeteaseAccount(null);
-      setNeteaseAccountError(copy.settings.sections.network.accountEmpty);
-      return;
-    }
-
-    setIsLoadingNeteaseAccount(true);
-    setNeteaseAccountError(null);
-
-    try {
-      const account = await getNeteaseLoggedInAccount(settings);
-      setNeteaseAccount(account);
-      setNeteaseAccountError(
-        account ? null : copy.settings.sections.network.accountEmpty,
-      );
-    } catch (error) {
-      console.error("[network] failed to refresh netease account", error);
-      setNeteaseAccount(null);
-      setNeteaseAccountError(
-        error instanceof Error && error.message
-          ? error.message
-          : copy.settings.sections.network.accountLoadFailed,
-      );
-    } finally {
-      setIsLoadingNeteaseAccount(false);
-    }
+    await refreshNeteaseAccount();
   };
 
   if (settingsView === "theme") {

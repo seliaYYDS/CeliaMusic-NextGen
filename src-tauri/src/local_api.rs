@@ -147,11 +147,12 @@ fn resolve_local_api_port(settings: &AppSettings, provider: LocalApiProvider) ->
 }
 
 fn build_signature(config: &LocalNeteaseApiConfig) -> String {
+    // Netease requests carry the current login cookie. Do not restart the
+    // local API process merely because the user signs in or out.
     [
         config.provider.label().to_string(),
         LOCAL_API_RUNTIME_REVISION.to_string(),
         config.port.to_string(),
-        config.cookie.clone(),
         config.proxy.clone(),
         config.real_ip.clone(),
         config
