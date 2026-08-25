@@ -142,6 +142,7 @@ export type NetworkSettings = {
   enabledSources: string[];
   useLocalApiServer: boolean;
   useLocalKugouApiServer: boolean;
+  waitForApiOnStartup: boolean;
   requestTimeoutMs: number;
   neteaseApiBaseUrl: string;
   neteaseCookie: string;
@@ -296,6 +297,7 @@ export const createDefaultAppSettings = (): AppSettings => ({
     enabledSources: ["netease"],
     useLocalApiServer: false,
     useLocalKugouApiServer: false,
+    waitForApiOnStartup: false,
     requestTimeoutMs: 15000,
     neteaseApiBaseUrl: "http://127.0.0.1:3000",
     neteaseCookie: "",

@@ -36,6 +36,7 @@ type Props = {
   onOpenArtist: (id: string | null, name: string) => void;
   onOpenAlbum: (id: string, name: string) => void;
   onOpenPlaylist: (playlist: KugouPlaylistSummary) => void;
+  onLoadSuccess: () => void;
 };
 
 type HomeFeed = {
@@ -304,6 +305,7 @@ export function KugouHomeScreen({
   onOpenArtist,
   onOpenAlbum,
   onOpenPlaylist,
+  onLoadSuccess,
 }: Props) {
   const text = getCopy(locale);
   const enabled = isKugouSourceEnabled(settings);
@@ -338,6 +340,7 @@ export function KugouHomeScreen({
     const cacheKey = getCacheKey(settings);
     const cached = feedCache.get(cacheKey);
     if (cached) {
+      onLoadSuccess();
       setFeed(cached);
       setError(null);
       return;
@@ -353,6 +356,7 @@ export function KugouHomeScreen({
       .then(([dailySongs, personalFmSongs, playlists, account]) => {
         if (cancelled) return;
         const nextFeed = { account, dailySongs, personalFmSongs, playlists };
+        onLoadSuccess();
         setBoundedMapValue(feedCache, cacheKey, nextFeed, 12);
         setFeed(nextFeed);
       })

@@ -11,7 +11,7 @@ use fontdb::Database;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 12;
+const SETTINGS_SCHEMA_VERSION: u32 = 13;
 const DEFAULT_SETTINGS_FILE: &str = "app-settings.json";
 pub const DEFAULT_WINDOW_WIDTH: u32 = 960;
 pub const DEFAULT_WINDOW_HEIGHT: u32 = 600;
@@ -301,6 +301,7 @@ pub struct NetworkSettings {
     pub enabled_sources: Vec<String>,
     pub use_local_api_server: bool,
     pub use_local_kugou_api_server: bool,
+    pub wait_for_api_on_startup: bool,
     pub request_timeout_ms: u64,
     pub netease_api_base_url: String,
     pub netease_cookie: String,
@@ -317,6 +318,7 @@ impl Default for NetworkSettings {
             enabled_sources: vec!["netease".to_string()],
             use_local_api_server: false,
             use_local_kugou_api_server: false,
+            wait_for_api_on_startup: false,
             request_timeout_ms: 15000,
             netease_api_base_url: "http://127.0.0.1:3000".to_string(),
             netease_cookie: String::new(),

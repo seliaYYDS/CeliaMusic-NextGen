@@ -12250,6 +12250,120 @@ select {
   animation: playbar-control-ring-hover 280ms cubic-bezier(0.36, 1.18, 0.64, 1);
 }
 
+.playbar__favorite-button {
+  --playbar-favorite-color: var(--accent, #2d5fa8);
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--playbar-favorite-color);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.playbar__favorite-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--playbar-favorite-color) 11%, transparent);
+  transform: scale(1.06);
+}
+
+.playbar__favorite-button:active:not(:disabled) {
+  animation: playbar-button-tap 220ms ease;
+  transform: scale(0.96);
+}
+
+.playbar__favorite-button:disabled {
+  color: rgba(114, 128, 159, 0.52);
+  cursor: default;
+}
+
+.playbar-favorite-animation {
+  position: relative;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+}
+
+.playbar-favorite-animation__outline,
+.playbar-favorite-animation__filled {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.playbar-favorite-animation__filled {
+  display: none;
+}
+
+.playbar-favorite-animation__filled.is-liked {
+  display: block;
+  animation: playbar-favorite-filled 500ms ease;
+}
+
+.playbar-favorite-animation__celebrate {
+  position: absolute;
+  inset: -26px;
+  width: 68px;
+  height: 68px;
+  pointer-events: none;
+  animation: playbar-favorite-celebrate 500ms ease forwards;
+}
+
+.playbar-favorite-animation__celebrate polygon {
+  stroke: currentColor;
+  fill: currentColor;
+  stroke-width: 3px;
+}
+
+@keyframes playbar-favorite-filled {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes playbar-favorite-celebrate {
+  0% {
+    opacity: 1;
+    transform: scale(0);
+  }
+
+  50% {
+    opacity: 0.8;
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playbar-favorite-animation__filled.is-liked,
+  .playbar-favorite-animation__celebrate {
+    animation: none;
+  }
+}
+
 .playbar__control-button:active,
 .playbar__action-button:active {
   animation: playbar-button-tap 220ms ease;
@@ -14449,4 +14563,52 @@ select {
 .app-shell--compact .playbar__action-button {
   width: 32px;
   height: 32px;
+}
+
+.startup-api-wait {
+  position: absolute;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #050505;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.startup-api-wait--exiting {
+  opacity: 0;
+}
+
+.startup-api-wait__content {
+  display: grid;
+  pointer-events: none;
+  justify-items: center;
+  gap: 18px;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.startup-api-wait__spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: startup-api-wait-spin 800ms linear infinite;
+}
+
+@keyframes startup-api-wait-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup-api-wait__spinner {
+    animation: none;
+  }
 }

@@ -181,6 +181,7 @@ function normalizeAppSettingsForSave(settings: AppSettings): AppSettings {
     },
     network: {
       ...settings.network,
+      waitForApiOnStartup: Boolean(settings.network.waitForApiOnStartup),
       requestTimeoutMs: clampInteger(settings.network.requestTimeoutMs, 1000, 120000),
     },
     library: {

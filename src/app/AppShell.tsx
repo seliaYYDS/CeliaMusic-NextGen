@@ -1,4 +1,4 @@
-﻿import {
+import {
   memo,
   useEffect,
   useId,
@@ -71,6 +71,7 @@ import {
   getNeteaseDailyRecommendedSongs,
   getNeteaseLoggedInAccount,
   getNeteaseIntelligenceSongs,
+  getNeteaseLikedSongIds,
   getNeteasePersonalFmSongs,
   likeNeteaseSong,
   getAllNeteasePlaylistTracks,
@@ -1139,6 +1140,9 @@ const UI_COPY = {
           title: "在线音源",
           sourceLabel: "启用在线音源",
           sourceDescription: "启用在线搜索、歌曲解析与播放功能。",
+          waitForApiOnStartupLabel: "启动页面等待 API 运行",
+          waitForApiOnStartupDescription:
+            "开屏动画结束后等待当前在线音源 API 响应，最长等待 30 秒。",
           sourceSelectorLabel: "当前音源",
           neteaseSourceLabel: "网易云音乐",
           kugouSourceLabel: "酷狗音乐",
@@ -1674,6 +1678,9 @@ const UI_COPY = {
           sourceLabel: "Enable Online Sources",
           sourceDescription:
             "Enable online search, track resolving, and streaming features.",
+          waitForApiOnStartupLabel: "Wait for API on startup",
+          waitForApiOnStartupDescription:
+            "Wait for the selected online source API after the splash screen, for up to 30 seconds.",
           sourceSelectorLabel: "Active Source",
           neteaseSourceLabel: "Netease Cloud Music",
           kugouSourceLabel: "KuGou Music",
@@ -3873,6 +3880,7 @@ type ContextMenuTarget =
   | {
       kind: "song";
       payload: SongContextTarget;
+      source?: "playbar";
     }
   | {
       kind: "playlist";
@@ -4257,6 +4265,8 @@ export function getLocaleStrings(locale: string) {
         controls: "Playback Controls",
         actions: "Additional Actions",
         volumeLabel: "Volume",
+        favoriteSong: "Save song",
+        unfavoriteSong: "Remove from favorites",
         loadingTrack: "Loading track...",
         restoringPlayback: "Trying to restore playback state...",
       },
@@ -4368,6 +4378,8 @@ export function getLocaleStrings(locale: string) {
       controls: "播放控制",
       actions: "附加操作",
       volumeLabel: "音量",
+      favoriteSong: "收藏歌曲",
+      unfavoriteSong: "取消收藏歌曲",
       loadingTrack: "正在加载歌曲...",
       restoringPlayback: "正在尝试恢复播放状态",
     },
@@ -5173,6 +5185,15 @@ export function AppShell({
     useState<KugouPlaylistSummary[]>([]);
   const [contextMenuKugouLikedHashes, setContextMenuKugouLikedHashes] =
     useState<string[]>([]);
+  const [playbarLikedNeteaseSongIds, setPlaybarLikedNeteaseSongIds] = useState<
+    number[]
+  >([]);
+  const [playbarLikedKugouHashes, setPlaybarLikedKugouHashes] = useState<
+    string[]
+  >([]);
+  const [isPlaybarFavoriteLoading, setIsPlaybarFavoriteLoading] = useState(false);
+  const [isPlaybarFavoriteUpdating, setIsPlaybarFavoriteUpdating] =
+    useState(false);
   const [isContextMenuPlaylistLoading, setIsContextMenuPlaylistLoading] =
     useState(false);
   const [contextMenuBusyActionId, setContextMenuBusyActionId] = useState<
@@ -5196,6 +5217,14 @@ export function AppShell({
   const [appGreetingPhase, setAppGreetingPhase] = useState<
     "hold" | "expand" | "exit" | "hidden"
   >(initialStartupAnimationMode === "none" ? "hidden" : "hold");
+  const [isStartupApiWaitPending, setIsStartupApiWaitPending] =
+    useState(false);
+  const [isStartupApiWaitMounted, setIsStartupApiWaitMounted] =
+    useState(false);
+  const [isStartupApiWaitExiting, setIsStartupApiWaitExiting] =
+    useState(false);
+  const hasStartedStartupApiWaitRef = useRef(false);
+  const startupApiWaitTimeoutRef = useRef<number | null>(null);
   const [isAppWindowVisible, setIsAppWindowVisible] = useState(true);
   const [isDocumentVisible, setIsDocumentVisible] = useState(() =>
     typeof document === "undefined"
@@ -5277,6 +5306,7 @@ export function AppShell({
   const volumeRef = useRef(volume);
   const isPlayingRef = useRef(false);
   const isPlaybackLoadingRef = useRef(false);
+
   const isMaximizedRef = useRef(false);
   const isFullscreenRef = useRef(false);
   const isImmersivePlayerOpenRef = useRef(false);
@@ -5330,6 +5360,10 @@ export function AppShell({
     useRef<Promise<PreparedSongTransition | null> | null>(null);
   const songTransitionPreparationSequenceRef = useRef(0);
   const pendingAutoplayRef = useRef(false);
+  // Track the most recently requested song while its source is still loading.
+  // Navigation must be resolved from this value so rapid skips do not reuse
+  // the previously committed track.
+  const pendingRequestedTrackIdRef = useRef<string | null>(null);
   const pendingPlaybackStartIntentRef = useRef<PlaybackStartIntent | null>(
     null,
   );
@@ -7974,6 +8008,85 @@ export function AppShell({
   }, [contextMenuState]);
 
   useEffect(() => {
+    const neteaseTrackId = currentTrack
+      ? parseNeteaseTrackIdFromCacheKey(currentTrack.playback.cacheKey)
+      : null;
+    const kugouTrackHash = currentTrack
+      ? parseKugouTrackHashFromCacheKey(currentTrack.playback.cacheKey)
+      : null;
+    let cancelled = false;
+
+    setIsPlaybarFavoriteUpdating(false);
+    if (neteaseTrackId === null && kugouTrackHash === null) {
+      setPlaybarLikedNeteaseSongIds([]);
+      setPlaybarLikedKugouHashes([]);
+      setIsPlaybarFavoriteLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setIsPlaybarFavoriteLoading(true);
+    void (async () => {
+      try {
+        if (neteaseTrackId !== null) {
+          const account = await ensureNeteaseAccount();
+          if (cancelled) return;
+          const likedSongIds = account
+            ? await getNeteaseLikedSongIds(settingsRef.current, account.userId)
+            : [];
+          if (!cancelled) setPlaybarLikedNeteaseSongIds(likedSongIds);
+          return;
+        }
+
+        if (
+          !isKugouSourceEnabled(settingsRef.current) ||
+          settingsRef.current.network.kugouCookie.trim().length === 0
+        ) {
+          if (!cancelled) setPlaybarLikedKugouHashes([]);
+          return;
+        }
+        const account = await getKugouLoggedInAccount(settingsRef.current);
+        if (!account) {
+          if (!cancelled) setPlaybarLikedKugouHashes([]);
+          return;
+        }
+        const playlists = await getKugouUserPlaylists(
+          settingsRef.current,
+          account.userId,
+        );
+        const likedPlaylist = playlists.find(
+          (playlist) =>
+            playlist.isLiked || playlist.id === 2 || playlist.name === "我喜欢",
+        );
+        const songs = likedPlaylist
+          ? await getKugouPlaylistTracks(
+              settingsRef.current,
+              likedPlaylist.collectionId,
+            )
+          : [];
+        if (!cancelled) {
+          setPlaybarLikedKugouHashes(
+            songs.map((song) => song.hash.trim().toUpperCase()),
+          );
+        }
+      } catch (error) {
+        console.error("[playbar] failed to load favorite state", error);
+        if (!cancelled) {
+          setPlaybarLikedNeteaseSongIds([]);
+          setPlaybarLikedKugouHashes([]);
+        }
+      } finally {
+        if (!cancelled) setIsPlaybarFavoriteLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTrackId, settings.network.kugouCookie, settings.network.neteaseCookie]);
+
+  useEffect(() => {
     if (isQueuePopoverOpen) {
       return;
     }
@@ -8250,6 +8363,27 @@ export function AppShell({
   }, [copy.locale]);
 
   useEffect(() => {
+    if (isStartupApiWaitPending || !isStartupApiWaitMounted) {
+      return;
+    }
+
+    setIsStartupApiWaitExiting(true);
+    const exitTimer = window.setTimeout(() => {
+      setIsStartupApiWaitMounted(false);
+      setIsStartupApiWaitExiting(false);
+    }, 420);
+
+    if (startupApiWaitTimeoutRef.current !== null) {
+      window.clearTimeout(startupApiWaitTimeoutRef.current);
+      startupApiWaitTimeoutRef.current = null;
+    }
+
+    return () => {
+      window.clearTimeout(exitTimer);
+    };
+  }, [isStartupApiWaitMounted, isStartupApiWaitPending]);
+
+  useEffect(() => {
     if (initialStartupAnimationMode === "none") {
       setAppGreetingPhase("hidden");
       return;
@@ -8273,6 +8407,43 @@ export function AppShell({
       window.clearTimeout(hideTimer);
     };
   }, [initialStartupAnimationMode, startupAnimationTiming]);
+
+  useEffect(() => {
+    if (isSettingsLoading || hasStartedStartupApiWaitRef.current) {
+      return;
+    }
+
+    hasStartedStartupApiWaitRef.current = true;
+    if (!settings.network.waitForApiOnStartup) {
+      return;
+    }
+
+    if (settings.network.enabledSources.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      startupApiWaitTimeoutRef.current = null;
+      setIsStartupApiWaitPending(false);
+      pushDynamicIslandNotification("API连接错误，请检查设置");
+    }, 30_000);
+    startupApiWaitTimeoutRef.current = timeoutTimer;
+
+    setIsStartupApiWaitExiting(false);
+    setIsStartupApiWaitMounted(true);
+    setIsStartupApiWaitPending(true);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutTimer);
+      if (startupApiWaitTimeoutRef.current === timeoutTimer) {
+        startupApiWaitTimeoutRef.current = null;
+      }
+    };
+  }, [isSettingsLoading]);
 
   useEffect(() => {
     if (isSettingsLoading) {
@@ -8948,6 +9119,20 @@ export function AppShell({
   };
   const currentTrack = resolveRenderableTrackById(currentTrackId);
   const playbarDisplayTrack = resolveRenderableTrackById(playbarDisplayTrackId);
+  const playbarNeteaseTrackId = currentTrack
+    ? parseNeteaseTrackIdFromCacheKey(currentTrack.playback.cacheKey)
+    : null;
+  const playbarKugouTrackHash = currentTrack
+    ? parseKugouTrackHashFromCacheKey(currentTrack.playback.cacheKey)
+    : null;
+  const isPlaybarOnlineTrack =
+    playbarNeteaseTrackId !== null || playbarKugouTrackHash !== null;
+  const isPlaybarTrackLiked =
+    playbarNeteaseTrackId !== null
+      ? playbarLikedNeteaseSongIds.includes(playbarNeteaseTrackId)
+      : playbarKugouTrackHash !== null
+        ? playbarLikedKugouHashes.includes(playbarKugouTrackHash.toUpperCase())
+        : false;
   const playbarTrackTitle =
     playbarDisplayTrack?.title ?? localeStrings.player.idleTitle;
   const playbarTrackArtist =
@@ -9264,6 +9449,7 @@ export function AppShell({
       recoveryKey &&
       attemptedPlaybackRecoveryKeyRef.current !== recoveryKey
     ) {
+      const recoveryRequestId = playbackRequestSequenceRef.current;
       attemptedPlaybackRecoveryKeyRef.current = recoveryKey;
       const shouldResumeAfterRecovery =
         pendingAutoplayRef.current || isPlayingRef.current;
@@ -9271,6 +9457,14 @@ export function AppShell({
 
       void resolveNeteaseTrack(settingsRef.current, recoveryTrackId)
         .then((resolvedTrack) => {
+          if (
+            playbackRequestSequenceRef.current !== recoveryRequestId ||
+            currentTrackIdRef.current !== activeTrack.id ||
+            currentTrackRef.current?.id !== activeTrack.id ||
+            audio.dataset.trackId !== activeTrack.id
+          ) {
+            return;
+          }
           const refreshedCandidates = [
             resolvedTrack.stream.url,
             ...resolvedTrack.fallbackStreams.map((stream) => stream.url),
@@ -10520,6 +10714,7 @@ export function AppShell({
       setShuffledQueueIds(buildShuffledQueue(nextQueueIds, trackId));
     }
     pendingAutoplayRef.current = options?.autoplay ?? true;
+    pendingRequestedTrackIdRef.current = null;
 
     const activeAudio = getActiveAudioElement();
 
@@ -10680,6 +10875,7 @@ export function AppShell({
     },
   ) => {
     const requestId = options?.requestId ?? beginPlaybackRequest();
+    pendingRequestedTrackIdRef.current = trackId;
     if (!options?.preserveRestoreState) {
       cancelPendingPlaybackRestore();
     }
@@ -10687,6 +10883,7 @@ export function AppShell({
 
     if (!targetTrack) {
       if (isPlaybackRequestCurrent(requestId)) {
+        pendingRequestedTrackIdRef.current = null;
         setIsPlaybackLoading(false);
       }
       return false;
@@ -10719,6 +10916,7 @@ export function AppShell({
       }
 
       console.error("[player] failed to prepare playback track", error);
+      pendingRequestedTrackIdRef.current = null;
       setIsPlaying(false);
       setIsPlaybackLoading(false);
       pushDynamicIslandNotification(localeStrings.notifications.playbackFailed);
@@ -11728,9 +11926,15 @@ export function AppShell({
       }
 
       const isActiveAudio = () => activeAudioSlotRef.current === entry.slot;
+      const isCurrentAudio = () =>
+        isActiveAudio() &&
+        Boolean(audio.dataset.trackId) &&
+        audio.dataset.trackId === currentTrackIdRef.current &&
+        (!pendingRequestedTrackIdRef.current ||
+          pendingRequestedTrackIdRef.current === audio.dataset.trackId);
 
       const handleLoadStart = () => {
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
 
@@ -11748,7 +11952,7 @@ export function AppShell({
       };
 
       const handleCanPlay = () => {
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
 
@@ -11765,7 +11969,7 @@ export function AppShell({
       };
 
       const handleLoadedMetadata = () => {
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
 
@@ -11809,7 +12013,7 @@ export function AppShell({
       };
 
       const handleTimeUpdate = () => {
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
 
@@ -11847,7 +12051,7 @@ export function AppShell({
           void context.resume().catch(() => undefined);
         }
 
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
 
@@ -11858,7 +12062,7 @@ export function AppShell({
       };
 
       const handlePause = () => {
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
 
@@ -11867,7 +12071,7 @@ export function AppShell({
       };
 
       const handleEnded = () => {
-        if (!isActiveAudio() || isSongTransitionRunningRef.current) {
+        if (!isCurrentAudio() || isSongTransitionRunningRef.current) {
           return;
         }
 
@@ -11876,7 +12080,7 @@ export function AppShell({
       };
 
       const handleWaiting = () => {
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
         if (audio.dataset.trackId?.startsWith("kugou:")) {
@@ -11893,7 +12097,7 @@ export function AppShell({
       };
 
       const handleError = () => {
-        if (!isActiveAudio()) {
+        if (!isCurrentAudio()) {
           return;
         }
         if (audio.dataset.trackId?.startsWith("kugou:")) {
@@ -14046,6 +14250,123 @@ export function AppShell({
     });
   };
 
+  const handleTogglePlaybarFavorite = async () => {
+    if (!currentTrack || isPlaybarFavoriteUpdating) return;
+
+    const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(
+      currentTrack.playback.cacheKey,
+    );
+    const kugouTrackHash = parseKugouTrackHashFromCacheKey(
+      currentTrack.playback.cacheKey,
+    );
+    if (neteaseTrackId === null && kugouTrackHash === null) return;
+
+    setIsPlaybarFavoriteUpdating(true);
+    try {
+      if (neteaseTrackId !== null) {
+        const account = await ensureNeteaseAccount();
+        if (!account) {
+          pushDynamicIslandNotification(
+            localeStrings.notifications.contextLoginRequired,
+          );
+          return;
+        }
+        const isLiked = playbarLikedNeteaseSongIds.includes(neteaseTrackId);
+        await likeNeteaseSong(settingsRef.current, neteaseTrackId, !isLiked);
+        setPlaybarLikedNeteaseSongIds((current) =>
+          isLiked
+            ? current.filter((id) => id !== neteaseTrackId)
+            : [...current, neteaseTrackId],
+        );
+        invalidateNeteaseUiCaches();
+        pushDynamicIslandNotification(
+          isLiked
+            ? localeStrings.notifications.contextPlaylistTrackRemoved
+            : localeStrings.notifications.contextSongLiked,
+        );
+        return;
+      }
+
+      if (
+        !isKugouSourceEnabled(settingsRef.current) ||
+        settingsRef.current.network.kugouCookie.trim().length === 0
+      ) {
+        pushDynamicIslandNotification(
+          localeStrings.notifications.contextLoginRequired,
+        );
+        return;
+      }
+      const account = await getKugouLoggedInAccount(settingsRef.current);
+      if (!account) {
+        pushDynamicIslandNotification(
+          localeStrings.notifications.contextLoginRequired,
+        );
+        return;
+      }
+      const playlists = await getKugouUserPlaylists(
+        settingsRef.current,
+        account.userId,
+      );
+      const likedPlaylist = playlists.find(
+        (playlist) =>
+          playlist.isLiked || playlist.id === 2 || playlist.name === "我喜欢",
+      );
+      if (!likedPlaylist || !kugouTrackHash) {
+        pushDynamicIslandNotification(
+          localeStrings.notifications.contextLoginRequired,
+        );
+        return;
+      }
+      const hash = kugouTrackHash.trim().toUpperCase();
+      const isLiked = playbarLikedKugouHashes.includes(hash);
+      if (isLiked) {
+        const likedSongs = await getKugouPlaylistTracks(
+          settingsRef.current,
+          likedPlaylist.collectionId,
+        );
+        const likedSong = likedSongs.find(
+          (song) => song.hash.trim().toUpperCase() === hash,
+        );
+        if (!likedSong) throw new Error("KuGou liked song was not found.");
+        await removeKugouSongFromPlaylist(
+          settingsRef.current,
+          likedPlaylist.id,
+          likedSong,
+        );
+      } else {
+        const song =
+          getCachedKugouSongDetail(kugouTrackHash) ??
+          (await getKugouSongDetail(settingsRef.current, {
+            hash: kugouTrackHash,
+            albumAudioId: null,
+            albumId: null,
+          })) ??
+          createKugouSongDetailFromTrack(currentTrack, kugouTrackHash);
+        await addKugouSongToPlaylist(settingsRef.current, likedPlaylist.id, song);
+      }
+      clearKugouMemoryCaches();
+      setPlaybarLikedKugouHashes((current) =>
+        isLiked ? current.filter((item) => item !== hash) : [...current, hash],
+      );
+      setContextMenuKugouLikedHashes((current) =>
+        isLiked ? current.filter((item) => item !== hash) : [...current, hash],
+      );
+      if (activeNav === "favorites") setNeteaseUiVersion((current) => current + 1);
+      pushDynamicIslandNotification(
+        isLiked
+          ? localeStrings.notifications.contextPlaylistTrackRemoved
+          : localeStrings.notifications.contextSongLiked,
+      );
+    } catch (error) {
+      console.error("[playbar] failed to toggle favorite", error);
+      pushDynamicIslandNotification(
+        localeStrings.notifications.contextSongLikeFailed,
+      );
+    } finally {
+      setIsPlaybarFavoriteUpdating(false);
+    }
+  };
+
   const handleDownloadKugouSongFromContext = async (song: KugouSongDetail) => {
     if (!settingsRef.current.library.downloadEnabled) {
       pushDynamicIslandNotification(
@@ -15544,7 +15865,8 @@ export function AppShell({
     const fromEnded = options?.fromEnded ?? false;
     const allowRepeatOneRestart = options?.allowRepeatOneRestart ?? true;
     const activePlaybackMode = playbackModeRef.current;
-    const activeTrackId = currentTrackIdRef.current;
+    const activeTrackId =
+      pendingRequestedTrackIdRef.current ?? currentTrackIdRef.current;
     const queueIds =
       currentQueueIdsRef.current.length > 0
         ? currentQueueIdsRef.current
@@ -16045,6 +16367,10 @@ export function AppShell({
 
   const handleTogglePlayback = async () => {
     if (isPlaybackLoadingRef.current) {
+      // Loading is asynchronous, but play/pause remains an explicit user
+      // intent. Keep that intent for loadedmetadata instead of dropping it.
+      pendingAutoplayRef.current = !pendingAutoplayRef.current;
+      syncPlaybackVisualState({ isPlaying: false });
       return;
     }
 
@@ -17894,6 +18220,7 @@ export function AppShell({
 
     if (contextMenuState.target.kind === "song") {
       const payload = contextMenuState.target.payload;
+      const isPlaybarContextMenu = contextMenuState.target.source === "playbar";
       if (payload.kind === "kugou") {
         const currentPlaylistId =
           activeNav === "playlist" ? (selectedPlaylist?.id ?? null) : null;
@@ -17939,18 +18266,22 @@ export function AppShell({
                   },
                 }));
         const kugouMenuItems: Array<ContextMenuItemDefinition | null> = [
-          {
-            id: "kugou-song-add-queue",
-            label: contextMenuCopy.addToQueue,
-            disabled: contextMenuBusyActionId !== null,
-            onSelect: () => queueKugouContextSong(payload, "append"),
-          },
-          {
-            id: "kugou-song-play-next",
-            label: contextMenuCopy.playNext,
-            disabled: contextMenuBusyActionId !== null,
-            onSelect: () => queueKugouContextSong(payload, "next"),
-          },
+          !isPlaybarContextMenu
+            ? {
+                id: "kugou-song-add-queue",
+                label: contextMenuCopy.addToQueue,
+                disabled: contextMenuBusyActionId !== null,
+                onSelect: () => queueKugouContextSong(payload, "append"),
+              }
+            : null,
+          !isPlaybarContextMenu
+            ? {
+                id: "kugou-song-play-next",
+                label: contextMenuCopy.playNext,
+                disabled: contextMenuBusyActionId !== null,
+                onSelect: () => queueKugouContextSong(payload, "next"),
+              }
+            : null,
           settings.library.downloadEnabled && contextMenuBusyActionId === null
             ? {
                 id: "kugou-song-download",
@@ -18036,18 +18367,22 @@ export function AppShell({
             }));
 
       const songMenuItems: Array<ContextMenuItemDefinition | null> = [
-        {
-          id: "song-add-queue",
-          label: contextMenuCopy.addToQueue,
-          disabled: contextMenuBusyActionId !== null,
-          onSelect: () => queueContextSong(payload, "append"),
-        },
-        {
-          id: "song-play-next",
-          label: contextMenuCopy.playNext,
-          disabled: contextMenuBusyActionId !== null,
-          onSelect: () => queueContextSong(payload, "next"),
-        },
+        !isPlaybarContextMenu
+          ? {
+              id: "song-add-queue",
+              label: contextMenuCopy.addToQueue,
+              disabled: contextMenuBusyActionId !== null,
+              onSelect: () => queueContextSong(payload, "append"),
+            }
+          : null,
+        !isPlaybarContextMenu
+          ? {
+              id: "song-play-next",
+              label: contextMenuCopy.playNext,
+              disabled: contextMenuBusyActionId !== null,
+              onSelect: () => queueContextSong(payload, "next"),
+            }
+          : null,
         neteaseTrackId !== null &&
         isOnlineFeaturesAvailable &&
         settings.library.downloadEnabled &&
@@ -18256,6 +18591,37 @@ export function AppShell({
     openContextMenu(event, {
       kind: "playlist",
       playlist,
+    });
+  };
+
+  const handlePlaybarTrackContextMenu = (
+    event: ReactMouseEvent<HTMLElement>,
+  ) => {
+    if (!currentTrack) {
+      return;
+    }
+
+    const kugouHash = parseKugouTrackHashFromCacheKey(
+      currentTrack.playback.cacheKey,
+    );
+    const payload: SongContextTarget = kugouHash
+      ? {
+          kind: "kugou",
+          song:
+            getCachedKugouSongDetail(kugouHash) ??
+            createKugouSongDetailFromTrack(currentTrack, kugouHash),
+          queueSongs: [],
+        }
+      : {
+          kind: "track",
+          track: currentTrack,
+          queueTracks: [],
+        };
+
+    openContextMenu(event, {
+      kind: "song",
+      payload,
+      source: "playbar",
     });
   };
 
@@ -18517,6 +18883,7 @@ export function AppShell({
           })
         }
         onSongContextMenu={handleKugouSongContextMenu}
+        onLoadSuccess={() => setIsStartupApiWaitPending(false)}
         onPlayLocalTrack={playTrackSelection}
         onOpenTrackArtist={(track) => void handleOpenTrackArtist(track)}
         onOpenTrackAlbum={(track) => void handleOpenTrackAlbum(track)}
@@ -18575,6 +18942,7 @@ export function AppShell({
         onSongContextMenu={handleNeteaseSongContextMenu}
         onTrackContextMenu={handleTrackContextMenu}
         onPlaylistContextMenu={handlePlaylistContextMenu}
+        onLoadSuccess={() => setIsStartupApiWaitPending(false)}
       />
     ) : activeNav === "playlist" && isKugouSourceEnabled(settings) ? (
       <KugouPlaylistScreen
@@ -18916,6 +19284,23 @@ export function AppShell({
       style={themeStyle}
       onContextMenu={handleWorkspaceContextMenu}
     >
+      {isStartupApiWaitMounted ? (
+        <div
+          className={[
+            "startup-api-wait",
+            isStartupApiWaitExiting ? "startup-api-wait--exiting" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="startup-api-wait__content">
+            <span className="startup-api-wait__spinner" aria-hidden="true" />
+            <strong>等待API响应</strong>
+          </div>
+        </div>
+      ) : null}
       {appGreetingPhase !== "hidden" ? (
         <div
           className={[
@@ -19515,6 +19900,7 @@ export function AppShell({
                   type="button"
                   aria-label={immersivePlayerCopy.open}
                   onClick={handleOpenImmersivePlayer}
+                  onContextMenu={handlePlaybarTrackContextMenu}
                 >
                   <div
                     className={[
@@ -19551,6 +19937,7 @@ export function AppShell({
                 key={playbarMetaAnimationKey}
                 className="playbar__meta playbar__meta--animated"
                 aria-live="polite"
+                onContextMenu={handlePlaybarTrackContextMenu}
               >
                 <strong>{playbarTrackTitle}</strong>
                 <p
@@ -19620,7 +20007,6 @@ export function AppShell({
                   type="button"
                   aria-label={isPlaying ? copy.player.pause : copy.player.play}
                   onClick={() => void handleTogglePlayback()}
-                  disabled={isPlaybackLoading}
                 >
                   <PlayPauseAnimatedIcon isPlaying={isPlaying} />
                 </button>
@@ -19640,6 +20026,29 @@ export function AppShell({
               className="playbar__actions"
               aria-label={localeStrings.player.actions}
             >
+              {isPlaybarOnlineTrack ? (
+                <button
+                  className="playbar__favorite-button"
+                  type="button"
+                  aria-label={
+                    isPlaybarTrackLiked
+                      ? localeStrings.player.unfavoriteSong
+                      : localeStrings.player.favoriteSong
+                  }
+                  title={
+                    isPlaybarTrackLiked
+                      ? localeStrings.player.unfavoriteSong
+                      : localeStrings.player.favoriteSong
+                  }
+                  aria-pressed={isPlaybarTrackLiked}
+                  disabled={
+                    isPlaybarFavoriteLoading || isPlaybarFavoriteUpdating
+                  }
+                  onClick={() => void handleTogglePlaybarFavorite()}
+                >
+                  <PlaybarFavoriteIcon liked={isPlaybarTrackLiked} />
+                </button>
+              ) : null}
               <span className="playbar__status">{volume}%</span>
               <div className="playbar__volume" ref={volumePopoverRef}>
                 <AnchoredPopoverPortal
@@ -25009,6 +25418,35 @@ function SettingsScreen({
                   }
                 />
               </SettingsSearchItem>
+              <SettingsSearchItem
+                itemKey="network-wait-for-api-on-startup"
+                instanceId={settingsSearchInstanceId}
+                visible={matchesSettingKey("network-wait-for-api-on-startup")}
+                searchParts={[
+                  copy.settings.sections.network.waitForApiOnStartupLabel,
+                  copy.settings.sections.network.waitForApiOnStartupDescription,
+                  ...getSearchableBooleanState(
+                    settings.network.waitForApiOnStartup,
+                  ),
+                ]}
+              >
+                <UISwitch
+                  label={copy.settings.sections.network.waitForApiOnStartupLabel}
+                  description={
+                    copy.settings.sections.network.waitForApiOnStartupDescription
+                  }
+                  checked={settings.network.waitForApiOnStartup}
+                  onChange={(checked) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      network: {
+                        ...current.network,
+                        waitForApiOnStartup: checked,
+                      },
+                    }))
+                  }
+                />
+              </SettingsSearchItem>
               {isOnlineSourceEnabled ? (
                 <SettingsSearchItem
                   itemKey="network-source-selector"
@@ -27203,6 +27641,7 @@ function HomeScreen({
   onTrackContextMenu,
   onSongContextMenu,
   onPlaylistContextMenu,
+  onLoadSuccess,
 }: {
   copy: UiCopy;
   settings: AppSettings;
@@ -27243,6 +27682,7 @@ function HomeScreen({
     event: ReactMouseEvent<HTMLElement>,
     playlist: NeteasePlaylistRecommendation,
   ) => void;
+  onLoadSuccess: () => void;
 }) {
   const homeCopy = getHomeCopy(copy.locale);
   const tracks = mediaLibrary?.tracks ?? [];
@@ -27291,6 +27731,7 @@ function HomeScreen({
   const [homeReloadKey, setHomeReloadKey] = useState(0);
   const retryActionLabel = getRetryActionLabel(copy.locale);
   const applyHomeFeedCache = (entry: NeteaseHomeFeedCacheEntry) => {
+    onLoadSuccess();
     setNeteaseAccount(entry.account);
     setGuestSongs(entry.guestSongs);
     setDailySongs(entry.dailySongs);
@@ -40599,6 +41040,40 @@ function VolumeAnimatedIcon({ volume }: { volume: number }) {
       />
       <path className="playbar-icon__mute" d="M10.25 5.25l3.25 5.5" />
     </svg>
+  );
+}
+
+function PlaybarFavoriteIcon({ liked }: { liked: boolean }) {
+  return (
+    <span className="playbar-favorite-animation" aria-hidden="true">
+      <svg className="playbar-favorite-animation__outline" viewBox="0 0 24 24">
+        <path d="M17.5 1.917A6.4 6.4 0 0 0 12 5.217a6.4 6.4 0 0 0-5.5-3.3A6.8 6.8 0 0 0 0 8.967c0 4.547 4.786 9.513 8.8 12.88a4.974 4.974 0 0 0 6.4 0C19.214 18.48 24 13.514 24 8.967A6.8 6.8 0 0 0 17.5 1.917Zm-3.585 18.4a2.973 2.973 0 0 1-3.83 0C4.947 16.006 2 11.87 2 8.967a4.8 4.8 0 0 1 4.5-5.05A4.8 4.8 0 0 1 11 8.967a1 1 0 0 0 2 0 4.8 4.8 0 0 1 4.5-5.05A4.8 4.8 0 0 1 22 8.967c0 2.903-2.947 7.039-8.085 11.346Z" />
+      </svg>
+      <svg
+        className={[
+          "playbar-favorite-animation__filled",
+          liked ? "is-liked" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        viewBox="0 0 24 24"
+      >
+        <path d="M17.5 1.917A6.4 6.4 0 0 0 12 5.217a6.4 6.4 0 0 0-5.5-3.3A6.8 6.8 0 0 0 0 8.967c0 4.547 4.786 9.513 8.8 12.88a4.974 4.974 0 0 0 6.4 0C19.214 18.48 24 13.514 24 8.967A6.8 6.8 0 0 0 17.5 1.917Z" />
+      </svg>
+      {liked ? (
+        <svg
+          className="playbar-favorite-animation__celebrate"
+          viewBox="0 0 100 100"
+        >
+          <polygon points="10,10 20,20" />
+          <polygon points="10,50 20,50" />
+          <polygon points="20,80 30,70" />
+          <polygon points="90,10 80,20" />
+          <polygon points="90,50 80,50" />
+          <polygon points="80,80 70,70" />
+        </svg>
+      ) : null}
+    </span>
   );
 }
 
