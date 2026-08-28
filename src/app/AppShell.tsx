@@ -357,6 +357,9 @@ const TRACK_ANALYSIS_CACHE_LIMIT = 48;
 const AUTO_MIX_DECISION_CACHE_LIMIT = 64;
 const LYRICS_CACHE_LIMIT = 120;
 const IMMERSIVE_PALETTE_CACHE_LIMIT = 96;
+const BACKGROUND_MEMORY_COMPACTION_DELAY_MS = 60_000;
+const BACKGROUND_LYRICS_CACHE_LIMIT = 3;
+const BACKGROUND_IMMERSIVE_PALETTE_CACHE_LIMIT = 3;
 
 function logWallpaper(message: string, details?: unknown) {
   if (details === undefined) {
@@ -6161,6 +6164,9 @@ export function AppShell({
 
     if (!isWindowVisibleForUi) {
       video.pause();
+      video.removeAttribute("src");
+      video.load();
+      backgroundVideoRef.current = null;
       return;
     }
 
@@ -9274,6 +9280,71 @@ export function AppShell({
     setTransientRemoteArtworkUrls({ ...transientRemoteArtworkUrlsRef.current });
     return true;
   };
+  useEffect(() => {
+    if (isWindowVisibleForUi) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (isWindowVisibleForUi) {
+        return;
+      }
+
+      const protectedTrackIds = collectPlaybackCacheProtectedTrackIds();
+      const removedRemoteTrackIds = pruneBoundedRecord(
+        transientRemoteTracksRef.current,
+        protectedTrackIds.size,
+        protectedTrackIds,
+      );
+      if (removedRemoteTrackIds.length > 0) {
+        removedRemoteTrackIds.forEach((trackId) => {
+          delete transientRemoteArtworkUrlsRef.current[trackId];
+        });
+        setTransientRemoteTracks({ ...transientRemoteTracksRef.current });
+        setTransientRemoteArtworkUrls({ ...transientRemoteArtworkUrlsRef.current });
+      }
+
+      const currentTrack = currentTrackId
+        ? findTrackById(currentTrackId)
+        : null;
+      const protectedLyricsKeys = currentTrack
+        ? [resolveLyricsCacheKey(currentTrack)].filter(
+            (key): key is string => Boolean(key),
+          )
+        : [];
+      pruneBoundedRecord(
+        lyricsCacheRef.current,
+        Math.max(BACKGROUND_LYRICS_CACHE_LIMIT, protectedLyricsKeys.length),
+        protectedLyricsKeys,
+      );
+      lyricsFailedCacheKeysRef.current = new Set(
+        [...lyricsFailedCacheKeysRef.current].filter((key) =>
+          Object.prototype.hasOwnProperty.call(lyricsCacheRef.current, key),
+        ),
+      );
+
+      pruneBoundedRecord(
+        immersivePaletteCacheRef.current,
+        BACKGROUND_IMMERSIVE_PALETTE_CACHE_LIMIT,
+      );
+
+      clearNeteaseMemoryCaches();
+      clearKugouMemoryCaches();
+      clearExploreMemoryCaches();
+      neteaseHomeFeedCache.clear();
+      neteasePlaylistLibraryCache.clear();
+      neteasePlaylistDetailCache.clear();
+      neteasePlaylistTracksCache.clear();
+      neteaseArtistAvatarCache.clear();
+    }, BACKGROUND_MEMORY_COMPACTION_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    currentTrackId,
+    isWindowVisibleForUi,
+    playbackQueueIds,
+  ]);
+
   const isOrderedPlaybackLockedQueue = playbackQueueKind === "personal-fm";
   const playbackModeDisplayText = isOrderedPlaybackLockedQueue
     ? copy.locale === "en-US"
@@ -11591,6 +11662,21 @@ export function AppShell({
       window.removeEventListener("keyup", handleKeyUp, true);
     };
   }, [isImmersivePlayerOpen, playbarDisplayTrack]);
+
+  useEffect(() => {
+    if (isWindowVisibleForUi) {
+      if (isImmersivePlayerOpen && !isImmersivePlayerMounted) {
+        setIsImmersivePlayerMounted(true);
+        setIsImmersivePlayerVisible(true);
+      }
+      return;
+    }
+
+    if (isImmersivePlayerMounted) {
+      setIsImmersivePlayerVisible(false);
+      setIsImmersivePlayerMounted(false);
+    }
+  }, [isImmersivePlayerMounted, isImmersivePlayerOpen, isWindowVisibleForUi]);
 
   useEffect(() => {
     currentTrackIdRef.current = currentTrackId;
@@ -19404,7 +19490,7 @@ export function AppShell({
             colorScheme={settings.appearance.colorScheme}
           />
         ) : null}
-        {effectiveBackgroundVideoSrc ? (
+        {isWindowVisibleForUi && effectiveBackgroundVideoSrc ? (
           <video
             ref={backgroundVideoRef}
             key={effectiveBackgroundVideoSrc}
@@ -34987,13 +35073,13 @@ export function ImmersivePlayerOverlay({
   const showBackgroundMvMode =
     appearanceSettings.immersiveBackgroundMode === "background-mv";
   const showBackgroundMvVideo =
-    showBackgroundMvMode && Boolean(immersiveBackgroundVideoSrc);
+    isOverlayActive && showBackgroundMvMode && Boolean(immersiveBackgroundVideoSrc);
   const showArtworkBlurBackground =
     (appearanceSettings.immersiveBackgroundMode === "cover-blur" ||
       (showBackgroundMvMode && !showBackgroundMvVideo)) &&
     Boolean(artworkUrl);
   const showAppBackgroundVideo =
-    showAppBackground && Boolean(appBackgroundVideoSrc);
+    isOverlayActive && showAppBackground && Boolean(appBackgroundVideoSrc);
   const showAppBackgroundImage =
     showAppBackground &&
     !showAppBackgroundVideo &&
@@ -35361,7 +35447,7 @@ export function ImmersivePlayerOverlay({
         ].join(" ")}
         aria-hidden="true"
       >
-        {showGlobalAnalogFilter ? (
+        {isOverlayActive && showGlobalAnalogFilter ? (
           globalImmersiveFilterType === "bloom" ? (
             <GlobalBloomFilterOverlay
               enabled={true}
@@ -35438,14 +35524,14 @@ export function ImmersivePlayerOverlay({
             style={{ backgroundImage: `url("${artworkUrl}")` }}
           />
         ) : null}
-        {showFluidBackground ? (
+        {isOverlayActive && showFluidBackground ? (
           <ImmersiveFluidCanvas
             palette={palette}
             isActive={isOverlayActive}
             appearanceSettings={appearanceSettings}
           />
         ) : null}
-        {showGlobalRainBackgroundLayer ? (
+        {isOverlayActive && showGlobalRainBackgroundLayer ? (
           <GlobalRainCanvas
             enabled={true}
             layer="background"
@@ -35460,7 +35546,7 @@ export function ImmersivePlayerOverlay({
             className="immersive-player__global-particles"
           />
         ) : null}
-        {showGlobalParticleBackgroundLayer ? (
+        {isOverlayActive && showGlobalParticleBackgroundLayer ? (
           <GlobalParticleCanvas
             enabled={true}
             effectType={appearanceSettings.globalParticleEffectType}
@@ -35478,7 +35564,7 @@ export function ImmersivePlayerOverlay({
           />
         ) : null}
       </div>
-      {showGlobalRainTopLayer ? (
+      {isOverlayActive && showGlobalRainTopLayer ? (
         <GlobalRainCanvas
           enabled={true}
           layer="top"
@@ -35493,7 +35579,7 @@ export function ImmersivePlayerOverlay({
           className="immersive-player__global-particles"
         />
       ) : null}
-      {showGlobalParticleTopLayer ? (
+      {isOverlayActive && showGlobalParticleTopLayer ? (
         <GlobalParticleCanvas
           enabled={true}
           effectType={appearanceSettings.globalParticleEffectType}
