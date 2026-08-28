@@ -279,6 +279,12 @@ export type KugouPlaylistSummary = {
   isOwned?: boolean;
 };
 
+export type KugouMvStream = {
+  id: string;
+  url: string;
+  resolution: number | null;
+};
+
 export type KugouSongStream = {
   id: string;
   url: string;

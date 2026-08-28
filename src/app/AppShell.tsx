@@ -130,6 +130,7 @@ import {
   registerResolvedKugouTrackToLibrary,
   refreshKugouLogin,
   resolveKugouTrack,
+  getKugouMvStream,
   searchKugouArtists,
   setLocalKugouApiRuntimeBaseUrl,
   testKugouApiConnection,
@@ -11234,40 +11235,47 @@ export function AppShell({
       return;
     }
 
-    if (!currentTrack || !isNeteaseSourceEnabled(settingsRef.current)) {
+    if (!currentTrack || (!isNeteaseSourceEnabled(settingsRef.current) && !isKugouSourceEnabled(settingsRef.current))) {
       syncAppBackgroundMvVideoSrc(null);
       return;
     }
 
-    const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(
-      currentTrack.playback.cacheKey ?? currentTrack.id,
-    );
-    if (!neteaseTrackId) {
+    const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(currentTrack.playback.cacheKey ?? currentTrack.id);
+    const kugouTrackHash = parseKugouTrackHashFromCacheKey(currentTrack.playback.cacheKey ?? currentTrack.id);
+    if (!neteaseTrackId && !kugouTrackHash) {
+      console.warn("[theme] no source track key for background mv", { cacheKey: currentTrack.playback.cacheKey, trackId: currentTrack.id });
       syncAppBackgroundMvVideoSrc(null);
       return;
     }
 
     let isCancelled = false;
 
-    void getNeteaseSongDetail(settingsRef.current, neteaseTrackId)
-      .then(async (detail) => {
+    const resolveMvStream = kugouTrackHash
+      ? getKugouSongDetail(settingsRef.current, { hash: kugouTrackHash, albumAudioId: null, albumId: null }).then((detail) =>
+          detail?.albumAudioId && /^\d+$/.test(detail.albumAudioId)
+            ? getKugouMvStream(settingsRef.current, { hash: kugouTrackHash, albumAudioId: detail.albumAudioId })
+            : null)
+      : neteaseTrackId
+        ? getNeteaseSongDetail(settingsRef.current, neteaseTrackId).then((detail) =>
+            detail?.mvId
+              ? getNeteaseMvStream(settingsRef.current, detail.mvId)
+              : null,
+          )
+        : Promise.resolve(null);
+
+    void resolveMvStream
+      .catch(() => null)
+      .then(async (stream) => {
+        console.info("[theme] background mv resolution result", {
+          source: kugouTrackHash ? "kugou" : "netease",
+          stream,
+        });
         if (
           isCancelled ||
           appBackgroundMvRequestSequenceRef.current !== requestId
         ) {
           return;
         }
-
-        const mvId = detail?.mvId ?? null;
-        if (!mvId) {
-          syncAppBackgroundMvVideoSrc(null);
-          return;
-        }
-
-        const stream = await getNeteaseMvStream(
-          settingsRef.current,
-          mvId,
-        ).catch(() => null);
         if (
           isCancelled ||
           appBackgroundMvRequestSequenceRef.current !== requestId
@@ -11316,40 +11324,47 @@ export function AppShell({
       return;
     }
 
-    if (!currentTrack || !isNeteaseSourceEnabled(settingsRef.current)) {
+    if (!currentTrack || (!isNeteaseSourceEnabled(settingsRef.current) && !isKugouSourceEnabled(settingsRef.current))) {
       syncImmersiveBackgroundMvVideoSrc(null);
       return;
     }
 
-    const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(
-      currentTrack.playback.cacheKey ?? currentTrack.id,
-    );
-    if (!neteaseTrackId) {
+    const neteaseTrackId = parseNeteaseTrackIdFromCacheKey(currentTrack.playback.cacheKey ?? currentTrack.id);
+    const kugouTrackHash = parseKugouTrackHashFromCacheKey(currentTrack.playback.cacheKey ?? currentTrack.id);
+    if (!neteaseTrackId && !kugouTrackHash) {
+      console.warn("[immersive-player] no source track key for background mv", { cacheKey: currentTrack.playback.cacheKey, trackId: currentTrack.id });
       syncImmersiveBackgroundMvVideoSrc(null);
       return;
     }
 
     let isCancelled = false;
 
-    void getNeteaseSongDetail(settingsRef.current, neteaseTrackId)
-      .then(async (detail) => {
+    const resolveMvStream = kugouTrackHash
+      ? getKugouSongDetail(settingsRef.current, { hash: kugouTrackHash, albumAudioId: null, albumId: null }).then((detail) =>
+          detail?.albumAudioId && /^\d+$/.test(detail.albumAudioId)
+            ? getKugouMvStream(settingsRef.current, { hash: kugouTrackHash, albumAudioId: detail.albumAudioId })
+            : null)
+      : neteaseTrackId
+        ? getNeteaseSongDetail(settingsRef.current, neteaseTrackId).then((detail) =>
+            detail?.mvId
+              ? getNeteaseMvStream(settingsRef.current, detail.mvId)
+              : null,
+          )
+        : Promise.resolve(null);
+
+    void resolveMvStream
+      .catch(() => null)
+      .then(async (stream) => {
+        console.info("[immersive-player] background mv resolution result", {
+          source: kugouTrackHash ? "kugou" : "netease",
+          stream,
+        });
         if (
           isCancelled ||
           immersiveBackgroundMvRequestSequenceRef.current !== requestId
         ) {
           return;
         }
-
-        const mvId = detail?.mvId ?? null;
-        if (!mvId) {
-          syncImmersiveBackgroundMvVideoSrc(null);
-          return;
-        }
-
-        const stream = await getNeteaseMvStream(
-          settingsRef.current,
-          mvId,
-        ).catch(() => null);
         if (
           isCancelled ||
           immersiveBackgroundMvRequestSequenceRef.current !== requestId

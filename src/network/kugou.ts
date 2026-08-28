@@ -39,6 +39,7 @@ import type {
   KugouQrLoginStatus,
   KugouResolvedTrack,
   KugouSongDetail,
+  KugouMvStream,
   KugouSongLyrics,
   KugouSongSearchResult,
   KugouSongStream,
@@ -48,6 +49,8 @@ const KUGOU_SOURCE_ID = "kugou";
 const DEFAULT_KUGOU_BASE_URL = "http://127.0.0.1:3001";
 const KUGOU_TRACK_CACHE_KEY_PREFIX = "kugou:track:";
 const KUGOU_RESOLVED_TRACK_CACHE_TTL_MS = 5 * 60 * 1000;
+const KUGOU_MV_STREAM_CACHE_TTL_MS = 10 * 60 * 1000;
+const kugouMvStreamCache = new Map<string, TimedCacheEntry<KugouMvStream | null>>();
 
 type KugouSearchOptions = {
   limit?: number;
@@ -742,7 +745,7 @@ export async function getKugouSongDetail(
     timestamp: Date.now(),
   });
   const data = kugouResponseData(response);
-  const detail = mapKugouSong(data);
+  const detail = mapKugouSong(Array.isArray(response.data) ? response.data[0] : data);
   if (!detail) return null;
   const mergedDetail = mergeTrackReference(detail, reference);
   if (mergedDetail.albumId && mergedDetail.artistIds.some(Boolean))
@@ -775,6 +778,56 @@ export function cacheKugouSongDetails(details: KugouSongDetail[]) {
     const hash = detail.hash.trim().toUpperCase();
     if (hash) trackDetailsByHash.set(hash, detail);
   }
+}
+
+export async function getKugouMvStream(
+  settings: AppSettings,
+  reference: Pick<KugouSongDetail, "hash" | "albumAudioId">,
+): Promise<KugouMvStream | null> {
+  assertKugouEnabled(settings);
+  const hash = reference.hash.trim();
+  const albumAudioId = reference.albumAudioId?.trim() ?? "";
+  if (!hash && !albumAudioId) return null;
+  if (!/^\d+$/.test(albumAudioId)) {
+    console.warn("[kugou-mv] missing numeric album_audio_id", { hash, albumAudioId, reference });
+    return null;
+  }
+  const cacheKey = hash.toUpperCase() + "::" + albumAudioId;
+  const cached = kugouMvStreamCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const response = await requestKugouJson(settings, "/kmr/audio/mv", {
+    album_audio_id: albumAudioId || hash,
+    fields: "mkv,tags,h264,h265,authors",
+    timestamp: Date.now(),
+  });
+  console.info("[kugou-mv] /kmr/audio/mv response", {
+    hash,
+    albumAudioId,
+    response,
+  });
+  let stream = response ? parseKugouMvStream(response, albumAudioId || hash) : null;
+  if (!stream) {
+    const videoHash = response ? findKugouMvVideoHash(response) : null;
+    console.info("[kugou-mv] quality hash", { videoHash });
+    if (videoHash) {
+      const videoResponse = await requestKugouJson(settings, "/video/url", {
+        hash: videoHash,
+        timestamp: Date.now(),
+      }).catch((error) => {
+        console.warn("[kugou-mv] /video/url request failed", error);
+        return null;
+      });
+      console.info("[kugou-mv] /video/url response", { videoHash, response: videoResponse });
+      stream = videoResponse ? parseKugouMvStream(videoResponse, videoHash) : null;
+    }
+  }
+  console.info("[kugou-mv] parsed stream", {
+    stream,
+    responseData: response?.data,
+    responseKeys: response ? Object.keys(response) : [],
+  });
+  setTimedCacheValue(kugouMvStreamCache, cacheKey, stream, KUGOU_MV_STREAM_CACHE_TTL_MS);
+  return stream;
 }
 
 export async function getKugouSongLyrics(
@@ -817,6 +870,43 @@ export async function getKugouSongLyrics(
     "lyric",
   ]);
   return parseKugouLyrics(rawLyric);
+}
+
+function findKugouMvVideoHash(payload: Record<string, unknown>): string | null {
+  const hashes: string[] = [];
+  const preferredHashes: string[] = [];
+  const visit = (value: unknown, depth = 0) => {
+    if (depth > 5 || value === null || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach((item) => visit(item, depth + 1)); return; }
+    const record = value as Record<string, unknown>;
+    for (const key of ["fhd_hash", "qhd_hash", "hd_hash", "sd_hash", "ld_hash"]) {
+      const hash = record[key];
+      if (typeof hash === "string" && /^[a-f0-9]{32}$/i.test(hash)) {
+        hashes.push(hash);
+        if (key === "fhd_hash" || key === "qhd_hash" || key === "hd_hash") preferredHashes.push(hash);
+      }
+    }
+    Object.values(record).forEach((item) => visit(item, depth + 1));
+  };
+  visit(payload);
+  return preferredHashes[0] ?? hashes[0] ?? null;
+}
+
+function parseKugouMvStream(payload: Record<string, unknown>, id: string): KugouMvStream | null {
+  const records: Record<string, unknown>[] = [];
+  const visit = (value: unknown, depth = 0) => {
+    if (depth > 4 || value === null || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach((item) => visit(item, depth + 1)); return; }
+    const record = value as Record<string, unknown>;
+    records.push(record);
+    Object.values(record).forEach((value) => visit(value, depth + 1));
+  };
+  visit(payload);
+  for (const record of records) {
+    const url = firstString(record, ["downurl", "backupdownurl", "url", "video_url", "videoUrl", "play_url", "playUrl", "h264", "h265", "mkv", "mp4"]);
+    if (url && /^https?:\/\//i.test(url)) return { id, url, resolution: asNumber(record.resolution) ?? asNumber(record.width) ?? asNumber(record.r) };
+  }
+  return null;
 }
 
 function parseKugouLyrics(rawLyric: string | null): KugouSongLyrics | null {

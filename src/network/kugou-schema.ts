@@ -392,7 +392,9 @@ function mapPlaylistOrArtistSong(item: RecordValue): KugouSongDetail | null {
   return detail({
     hash,
     albumAudioId:
-      stringValue(item.mixsongid) ?? stringValue(item.album_audio_id),
+      stringValue(item.mixsongid) ??
+      stringValue(item.album_audio_id) ??
+      stringValue(item.audio_id),
     name: normalized.name,
     artists: normalized.artists,
     artistIds:
