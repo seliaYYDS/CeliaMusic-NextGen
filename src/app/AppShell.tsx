@@ -26668,6 +26668,7 @@ function ThemePreviewCard({ settings }: { settings: AppSettings }) {
           sceneRuntime={wallpaperEngineProjectState?.sceneRuntime ?? null}
           webHostUrl={wallpaperEngineProjectState?.webHostUrl ?? null}
           className="theme-preview__wallpaper-engine"
+          previewOnly
         />
       ) : null}
       <div className="theme-preview__chrome">
@@ -26710,11 +26711,13 @@ function WallpaperEngineBackgroundLayer({
   sceneRuntime,
   webHostUrl,
   className,
+  previewOnly,
 }: {
   descriptor: WallpaperEngineProjectDescriptor;
   sceneRuntime: WallpaperEngineSceneRuntime | null;
   webHostUrl: string | null;
   className?: string;
+  previewOnly?: boolean;
 }) {
   const previewSrc = descriptor.previewPath
     ? convertFileSrc(descriptor.previewPath)
@@ -26724,6 +26727,26 @@ function WallpaperEngineBackgroundLayer({
     : null;
 
   if (descriptor.wallpaperType === "scene") {
+    // The theme editor renders inside a small card. Avoid starting a live 4K
+    // compositor there; the live renderer remains active in the app background
+    // and immersive wallpaper window.
+    if (previewOnly && previewSrc) {
+      return (
+        <div
+          className={[
+            "wallpaper-engine-background",
+            "wallpaper-engine-background--preview",
+            className,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={{ backgroundImage: `url(\"${previewSrc}\")` }}
+          role="img"
+          aria-label={descriptor.title || "Wallpaper Engine scene preview"}
+        />
+      );
+    }
+
     if (sceneRuntime) {
       return (
         <WallpaperEngineSceneRenderer
