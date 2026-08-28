@@ -710,7 +710,7 @@ select {
   height: 15px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.45;
+  stroke-width: 1.55;
   stroke-linecap: round;
   stroke-linejoin: round;
   overflow: visible;
@@ -1058,10 +1058,39 @@ select {
   color: #304162;
   cursor: default;
   transition:
-    color 180ms ease,
+    color 280ms ease,
     padding-left 180ms ease,
-    background-color 180ms ease,
+    background-color 280ms ease,
     transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.nav-chip__icon {
+  width: 0;
+  height: 20px;
+  margin-right: 0;
+  overflow: visible;
+  flex: 0 0 auto;
+  opacity: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: translateX(-6px) scale(0.86);
+  transform-origin: center;
+  transition:
+    width 260ms ease,
+    margin-right 260ms ease,
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.nav-chip:hover .nav-chip__icon,
+.nav-chip:focus-visible .nav-chip__icon {
+  width: 18px;
+  margin-right: 8px;
+  opacity: 0.82;
+  transform: translateX(0) scale(1);
 }
 
 .nav-chip:hover {
@@ -8461,7 +8490,7 @@ select {
   height: 15px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.45;
+  stroke-width: 1.55;
   stroke-linecap: round;
   stroke-linejoin: round;
   overflow: visible;
@@ -8709,7 +8738,7 @@ select {
   height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.45;
+  stroke-width: 1.55;
 }
 
 .immersive-player__layout {
@@ -9585,7 +9614,7 @@ select {
   height: clamp(16px, 1.9vmin, 19px);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.45;
+  stroke-width: 1.55;
 }
 
 .immersive-player__control svg {
@@ -9593,7 +9622,7 @@ select {
   height: clamp(16px, 1.9vmin, 20px);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.45;
+  stroke-width: 1.55;
 }
 
 .immersive-player__control--play {
@@ -12423,7 +12452,7 @@ select {
   height: 18px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.35;
+  stroke-width: 1.55;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
