@@ -7,6 +7,7 @@ import type {
 } from "./wallpaperEngine";
 import {
   inspectWallpaperEngineProject,
+  prepareWallpaperEngineSceneRuntime,
   hostWallpaperEngineWebProject,
   deactivateWallpaperEngineNativeScene,
 } from "./wallpaperEngine";
@@ -211,10 +212,13 @@ function loadProjectOnce(folderPath: string) {
 
   const task = (async () => {
     const descriptor = await inspectWallpaperEngineProject(folderPath);
-    if (descriptor.wallpaperType === "scene") {
-      throw new Error("暂不支持该类壁纸");
-    }
-    const sceneRuntime = null;
+    // Scene projects are rendered locally with the parsed layer/material pipeline.
+    // Keep the runtime in memory because it contains the scene graph and asset paths
+    // consumed by the WebGL/DOM compositor.
+    const sceneRuntime =
+      descriptor.wallpaperType === "scene"
+        ? await prepareWallpaperEngineSceneRuntime(folderPath)
+        : null;
     const webHostUrl =
       descriptor.wallpaperType === "web"
         ? await hostWallpaperEngineWebProject(folderPath)

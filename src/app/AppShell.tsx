@@ -15260,8 +15260,8 @@ export function AppShell({
     } catch (error) {
       console.error("[wallpaper-engine] failed to load project folder", error);
       pushDynamicIslandNotification(
-        error instanceof Error && error.message === "暂不支持该类壁纸"
-          ? "暂不支持该类壁纸"
+        error instanceof Error && error.message
+          ? `壁纸加载失败：${error.message}`
           : "壁纸加载失败",
       );
       return;
@@ -26524,8 +26524,7 @@ function ThemePreviewCard({ settings }: { settings: AppSettings }) {
         />
       ) : null}
       {settings.appearance.backgroundMode === "custom" &&
-      wallpaperEngineDescriptor &&
-      wallpaperEngineDescriptor.wallpaperType !== "scene" ? (
+      wallpaperEngineDescriptor ? (
         <WallpaperEngineBackgroundLayer
           descriptor={wallpaperEngineDescriptor}
           sceneRuntime={wallpaperEngineProjectState?.sceneRuntime ?? null}

@@ -37,8 +37,7 @@
     "targets": "all",
     "windows": {
       "nsis": {
-        "template": "installer-template.nsi",
-        "installerIcon": "../icon.ico",
+        "installerIcon": "icons/icon.ico",
         "sidebarImage": "../sidebar-nsis.bmp",
         "languages": ["SimpChinese"]
       }

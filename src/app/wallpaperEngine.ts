@@ -144,6 +144,8 @@ export type WallpaperEngineSceneRuntime = {
   canvasWidth: number;
   canvasHeight: number;
   cacheDir: string;
+  /** Original scene.json graph used by the upstream-compatible compositor. */
+  scene: Record<string, unknown>;
   layers: WallpaperEngineSceneLayer[];
 };
 

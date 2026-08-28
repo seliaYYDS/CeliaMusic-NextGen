@@ -764,6 +764,7 @@ fn runtime_with_dynamic_updates(
         canvas_width: runtime.canvas_width,
         canvas_height: runtime.canvas_height,
         cache_dir: runtime.cache_dir.clone(),
+        scene: runtime.scene.clone(),
         layers,
     }
 }

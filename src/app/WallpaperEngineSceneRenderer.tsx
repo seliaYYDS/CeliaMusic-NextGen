@@ -78,18 +78,14 @@ export function WallpaperEngineSceneRenderer({
           transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
         }}
       >
-        {resolvedLayers.map((layer) => (
-          <WallpaperEngineSceneLayerNode
-            key={layer.id}
-            layer={layer}
-            resolvedLayers={resolvedLayers}
-            sceneRootRef={containerRef}
-          />
-        ))}
+        <SceneWebGLCompositor runtime={runtime} layers={resolvedLayers} />
       </div>
     </div>
   );
 }
+
+// Kept as a compatibility fallback for callers that rely on the legacy layer node.
+void WallpaperEngineSceneLayerNode;
 
 type SceneTarget = { texture: WebGLTexture; framebuffer: WebGLFramebuffer; width: number; height: number };
 
@@ -269,9 +265,6 @@ function SceneWebGLCompositor({ runtime, layers }: { runtime: WallpaperEngineSce
 
   return <canvas ref={canvasRef} className="wallpaper-engine-scene__webgl-canvas" aria-hidden="true" />;
 }
-
-// Retained while the pass-graph shader compiler is wired into the runtime.
-void SceneWebGLCompositor;
 
 function expandEffectPasses(effects: WallpaperEngineSceneEffect[]) {
   return effects.filter((effect) => effect.visible).flatMap((effect) => {

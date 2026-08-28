@@ -33,6 +33,9 @@ pub struct WallpaperEngineSceneRuntime {
     pub canvas_width: f64,
     pub canvas_height: f64,
     pub cache_dir: String,
+    /// Original scene.json graph retained for camera/model/material parity.
+    /// The reference dsh-wallpaper-engine renderer consumes this graph directly.
+    pub scene: Value,
     pub layers: Vec<WallpaperEngineSceneLayer>,
 }
 
@@ -315,6 +318,7 @@ pub fn prepare_scene_runtime(folder_path: &Path) -> Result<WallpaperEngineSceneR
         canvas_width,
         canvas_height,
         cache_dir: path_to_string(&cache_dir),
+        scene: scene_value,
         layers,
     })
 }
