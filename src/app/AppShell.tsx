@@ -5058,6 +5058,7 @@ export function AppShell({
     useState<KugouCatalogDetailRequest>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [libraryView, setLibraryView] = useState<LibraryView>("hub");
+  const [librarySource, setLibrarySource] = useState<"all" | "local" | "remote">("all");
   const [librarySelectedArtist, setLibrarySelectedArtist] = useState<
     string | null
   >(null);
@@ -19258,6 +19259,8 @@ export function AppShell({
         selectedArtistDetail={librarySelectedArtistDetail}
         selectedAlbumDetail={librarySelectedAlbumDetail}
         onChangeView={setLibraryView}
+        librarySource={librarySource}
+        onChangeLibrarySource={setLibrarySource}
         onChangeSelectedArtist={setLibrarySelectedArtist}
         onChangeSelectedAlbum={setLibrarySelectedAlbum}
         onChangeSelectedArtistDetail={setLibrarySelectedArtistDetail}
@@ -32475,6 +32478,8 @@ function LibraryScreen({
   selectedArtistDetail,
   selectedAlbumDetail,
   onChangeView,
+  librarySource,
+  onChangeLibrarySource,
   onChangeSelectedArtist,
   onChangeSelectedAlbum,
   onChangeSelectedArtistDetail,
@@ -32516,6 +32521,8 @@ function LibraryScreen({
     representativeTrack: TrackRecord | null;
   } | null;
   onChangeView: (view: LibraryView) => void;
+  librarySource: "all" | "local" | "remote";
+  onChangeLibrarySource: (source: "all" | "local" | "remote") => void;
   onChangeSelectedArtist: (artist: string | null) => void;
   onChangeSelectedAlbum: (album: string | null) => void;
   onChangeSelectedArtistDetail: (
@@ -32575,9 +32582,6 @@ function LibraryScreen({
     Record<string, string | null>
   >({});
   const [songQuery, setSongQuery] = useState("");
-  const [songSourceFilter, setSongSourceFilter] = useState<
-    "all" | "local" | "remote"
-  >("all");
   const [songSort, setSongSort] = useState<
     "recent" | "title" | "artist" | "album" | "duration"
   >("recent");
@@ -32590,27 +32594,37 @@ function LibraryScreen({
   const unknownArtistLabel = copy.library.songFields.unknownArtist;
   const unknownAlbumLabel = copy.library.songFields.unknownAlbum;
   const tracks = mediaLibrary?.tracks ?? [];
+  const sourceTracks = tracks.filter((track) => {
+    if (librarySource === "local") return track.source.kind === "localFile";
+    if (librarySource === "remote") {
+      const selectedOnlineSource = settings.network.enabledSources[0] ?? "";
+      return track.source.kind === "remoteStream" && (track.playback.cacheKey ?? "").toLowerCase().includes(selectedOnlineSource);
+    }
+    return true;
+  });
+  const sourceActionCopy = copy.locale === "en-US" ? { online: "Online", local: "Local", allOnline: "Online Songs", allLocal: "Offline Songs" } : { online: "在线", local: "本地", allOnline: "在线歌曲", allLocal: "离线歌曲" };
+  const onlineSourceEnabled = settings.network.enabledSources.some((source) => source === "netease" || source === "kugou");
   const artworksById = new Map(
     (mediaLibrary?.artworks ?? []).map((artwork) => [artwork.id, artwork]),
   );
   const isLibraryBusy = isImporting || isDeletingTracks;
   const artists = Array.from(
     new Set(
-      tracks.flatMap((track) =>
+      sourceTracks.flatMap((track) =>
         splitTrackArtistNames(track.artist, unknownArtistLabel),
       ),
     ),
   ).sort((left, right) => left.localeCompare(right, copy.locale));
   const albums = Array.from(
     new Map(
-      tracks.map((track) => [
+      sourceTracks.map((track) => [
         track.album?.trim() || unknownAlbumLabel,
         track.album?.trim() || unknownAlbumLabel,
       ]),
     ).values(),
   ).sort((left, right) => left.localeCompare(right, copy.locale));
   const artistSummaries = artists.map((artist) => {
-    const artistTracks = tracks.filter((track) =>
+    const artistTracks = sourceTracks.filter((track) =>
       splitTrackArtistNames(track.artist, unknownArtistLabel).includes(artist),
     );
     const representativeTrack =
@@ -32631,7 +32645,7 @@ function LibraryScreen({
     };
   });
   const albumSummaries = albums.map((album) => {
-    const albumTracks = tracks.filter(
+    const albumTracks = sourceTracks.filter(
       (track) => (track.album?.trim() || unknownAlbumLabel) === album,
     );
     const representativeTrack =
@@ -32677,7 +32691,7 @@ function LibraryScreen({
   const selectedArtistTracks =
     resolvedSelectedArtistDetail === null
       ? []
-      : tracks.filter((track) =>
+      : sourceTracks.filter((track) =>
           splitTrackArtistNames(track.artist, unknownArtistLabel).includes(
             resolvedSelectedArtistDetail.artist,
           ),
@@ -32685,26 +32699,12 @@ function LibraryScreen({
   const selectedAlbumTracks =
     resolvedSelectedAlbumDetail === null
       ? []
-      : tracks.filter(
+      : sourceTracks.filter(
           (track) =>
             (track.album?.trim() || unknownAlbumLabel) ===
             resolvedSelectedAlbumDetail.album,
         );
   const normalizedSongQuery = songQuery.trim().toLocaleLowerCase(copy.locale);
-  const songSourceOptions: UISelectOption[] = [
-    {
-      label: songBrowserCopy.sourceAll,
-      value: "all",
-    },
-    {
-      label: songBrowserCopy.sourceLocal,
-      value: "local",
-    },
-    {
-      label: songBrowserCopy.sourceRemote,
-      value: "remote",
-    },
-  ];
   const songSortOptions: UISelectOption[] = [
     {
       label: songBrowserCopy.sortRecent,
@@ -32727,12 +32727,13 @@ function LibraryScreen({
       value: "duration",
     },
   ];
-  const filteredSongTracks = tracks.filter((track) => {
-    if (songSourceFilter === "local" && track.source.kind !== "localFile") {
+  const filteredSongTracks = sourceTracks.filter((track) => {
+    /* source is selected from the library hub */
+    if (false) {
       return false;
     }
 
-    if (songSourceFilter === "remote" && track.source.kind !== "remoteStream") {
+    if (false) {
       return false;
     }
 
@@ -32810,7 +32811,7 @@ function LibraryScreen({
 
   useEffect(() => {
     setSongPage(1);
-  }, [songQuery, songSourceFilter, songSort]);
+  }, [songQuery, songSort]);
 
   useEffect(() => {
     if (songPage > totalSongPages) {
@@ -33150,9 +33151,6 @@ function LibraryScreen({
             <span className="library-entry-card__icon" aria-hidden="true">
               <ImportTileIcon />
             </span>
-            <span className="library-entry-card__eyebrow">
-              {copy.library.importCard.eyebrow}
-            </span>
             <strong className="library-entry-card__title">
               {copy.library.importCard.title}
             </strong>
@@ -33171,14 +33169,15 @@ function LibraryScreen({
           <button
             className="library-entry-card"
             type="button"
-            onClick={() => navigateLibraryView("songs")}
+            onClick={!onlineSourceEnabled ? () => { onChangeLibrarySource("local"); navigateLibraryView("songs"); } : undefined}
           >
             <span className="library-entry-card__icon" aria-hidden="true">
               <SongsTileIcon />
             </span>
-            <span className="library-entry-card__eyebrow">
-              {copy.library.songsCard.eyebrow}
-            </span>
+            {onlineSourceEnabled ? <span className="library-entry-card__source-actions" aria-label={copy.library.songsCard.title}>
+              <span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onChangeLibrarySource("remote"); navigateLibraryView("songs"); }}>{sourceActionCopy.allOnline}</span>
+              <span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onChangeLibrarySource("local"); navigateLibraryView("songs"); }}>{sourceActionCopy.allLocal}</span>
+            </span> : null}
             <strong className="library-entry-card__title">
               {copy.library.songsCard.title}
             </strong>
@@ -33195,14 +33194,12 @@ function LibraryScreen({
           <button
             className="library-entry-card"
             type="button"
-            onClick={() => navigateLibraryView("artists")}
+            onClick={!onlineSourceEnabled ? () => { onChangeLibrarySource("local"); navigateLibraryView("artists"); } : undefined}
           >
             <span className="library-entry-card__icon" aria-hidden="true">
               <ArtistsTileIcon />
             </span>
-            <span className="library-entry-card__eyebrow">
-              {copy.library.artistsCard.eyebrow}
-            </span>
+            {onlineSourceEnabled ? <span className="library-entry-card__source-actions"><span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onChangeLibrarySource("remote"); navigateLibraryView("artists"); }}>{sourceActionCopy.online}</span><span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onChangeLibrarySource("local"); navigateLibraryView("artists"); }}>{sourceActionCopy.local}</span></span> : null}
             <strong className="library-entry-card__title">
               {copy.library.artistsCard.title}
             </strong>
@@ -33219,14 +33216,12 @@ function LibraryScreen({
           <button
             className="library-entry-card"
             type="button"
-            onClick={() => navigateLibraryView("albums")}
+            onClick={!onlineSourceEnabled ? () => { onChangeLibrarySource("local"); navigateLibraryView("albums"); } : undefined}
           >
             <span className="library-entry-card__icon" aria-hidden="true">
               <AlbumsTileIcon />
             </span>
-            <span className="library-entry-card__eyebrow">
-              {copy.library.albumsCard.eyebrow}
-            </span>
+            {onlineSourceEnabled ? <span className="library-entry-card__source-actions"><span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onChangeLibrarySource("remote"); navigateLibraryView("albums"); }}>{sourceActionCopy.online}</span><span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onChangeLibrarySource("local"); navigateLibraryView("albums"); }}>{sourceActionCopy.local}</span></span> : null}
             <strong className="library-entry-card__title">
               {copy.library.albumsCard.title}
             </strong>
@@ -33252,7 +33247,7 @@ function LibraryScreen({
             {view === "import"
               ? viewCopy.import.title
               : view === "songs"
-                ? viewCopy.songs.title
+                ? `${viewCopy.songs.title} · ${librarySource === "remote" ? sourceActionCopy.allOnline : librarySource === "local" ? sourceActionCopy.allLocal : "全部来源"}`
                 : view === "artists"
                   ? viewCopy.artists.title
                   : view === "albums"
@@ -33267,7 +33262,7 @@ function LibraryScreen({
             {view === "import"
               ? viewCopy.import.description
               : view === "songs"
-                ? viewCopy.songs.description
+                ? (librarySource === "remote" ? sourceActionCopy.allOnline : librarySource === "local" ? sourceActionCopy.allLocal : viewCopy.songs.description)
                 : view === "artists"
                   ? viewCopy.artists.description
                   : view === "albums"
@@ -33387,16 +33382,6 @@ function LibraryScreen({
             </div>
             <div className="library-song-toolbar__field">
               <UISelect
-                label={songBrowserCopy.sourceLabel}
-                options={songSourceOptions}
-                value={songSourceFilter}
-                onChange={(value) =>
-                  setSongSourceFilter(value as "all" | "local" | "remote")
-                }
-              />
-            </div>
-            <div className="library-song-toolbar__field">
-              <UISelect
                 label={songBrowserCopy.sortLabel}
                 options={songSortOptions}
                 value={songSort}
@@ -33463,6 +33448,7 @@ function LibraryScreen({
 
           <LibrarySongList
             tracks={pagedSongTracks}
+            queueTracks={visibleSongTracks}
             artworksById={artworksById}
             showAlbumArtwork={showAlbumArtwork}
             activeTrackId={activeTrackId}
@@ -33808,6 +33794,7 @@ function LibraryScreen({
 function LibrarySongList({
   copy,
   tracks,
+  queueTracks = tracks,
   artworksById,
   showAlbumArtwork,
   activeTrackId,
@@ -33825,6 +33812,7 @@ function LibrarySongList({
 }: {
   copy: UiCopy;
   tracks: TrackRecord[];
+  queueTracks?: TrackRecord[];
   artworksById: Map<string, ArtworkRecord>;
   showAlbumArtwork: boolean;
   activeTrackId: string | null;
@@ -33869,14 +33857,14 @@ function LibrarySongList({
               .join(" ")}
             role="button"
             tabIndex={0}
-            onClick={() => onPlayTrack(track.id, tracks)}
+            onClick={() => onPlayTrack(track.id, queueTracks)}
             onContextMenu={(event) =>
-              onTrackContextMenu?.(event, track, tracks)
+              onTrackContextMenu?.(event, track, queueTracks)
             }
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                onPlayTrack(track.id, tracks);
+                onPlayTrack(track.id, queueTracks);
               }
             }}
           >
