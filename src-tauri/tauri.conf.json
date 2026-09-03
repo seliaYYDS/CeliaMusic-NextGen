@@ -39,6 +39,7 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "sidebarImage": "../sidebar-nsis.bmp",
+        "template": "installer-template.nsi",
         "languages": ["SimpChinese"]
       }
     },
