@@ -10848,7 +10848,15 @@ export function AppShell({
     }
 
     currentTrackIdRef.current = trackId;
+    currentTimeSecondsRef.current = 0;
+    visualCurrentTimeSecondsRef.current = 0;
+    playbarDisplayTimeSecondsRef.current = 0;
+    playbarDisplayVisualTimeSecondsRef.current = 0;
     setCurrentTrackId(trackId);
+    syncPlaybackVisualState({
+      currentTimeSeconds: 0,
+      visualCurrentTimeSeconds: 0,
+    });
   };
 
   const ensureTrackReadyForPlayback = async (
@@ -10985,6 +10993,30 @@ export function AppShell({
   ) => {
     const requestId = options?.requestId ?? beginPlaybackRequest();
     pendingRequestedTrackIdRef.current = trackId;
+
+    // Invalidate the old slot's timeline immediately, not only after the
+    // async resolver commits the new track. This is important when the user
+    // skips again while the previous request is still loading: old media
+    // events must not keep feeding the old currentTime into the new track.
+    const activeAudioBeforeLoad = getActiveAudioElement();
+    if (activeAudioBeforeLoad) {
+      activeAudioBeforeLoad.pause();
+      try {
+        activeAudioBeforeLoad.currentTime = 0;
+      } catch {
+        // Ignore until the current resource becomes seekable.
+      }
+    }
+    syncPlaybackVisualState({
+      currentTimeSeconds: 0,
+      visualCurrentTimeSeconds: 0,
+    });
+    syncPlaybarDisplayState({
+      trackId,
+      currentTimeSeconds: 0,
+      visualTimeSeconds: 0,
+    });
+
     if (!options?.preserveRestoreState) {
       cancelPendingPlaybackRestore();
     }
@@ -11272,6 +11304,7 @@ export function AppShell({
       return;
     }
 
+
     if (!currentTrack || (!isNeteaseSourceEnabled(settingsRef.current) && !isKugouSourceEnabled(settingsRef.current))) {
       syncAppBackgroundMvVideoSrc(null);
       return;
@@ -11360,6 +11393,7 @@ export function AppShell({
       syncImmersiveBackgroundMvVideoSrc(null);
       return;
     }
+
 
     if (!currentTrack || (!isNeteaseSourceEnabled(settingsRef.current) && !isKugouSourceEnabled(settingsRef.current))) {
       syncImmersiveBackgroundMvVideoSrc(null);
@@ -12104,6 +12138,12 @@ export function AppShell({
           });
         }
         setIsPlaybackLoading(false);
+        // A few remote/WebView backends emit canplay while remaining paused
+        // even though the play intent is still active. Retry from the ready
+        // event instead of leaving the UI in a false playing state.
+        if ((pendingAutoplayRef.current || isPlayingRef.current) && audio.paused) {
+          void audio.play().catch(() => undefined);
+        }
       };
 
       const handleLoadedMetadata = () => {
@@ -12378,6 +12418,13 @@ export function AppShell({
     pauseActiveTrackForTransition();
     activeAudio.dataset.trackId = currentTrack.id;
     setIsPlaybackLoading(true);
+    // Explicitly reset the reused audio slot. Some WebView media backends
+    // retain the previous resource position when src is replaced quickly.
+    try {
+      activeAudio.currentTime = 0;
+    } catch {
+      // The new resource may not be seekable until metadata is available.
+    }
     activeAudio.src = nextCandidates[0];
     activeAudio.load();
     schedulePlaybackLoadTimeout(activeAudio, currentTrack.id);
