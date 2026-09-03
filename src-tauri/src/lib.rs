@@ -742,12 +742,17 @@ pub fn run() {
                     }
                 }
 
-                let local_api_state = app.state::<LocalNeteaseApiState>();
-                let _ = sync_local_netease_api_server_for_settings(
-                    &app_handle,
-                    &local_api_state,
-                    &settings,
-                );
+                // Starting Netease may invoke npx and perform a first-time package
+                // download. Never do that work on Tauri's setup/UI thread.
+                let local_api_state = app.state::<LocalNeteaseApiState>().inner().clone();
+                let startup_app = app_handle.clone();
+                std::thread::spawn(move || {
+                    let _ = sync_local_netease_api_server_for_settings(
+                        &startup_app,
+                        &local_api_state,
+                        &settings,
+                    );
+                });
             }
 
             if start_hidden_to_tray {

@@ -36,6 +36,15 @@ pub struct LocalNeteaseApiState {
     logs: Arc<Mutex<VecDeque<String>>>,
 }
 
+impl Clone for LocalNeteaseApiState {
+    fn clone(&self) -> Self {
+        Self {
+            runtime: Arc::clone(&self.runtime),
+            logs: Arc::clone(&self.logs),
+        }
+    }
+}
+
 impl Default for LocalNeteaseApiState {
     fn default() -> Self {
         Self {
@@ -52,14 +61,6 @@ struct LocalNeteaseApiRuntime {
     port: u16,
     last_error: Option<String>,
     is_starting: bool,
-}
-
-impl Drop for LocalNeteaseApiState {
-    fn drop(&mut self) {
-        if let Ok(mut runtime) = self.runtime.lock() {
-            stop_child_process(runtime.child.take());
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
