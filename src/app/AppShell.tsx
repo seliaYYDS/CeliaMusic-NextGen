@@ -11087,16 +11087,30 @@ export function AppShell({
       return;
     }
 
-    const playbackPosition = Number.isFinite(audio.currentTime)
-      ? audio.currentTime
-      : 0;
-    const shouldResume = !audio.paused;
+    // This effect is declared before the track-loading effect further down, so
+    // when the user just selected a different track the active element still
+    // holds the previous track's resource. Its currentTime belongs to that
+    // previous track and must never be carried over to the new one.
+    const isElementOnCurrentTrack = audio.dataset.trackId === currentTrack.id;
+    const playbackPosition =
+      isElementOnCurrentTrack && Number.isFinite(audio.currentTime)
+        ? Math.max(0, audio.currentTime)
+        : 0;
+    const shouldResume = isElementOnCurrentTrack
+      ? !audio.paused
+      : pendingAutoplayRef.current || isPlayingRef.current;
     let isDisposed = false;
 
     void ensureTrackPlaybackCache(currentTrack, {
       waitForCompletion: true,
     }).then((cachedPath) => {
       if (isDisposed || !cachedPath || getActiveAudioElement() !== audio) {
+        return;
+      }
+
+      // The slot may have been reassigned while the cache was being prepared.
+      // Never overwrite a resource that no longer belongs to this track.
+      if (audio.dataset.trackId !== currentTrack.id) {
         return;
       }
 
@@ -11111,13 +11125,19 @@ export function AppShell({
           return;
         }
 
-        try {
-          audio.currentTime = Math.min(
-            playbackPosition,
-            Number.isFinite(audio.duration) ? audio.duration : playbackPosition,
-          );
-        } catch {
-          // Some media backends reject seeks before their duration is finalized.
+        // Only restore a position that was captured from this very track.
+        // A fresh track must always start from the beginning.
+        if (playbackPosition > 0 && audio.dataset.trackId === currentTrack.id) {
+          try {
+            audio.currentTime = Math.min(
+              playbackPosition,
+              Number.isFinite(audio.duration)
+                ? audio.duration
+                : playbackPosition,
+            );
+          } catch {
+            // Some media backends reject seeks before their duration is finalized.
+          }
         }
         setProcessedAudioGain(audio, volumeRef.current / 100);
         if (shouldResume) {
@@ -11130,6 +11150,16 @@ export function AppShell({
       audio.addEventListener("canplay", restorePlayback, { once: true });
       audio.src = cachedSource;
       audio.load();
+
+      if (playbackPosition <= 0) {
+        // A reused slot occasionally keeps the previous resource position in
+        // some WebView media backends; a freshly loaded track must start at 0.
+        try {
+          audio.currentTime = 0;
+        } catch {
+          // Ignore until the new resource becomes seekable.
+        }
+      }
     });
 
     return () => {
