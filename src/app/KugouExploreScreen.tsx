@@ -346,7 +346,7 @@ export function KugouExploreScreen({
   onOpenPlaylist,
 }: Props) {
   const text = copy(locale);
-  const enabled = session.mode === "kugou";
+  const enabled = session.activeSource === "kugou";
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
   const [tab, setTab] = useState<Tab>("all");

@@ -16,9 +16,8 @@ use std::sync::{
 
 use downloads::download_netease_song;
 use local_api::{
-    get_local_netease_api_server_status, sync_local_netease_api_server,
-    sync_local_netease_api_server_for_settings, shutdown_local_netease_api_server,
-    LocalNeteaseApiState,
+    get_local_api_servers_status, shutdown_local_api_servers, sync_local_api_servers,
+    sync_local_api_servers_for_settings, LocalNeteaseApiState,
 };
 use media::{
     clear_media_library, delete_media_tracks, ensure_media_library, import_media_files,
@@ -563,7 +562,7 @@ fn shutdown_app(app: &tauri::AppHandle) {
     }
 
     let local_api_state = app.state::<LocalNeteaseApiState>();
-    shutdown_local_netease_api_server(&local_api_state);
+    shutdown_local_api_servers(&local_api_state);
     app.exit(0);
 }
 
@@ -711,7 +710,7 @@ pub fn run() {
                 let runtime_state = window.app_handle().state::<AppRuntimeState>();
                 if runtime_state.exit_requested.load(Ordering::SeqCst) {
                     let local_api_state = window.app_handle().state::<LocalNeteaseApiState>();
-                    shutdown_local_netease_api_server(&local_api_state);
+                    shutdown_local_api_servers(&local_api_state);
                     return;
                 }
 
@@ -747,7 +746,7 @@ pub fn run() {
                 let local_api_state = app.state::<LocalNeteaseApiState>().inner().clone();
                 let startup_app = app_handle.clone();
                 std::thread::spawn(move || {
-                    let _ = sync_local_netease_api_server_for_settings(
+                    let _ = sync_local_api_servers_for_settings(
                         &startup_app,
                         &local_api_state,
                         &settings,
@@ -790,8 +789,8 @@ pub fn run() {
             save_app_settings,
             list_system_font_families,
             reset_app_settings,
-            sync_local_netease_api_server,
-            get_local_netease_api_server_status,
+            sync_local_api_servers,
+            get_local_api_servers_status,
             get_media_proxy_server_status,
             inspect_wallpaper_engine_project,
             host_wallpaper_engine_web_project,

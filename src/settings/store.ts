@@ -2,7 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { createDefaultAppSettings, SHORTCUT_ACTION_IDS, type AppSettings, type AppSettingsSnapshot } from "./types";
 
-export type LocalNeteaseApiServerStatus = {
+export type LocalApiProvider = "netease" | "kugou";
+
+export type LocalApiServerStatus = {
+  /** 该状态属于哪个音源的本地 API（netease / kugou） */
+  provider: LocalApiProvider | null;
   enabled: boolean;
   running: boolean;
   starting: boolean;
@@ -270,16 +274,22 @@ export const listSystemFontFamilies = async (): Promise<string[]> =>
 export const resetAppSettings = async (): Promise<AppSettingsSnapshot> =>
   invoke("reset_app_settings");
 
-export const syncLocalNeteaseApiServer = async (
+/** 两个音源各自的本地 API 状态，互不共享 */
+export type LocalApiServersStatus = {
+  netease: LocalApiServerStatus;
+  kugou: LocalApiServerStatus;
+};
+
+export const syncLocalApiServers = async (
   settings: AppSettings,
-): Promise<LocalNeteaseApiServerStatus> =>
-  invoke("sync_local_netease_api_server", {
+): Promise<LocalApiServersStatus> =>
+  invoke("sync_local_api_servers", {
     settings: normalizeAppSettingsForSave(settings),
   });
 
-export const getLocalNeteaseApiServerStatus = async (
+export const getLocalApiServersStatus = async (
   settings: AppSettings,
-): Promise<LocalNeteaseApiServerStatus> =>
-  invoke("get_local_netease_api_server_status", {
+): Promise<LocalApiServersStatus> =>
+  invoke("get_local_api_servers_status", {
     settings: normalizeAppSettingsForSave(settings),
   });

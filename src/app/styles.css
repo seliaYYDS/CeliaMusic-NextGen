@@ -603,7 +603,7 @@ select {
 .titlebar {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   min-height: 40px;
   padding: 0 8px 0 0;
@@ -1019,6 +1019,80 @@ select {
   --sidebar-indicator-height: 34px;
 }
 
+/* 混合音源：右上角的仅图标音源滑块（与设置页滑块同一套视觉） */
+.titlebar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding-right: 8px;
+}
+
+/*
+ * 右上角滑块：只把外侧包裹容器收紧（内边距 3px -> 2px、高度 28px -> 26px），
+ * 图标与选项尺寸保持设置页那套默认值，不做整体缩放。
+ */
+.titlebar .titlebar__source-switch {
+  width: 108px;
+  min-height: 26px;
+  padding: 2px;
+  margin: 0;
+}
+
+/* 容器内边距变化后，指示器按新的内边距重新对齐到图标格 */
+.titlebar .titlebar__source-switch .online-source-selector__indicator {
+  inset: 2px auto 2px 2px;
+  width: calc((100% - 4px) / 2);
+  /* 左/右滑动动画：与侧栏选中条同一条缓动曲线，位移只走 transform（GPU 合成） */
+  will-change: transform;
+  transition:
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 200ms ease;
+}
+
+.titlebar
+  .titlebar__source-switch.online-source-selector--kugou
+  .online-source-selector__indicator {
+  transform: translateX(100%);
+}
+
+/* 切换时两个图标的状态过渡：当前音源实心提亮并轻微放大，另一个压暗缩小 */
+.titlebar .titlebar__source-switch .online-source-selector__option {
+  transition: color 180ms ease;
+}
+
+.titlebar .titlebar__source-switch .online-source-selector__icon {
+  opacity: 0.7;
+  transform: scale(0.92);
+  transition:
+    opacity 200ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.titlebar
+  .titlebar__source-switch
+  .online-source-selector__option[aria-checked="true"]
+  .online-source-selector__icon {
+  opacity: 1;
+  transform: scale(1.06);
+}
+
+/* 按下时的轻微回弹反馈 */
+.titlebar
+  .titlebar__source-switch
+  .online-source-selector__option:active
+  .online-source-selector__icon {
+  transform: scale(0.88);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .titlebar .titlebar__source-switch .online-source-selector__indicator,
+  .titlebar .titlebar__source-switch .online-source-selector__option,
+  .titlebar .titlebar__source-switch .online-source-selector__icon {
+    transition: none;
+  }
+}
+
 .sidebar__indicator {
   position: absolute;
   inset: var(--sidebar-indicator-offset-y) 0 auto;
@@ -1102,6 +1176,56 @@ select {
   padding-left: 22px;
   color: #234d8d;
   font-weight: 700;
+}
+
+/*
+ * 混合音源：切换音源时页面内容按方向滑入。
+ * 方向与滑块移动方向一致——切到右侧的酷狗时新页面自右侧滑入，切到左侧的网易云时自左侧滑入；
+ * 时长/缓动/失焦与既有 workspace-page-enter 保持一致，只是把纵向位移换成横向。
+ * 方向标记只在切换后的 420ms 内存在，因此普通导航切换不会触发该动画。
+ */
+.workspace[data-source-slide="right"] .workspace__page > section {
+  animation: workspace-source-slide-from-right 320ms
+    cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.workspace[data-source-slide="left"] .workspace__page > section {
+  animation: workspace-source-slide-from-left 320ms
+    cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@keyframes workspace-source-slide-from-right {
+  0% {
+    opacity: 0;
+    transform: translate3d(28px, 0, 0);
+    filter: blur(10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
+@keyframes workspace-source-slide-from-left {
+  0% {
+    opacity: 0;
+    transform: translate3d(-28px, 0, 0);
+    filter: blur(10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace[data-source-slide] .workspace__page > section {
+    animation: none;
+  }
 }
 
 .workspace {
@@ -7007,6 +7131,39 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   transition: font-size 180ms ease;
+}
+
+/* 混合音源：标题后可跟一个来源徽标，标题本体仍保持省略号截断 */
+.library-song-item__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.library-song-item__title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 品牌色底 + 白色标识，两者贴合无空隙；尺寸固定，不随行高/悬停字号变化 */
+.track-source-badge {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.track-source-badge--netease .track-source-badge__tile {
+  fill: #df3e45;
+}
+
+.track-source-badge--kugou .track-source-badge__tile {
+  fill: #2878d4;
+}
+
+.track-source-badge__glyph {
+  fill: #ffffff;
 }
 
 .library-song-item__meta,

@@ -310,7 +310,7 @@ export function KugouHomeScreen({
   onLoadSuccess,
 }: Props) {
   const text = getCopy(locale);
-  const enabled = session.mode === "kugou";
+  const enabled = session.activeSource === "kugou";
   const offlineRecommendations = getOfflineRecommendations(
     (mediaLibrary?.tracks ?? []).filter(
       (track) => track.source.kind === "localFile",

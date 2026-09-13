@@ -162,12 +162,14 @@ import type {
 } from "../network/types";
 import {
   getAppSettings,
-  getLocalNeteaseApiServerStatus,
+  getLocalApiServersStatus,
   listSystemFontFamilies,
   resetAppSettings,
   saveAppSettings,
-  syncLocalNeteaseApiServer,
-  type LocalNeteaseApiServerStatus,
+  syncLocalApiServers,
+  type LocalApiProvider,
+  type LocalApiServerStatus,
+  type LocalApiServersStatus,
 } from "../settings/store";
 import {
   createDefaultAppSettings,
@@ -231,12 +233,18 @@ import {
 import { KugouExploreScreen } from "./KugouExploreScreen";
 import { KugouHomeScreen } from "./KugouHomeScreen";
 import {
+  describeOnlineSession,
+  normalizeEnabledSources,
+  onlineSourceSelectionIds,
   resolveNavFallback,
   resolveOnlineSession,
+  resolveOnlineSourceSelection,
   resolveVisibleNavIds,
   resolveWorkspaceTemplate,
   type NavId,
   type OnlineSession,
+  type OnlineSourceId,
+  type OnlineSourceSelection,
 } from "./onlineSession";
 import {
   createWallpaperEngineProjectPath,
@@ -274,6 +282,26 @@ function summarizePlaybackUrlHost(value: string) {
 }
 
 const SYSTEM_MEDIA_SYNC_SEEK_STEP_SECONDS = 5;
+
+const MIXED_ACTIVE_SOURCE_STORAGE_KEY = "celia.mixedActiveSource";
+
+/** 读取混合音源下记住的音源（仅 UI 偏好，失败时回退到网易云） */
+function readStoredMixedActiveSource(): OnlineSourceId {
+  try {
+    const stored = window.localStorage.getItem(MIXED_ACTIVE_SOURCE_STORAGE_KEY);
+    return stored === "kugou" ? "kugou" : "netease";
+  } catch {
+    return "netease";
+  }
+}
+
+function writeStoredMixedActiveSource(source: OnlineSourceId) {
+  try {
+    window.localStorage.setItem(MIXED_ACTIVE_SOURCE_STORAGE_KEY, source);
+  } catch {
+    // 忽略存储不可用的情况，本次会话内仍然生效
+  }
+}
 
 function NavItemIcon({ id }: { id: NavId }) {
   return (
@@ -1183,6 +1211,7 @@ const UI_COPY = {
             "开屏动画结束后等待当前在线音源 API 响应，最长等待 30 秒。",
           sourceSelectorLabel: "当前音源",
           neteaseSourceLabel: "网易云音乐",
+          mixedSourceLabel: "混合音源",
           kugouSourceLabel: "酷狗音乐",
           localApiLabel: "使用本地 API 服务器",
           localApiDescription: "启动时自动使用本地 API 服务。",
@@ -1721,6 +1750,7 @@ const UI_COPY = {
             "Wait for the selected online source API after the splash screen, for up to 30 seconds.",
           sourceSelectorLabel: "Active Source",
           neteaseSourceLabel: "Netease Cloud Music",
+          mixedSourceLabel: "Mixed Sources",
           kugouSourceLabel: "KuGou Music",
           localApiLabel: "Use Local API Server",
           localApiDescription:
@@ -5247,11 +5277,26 @@ export function AppShell({
     useState(false);
   const [isTestingNeteaseApi, setIsTestingNeteaseApi] = useState(false);
   const [isTestingKugouApi, setIsTestingKugouApi] = useState(false);
-  const [localNeteaseApiStatus, setLocalNeteaseApiStatus] =
-    useState<LocalNeteaseApiServerStatus | null>(null);
-  const localNeteaseApiStatusRef = useRef<LocalNeteaseApiServerStatus | null>(
-    null,
-  );
+  const [localApiStatuses, setLocalApiStatuses] =
+    useState<LocalApiServersStatus | null>(null);
+  const localApiStatusesRef = useRef<LocalApiServersStatus | null>(null);
+  // 每个音源的 runtime 地址只由它自己的状态决定，避免两个源的 API 互串
+  const applyLocalApiStatuses = (statuses: LocalApiServersStatus) => {
+    localApiStatusesRef.current = statuses;
+    setLocalApiStatuses(statuses);
+    setLocalNeteaseApiRuntimeBaseUrl(
+      statuses.netease.enabled ? statuses.netease.url.replace(/\/+$/, "") : null,
+    );
+    setLocalKugouApiRuntimeBaseUrl(
+      statuses.kugou.enabled ? statuses.kugou.url.replace(/\/+$/, "") : null,
+    );
+  };
+  const clearLocalApiStatuses = () => {
+    localApiStatusesRef.current = null;
+    setLocalApiStatuses(null);
+    setLocalNeteaseApiRuntimeBaseUrl(null);
+    setLocalKugouApiRuntimeBaseUrl(null);
+  };
   const [appGreetingPhase, setAppGreetingPhase] = useState<
     "hold" | "expand" | "exit" | "hidden"
   >(initialStartupAnimationMode === "none" ? "hidden" : "hold");
@@ -5473,13 +5518,52 @@ export function AppShell({
   const copy = getUiCopy(settings.appearance.language);
   const localeStrings = getLocaleStrings(copy.locale);
   const playlistEditorCopy = getPlaylistEditorCopy(copy.locale);
-  // 在线状态唯一入口：分支（离线 / 网易云 / 酷狗）+ 凭据，均由状态层派生。
+  // 混合音源下由右上角滑块决定当前音源（本地记住选择，重启后保持）
+  const [mixedActiveSource, setMixedActiveSource] = useState<OnlineSourceId>(
+    () => readStoredMixedActiveSource(),
+  );
+  // 切换音源时给工作区带上方向标记，用于页面内容的左右滑入动画
+  const [mixedSourceSlide, setMixedSourceSlide] = useState<
+    "left" | "right" | null
+  >(null);
+  const mixedSourceSlideTimerRef = useRef<number | null>(null);
+  const updateMixedActiveSource = (source: OnlineSourceId) => {
+    if (source !== mixedActiveSource) {
+      setMixedSourceSlide(source === "kugou" ? "right" : "left");
+      if (mixedSourceSlideTimerRef.current !== null) {
+        window.clearTimeout(mixedSourceSlideTimerRef.current);
+      }
+      mixedSourceSlideTimerRef.current = window.setTimeout(() => {
+        mixedSourceSlideTimerRef.current = null;
+        setMixedSourceSlide(null);
+      }, 420);
+    }
+
+    setMixedActiveSource(source);
+    writeStoredMixedActiveSource(source);
+  };
+  useEffect(
+    () => () => {
+      if (mixedSourceSlideTimerRef.current !== null) {
+        window.clearTimeout(mixedSourceSlideTimerRef.current);
+        mixedSourceSlideTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  // 在线状态唯一入口：分支（离线 / 网易云 / 酷狗 / 混合）+ 凭据，均由状态层派生。
   // 显示层只消费 onlineSession / workspaceTemplate，不再直接读 enabledSources 或 cookie。
-  const onlineSession = resolveOnlineSession(settings);
+  const onlineSession = resolveOnlineSession(settings, {
+    mixedSource: mixedActiveSource,
+  });
   const navItems = resolveVisibleNavIds(onlineSession).map((id) => ({
     id,
     label: copy.nav[id],
   }));
+  useEffect(() => {
+    console.log("[online-session]", describeOnlineSession(onlineSession));
+  }, [onlineSession.mode, onlineSession.activeSource]);
   const workspaceTemplate = resolveWorkspaceTemplate({
     session: onlineSession,
     nav: activeNav,
@@ -7659,19 +7743,26 @@ export function AppShell({
     return promise;
   };
 
-  const waitForLocalNeteaseApiReady = async (
+  const usesLocalApiServerForProvider = (
+    targetSettings: AppSettings,
+    provider: LocalApiProvider,
+  ) =>
+    provider === "netease"
+      ? targetSettings.network.useLocalApiServer &&
+        targetSettings.network.enabledSources.includes("netease")
+      : targetSettings.network.useLocalKugouApiServer &&
+        targetSettings.network.enabledSources.includes("kugou");
+
+  /** 等待指定音源自己的本地 API 就绪（不再借用另一个音源的状态） */
+  const waitForLocalApiReady = async (
+    provider: LocalApiProvider,
     targetSettings: AppSettings,
     options?: {
       timeoutMs?: number;
       pollMs?: number;
     },
   ) => {
-    const shouldWaitForLocalApi =
-      (targetSettings.network.useLocalApiServer &&
-        targetSettings.network.enabledSources.includes("netease")) ||
-      (targetSettings.network.useLocalKugouApiServer &&
-        targetSettings.network.enabledSources.includes("kugou"));
-    if (!shouldWaitForLocalApi) {
+    if (!usesLocalApiServerForProvider(targetSettings, provider)) {
       return true;
     }
 
@@ -7684,15 +7775,13 @@ export function AppShell({
     );
     const pollMs = Math.max(250, Math.min(1000, options?.pollMs ?? 500));
     const startedAt = performance.now();
-    let lastKnownStatus = localNeteaseApiStatusRef.current;
+    let lastKnownStatus = localApiStatusesRef.current?.[provider] ?? null;
 
     while (performance.now() - startedAt < timeoutMs) {
-      const status = await syncLocalNeteaseApiServer(targetSettings);
+      const statuses = await syncLocalApiServers(targetSettings);
+      applyLocalApiStatuses(statuses);
+      const status = statuses[provider];
       lastKnownStatus = status;
-      setLocalNeteaseApiStatus(status);
-      setLocalNeteaseApiRuntimeBaseUrl(
-        status.enabled ? status.url.replace(/\/+$/, "") : null,
-      );
 
       if (status.running) {
         return true;
@@ -7704,6 +7793,27 @@ export function AppShell({
     }
 
     return Boolean(lastKnownStatus?.running);
+  };
+
+  /** 等待所有已启用本地 API 的音频源就绪 */
+  const waitForLocalApisReady = async (
+    targetSettings: AppSettings,
+    options?: {
+      timeoutMs?: number;
+      pollMs?: number;
+    },
+  ) => {
+    for (const provider of ["netease", "kugou"] as const) {
+      if (!usesLocalApiServerForProvider(targetSettings, provider)) {
+        continue;
+      }
+
+      if (!(await waitForLocalApiReady(provider, targetSettings, options))) {
+        return false;
+      }
+    }
+
+    return true;
   };
 
   useEffect(() => {
@@ -7884,10 +7994,6 @@ export function AppShell({
   useEffect(() => {
     isSettingsLoadingRef.current = isSettingsLoading;
   }, [isSettingsLoading]);
-
-  useEffect(() => {
-    localNeteaseApiStatusRef.current = localNeteaseApiStatus;
-  }, [localNeteaseApiStatus]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -8481,15 +8587,24 @@ export function AppShell({
 
     let isDisposed = false;
     let pollTimer = 0;
-    let hasReportedStartFailure = false;
-    const shouldManageLocalApi =
-      (settings.network.useLocalApiServer &&
-        settings.network.enabledSources.includes("netease")) ||
-      (settings.network.useLocalKugouApiServer &&
-        settings.network.enabledSources.includes("kugou"));
-    const disableLocalApiServerSetting = async () => {
+    const reportedStartFailures = new Set<LocalApiProvider>();
+    const localApiProviders = ["netease", "kugou"] as const;
+    const isProviderManaged = (provider: LocalApiProvider) =>
+      provider === "netease"
+        ? settings.network.useLocalApiServer &&
+          settings.network.enabledSources.includes("netease")
+        : settings.network.useLocalKugouApiServer &&
+          settings.network.enabledSources.includes("kugou");
+    const shouldManageLocalApi = localApiProviders.some(isProviderManaged);
+
+    // 只关闭出问题的那个音源的本地 API 开关，另一个保持不动
+    const disableLocalApiServerSetting = async (provider: LocalApiProvider) => {
       const currentSettings = settingsRef.current;
-      if (!currentSettings.network.useLocalApiServer) {
+      const shouldDisable =
+        provider === "netease"
+          ? currentSettings.network.useLocalApiServer
+          : currentSettings.network.useLocalKugouApiServer;
+      if (!shouldDisable) {
         return;
       }
 
@@ -8497,13 +8612,12 @@ export function AppShell({
         ...currentSettings,
         network: {
           ...currentSettings.network,
-          useLocalApiServer: currentSettings.network.enabledSources.includes(
-            "netease",
-          )
-            ? false
-            : currentSettings.network.useLocalApiServer,
+          useLocalApiServer:
+            provider === "netease"
+              ? false
+              : currentSettings.network.useLocalApiServer,
           useLocalKugouApiServer:
-            currentSettings.network.enabledSources.includes("kugou")
+            provider === "kugou"
               ? false
               : currentSettings.network.useLocalKugouApiServer,
         },
@@ -8523,57 +8637,55 @@ export function AppShell({
       }
     };
 
+    const reportStartFailure = (
+      provider: LocalApiProvider,
+      status: LocalApiServerStatus,
+    ) => {
+      if (!status.enabled || status.running || status.starting) {
+        return;
+      }
+      if (reportedStartFailures.has(provider)) {
+        return;
+      }
+
+      reportedStartFailures.add(provider);
+      pushDynamicIslandNotification(
+        localeStrings.notifications.localApiServerStartFailed,
+      );
+      void disableLocalApiServerSetting(provider);
+    };
+
     const updateStatus = async (syncProcess: boolean) => {
       try {
-        const status = syncProcess
-          ? await syncLocalNeteaseApiServer(settings)
-          : await getLocalNeteaseApiServerStatus(settings);
+        const statuses = syncProcess
+          ? await syncLocalApiServers(settings)
+          : await getLocalApiServersStatus(settings);
         if (isDisposed) {
           return;
         }
 
-        setLocalNeteaseApiStatus(status);
-        setLocalNeteaseApiRuntimeBaseUrl(
-          settings.network.enabledSources.includes("netease") && status.enabled
-            ? status.url.replace(/\/+$/, "")
-            : null,
-        );
-        setLocalKugouApiRuntimeBaseUrl(
-          settings.network.enabledSources.includes("kugou") && status.enabled
-            ? status.url.replace(/\/+$/, "")
-            : null,
-        );
-        if (
-          shouldManageLocalApi &&
-          status.enabled &&
-          !status.running &&
-          !status.starting &&
-          !hasReportedStartFailure
-        ) {
-          hasReportedStartFailure = true;
-          pushDynamicIslandNotification(
-            localeStrings.notifications.localApiServerStartFailed,
-          );
-          void disableLocalApiServerSetting();
-        }
+        // 关键修复：每个音源的 runtime 地址只来自它自己的本地 API 状态
+        applyLocalApiStatuses(statuses);
+        reportStartFailure("netease", statuses.netease);
+        reportStartFailure("kugou", statuses.kugou);
       } catch (error) {
         if (isDisposed) {
           return;
         }
 
         console.error(
-          "[network] failed to sync local netease api server",
+          "[network] failed to sync local api servers",
           error,
         );
-        setLocalNeteaseApiStatus(null);
-        setLocalNeteaseApiRuntimeBaseUrl(null);
-        setLocalKugouApiRuntimeBaseUrl(null);
-        if (shouldManageLocalApi && !hasReportedStartFailure) {
-          hasReportedStartFailure = true;
-          pushDynamicIslandNotification(
-            localeStrings.notifications.localApiServerStartFailed,
-          );
-          void disableLocalApiServerSetting();
+        clearLocalApiStatuses();
+        for (const provider of localApiProviders) {
+          if (isProviderManaged(provider) && !reportedStartFailures.has(provider)) {
+            reportedStartFailures.add(provider);
+            pushDynamicIslandNotification(
+              localeStrings.notifications.localApiServerStartFailed,
+            );
+            void disableLocalApiServerSetting(provider);
+          }
         }
       }
     };
@@ -8591,9 +8703,7 @@ export function AppShell({
         void updateStatus(false);
       }, 1200);
     } else {
-      setLocalNeteaseApiStatus(null);
-      setLocalNeteaseApiRuntimeBaseUrl(null);
-      setLocalKugouApiRuntimeBaseUrl(null);
+      clearLocalApiStatuses();
     }
 
     return () => {
@@ -8901,13 +9011,11 @@ export function AppShell({
       );
 
       if (
-        (missingNeteaseTrackIds.length > 0 ||
-          unresolvedKugouTrackHashes.length > 0) &&
-        (settings.network.useLocalApiServer ||
-          settings.network.useLocalKugouApiServer)
+        missingNeteaseTrackIds.length > 0 ||
+        unresolvedKugouTrackHashes.length > 0
       ) {
         try {
-          await waitForLocalNeteaseApiReady(settings, {
+          await waitForLocalApisReady(settings, {
             timeoutMs: settings.network.requestTimeoutMs,
           });
         } catch (error) {
@@ -9084,7 +9192,12 @@ export function AppShell({
     setExploreReturnSnapshot(null);
     setSelectedPlaylist(null);
     setActiveNav(fallbackNav);
-  }, [activeNav, onlineSession.mode, onlineSession.authenticated]);
+  }, [
+    activeNav,
+    onlineSession.mode,
+    onlineSession.activeSource,
+    onlineSession.authenticated,
+  ]);
 
   useEffect(() => {
     schedulePlaybackResumePersistence();
@@ -15585,11 +15698,16 @@ export function AppShell({
     }
   };
 
-  const handleOnlineSourceChange = (source: "netease" | "kugou") => {
-    const currentSource = isKugouSourceEnabled(settingsRef.current)
-      ? "kugou"
-      : "netease";
-    if (currentSource !== source) {
+  const handleOnlineSourceChange = (selection: OnlineSourceSelection) => {
+    const nextSources = onlineSourceSelectionIds[selection];
+    const currentSources = normalizeEnabledSources(
+      settingsRef.current.network.enabledSources,
+    );
+    const didSourceSetChange =
+      currentSources.length !== nextSources.length ||
+      currentSources.some((sourceId, index) => sourceId !== nextSources[index]);
+
+    if (didSourceSetChange) {
       clearPlaybackState();
       writePersistedPlaybackResumeState({
         queueIds: [],
@@ -15597,6 +15715,7 @@ export function AppShell({
         kugouTracks: [],
       });
     }
+
     updateSettings((current) => ({
       ...current,
       playback: {
@@ -15606,7 +15725,7 @@ export function AppShell({
       },
       network: {
         ...current.network,
-        enabledSources: [source],
+        enabledSources: [...nextSources],
       },
     }));
   };
@@ -17660,11 +17779,16 @@ export function AppShell({
 
     try {
       if (settings.network.useLocalApiServer) {
-        const status = await syncLocalNeteaseApiServer(settings);
-        setLocalNeteaseApiStatus(status);
-        setLocalNeteaseApiRuntimeBaseUrl(
-          status.enabled ? status.url.replace(/\/+$/, "") : null,
-        );
+        const statuses = await syncLocalApiServers(settings);
+        applyLocalApiStatuses(statuses);
+        const isReady = await waitForLocalApiReady("netease", settings, {
+          timeoutMs: settings.network.requestTimeoutMs,
+        });
+        if (!isReady) {
+          throw new Error(
+            "Local Netease API server did not become ready in time.",
+          );
+        }
       }
       await testNeteaseApiConnection(settings);
       pushDynamicIslandNotification(
@@ -17693,12 +17817,9 @@ export function AppShell({
     setIsTestingKugouApi(true);
     try {
       if (settings.network.useLocalKugouApiServer) {
-        const status = await syncLocalNeteaseApiServer(settings);
-        setLocalNeteaseApiStatus(status);
-        setLocalKugouApiRuntimeBaseUrl(
-          status.enabled ? status.url.replace(/\/+$/, "") : null,
-        );
-        const isReady = await waitForLocalNeteaseApiReady(settings, {
+        const statuses = await syncLocalApiServers(settings);
+        applyLocalApiStatuses(statuses);
+        const isReady = await waitForLocalApiReady("kugou", settings, {
           timeoutMs: settings.network.requestTimeoutMs,
         });
         if (!isReady) {
@@ -19171,6 +19292,58 @@ export function AppShell({
   }, [workspaceTransitionKey]);
 
   // 工作区模板：分支判定全部由 resolveWorkspaceTemplate 完成，这里只做 id -> 组件 映射
+  // 混合音源的当前音源滑块：仅图标，展示在标题栏右上角
+  const mixedSourceSwitch =
+    onlineSession.mode === "mixed" ? (
+      <div
+        className={[
+          "online-source-selector",
+          "online-source-selector--pair",
+          "titlebar__source-switch",
+          `online-source-selector--${onlineSession.activeSource}`,
+        ].join(" ")}
+        role="radiogroup"
+        aria-label={
+          copy.locale === "en-US" ? "Mixed Source Picker" : "混合音源选择"
+        }
+      >
+        <span
+          className="online-source-selector__indicator"
+          aria-hidden="true"
+        />
+        <button
+          className="online-source-selector__option"
+          type="button"
+          role="radio"
+          aria-checked={onlineSession.activeSource === "netease"}
+          aria-label={copy.settings.sections.network.neteaseSourceLabel}
+          title={copy.settings.sections.network.neteaseSourceLabel}
+          onClick={() => updateMixedActiveSource("netease")}
+        >
+          <img
+            className="online-source-selector__icon"
+            src="/online-source-netease.svg"
+            alt=""
+          />
+        </button>
+        <button
+          className="online-source-selector__option"
+          type="button"
+          role="radio"
+          aria-checked={onlineSession.activeSource === "kugou"}
+          aria-label={copy.settings.sections.network.kugouSourceLabel}
+          title={copy.settings.sections.network.kugouSourceLabel}
+          onClick={() => updateMixedActiveSource("kugou")}
+        >
+          <img
+            className="online-source-selector__icon"
+            src="/online-source-kugou.svg"
+            alt=""
+          />
+        </button>
+      </div>
+    ) : null;
+
   const workspaceScreen =
     workspaceTemplate.id === "settings" ? (
       <SettingsScreen
@@ -19188,7 +19361,7 @@ export function AppShell({
         isSaving={isSettingsSaving}
         isTestingNeteaseApi={isTestingNeteaseApi}
         isTestingKugouApi={isTestingKugouApi}
-        localNeteaseApiStatus={localNeteaseApiStatus}
+        localApiStatuses={localApiStatuses}
         isClearingLibrary={isImportingLibrary}
         onUpdate={updateSettings}
         onOnlineSourceChange={handleOnlineSourceChange}
@@ -19471,6 +19644,7 @@ export function AppShell({
     ) : workspaceTemplate.id === "library" ? (
       <LibraryScreen
         copy={copy}
+        session={onlineSession}
         settings={settings}
         mediaLibrary={mediaLibrary}
         scanDirectories={settings.library.scanDirectories}
@@ -19821,6 +19995,10 @@ export function AppShell({
             </span>
           </div>
 
+          {mixedSourceSwitch ? (
+            <div className="titlebar__actions">{mixedSourceSwitch}</div>
+          ) : null}
+
           <div
             className="window-controls"
             aria-label={localeStrings.window.controls}
@@ -20051,6 +20229,7 @@ export function AppShell({
         <main
           ref={workspaceRef}
           className="workspace"
+          data-source-slide={mixedSourceSlide ?? undefined}
           style={
             {
               "--dynamic-island-clearance": settings.appearance
@@ -21968,7 +22147,7 @@ function SettingsScreen({
   isSaving,
   isTestingNeteaseApi,
   isTestingKugouApi,
-  localNeteaseApiStatus,
+  localApiStatuses,
   isClearingLibrary,
   onReleaseMemoryCache,
   onUpdate,
@@ -22002,11 +22181,11 @@ function SettingsScreen({
   isSaving: boolean;
   isTestingNeteaseApi: boolean;
   isTestingKugouApi: boolean;
-  localNeteaseApiStatus: LocalNeteaseApiServerStatus | null;
+  localApiStatuses: LocalApiServersStatus | null;
   isClearingLibrary: boolean;
   onReleaseMemoryCache: () => void;
   onUpdate: (updater: (current: AppSettings) => AppSettings) => void;
-  onOnlineSourceChange: (source: "netease" | "kugou") => void;
+  onOnlineSourceChange: (source: OnlineSourceSelection) => void;
   onSave: () => void;
   onReset: () => void;
   onTestNeteaseApi: () => void;
@@ -22036,27 +22215,27 @@ function SettingsScreen({
     () => new Set(),
   );
   const settingsSearchInstanceId = useId();
-  const [selectedOnlineSource, setSelectedOnlineSource] = useState<
-    "netease" | "kugou"
-  >(
-    settings.network.enabledSources.includes("kugou") &&
-      !settings.network.enabledSources.includes("netease")
-      ? "kugou"
-      : "netease",
-  );
+  const [selectedOnlineSource, setSelectedOnlineSource] =
+    useState<OnlineSourceSelection>(() =>
+      resolveOnlineSourceSelection(settings.network.enabledSources),
+    );
   const isNeteaseEnabled = settings.network.enabledSources.includes("netease");
   const isKugouEnabled = settings.network.enabledSources.includes("kugou");
   const isOnlineSourceEnabled = isNeteaseEnabled || isKugouEnabled;
   const isNeteaseSourceSelected = selectedOnlineSource === "netease";
   const isKugouSourceSelected = selectedOnlineSource === "kugou";
+  const isMixedSourceSelected = selectedOnlineSource === "mixed";
   const activeDownloadQualityOptions = isKugouSourceSelected
     ? kugouDownloadQualityOptions
     : downloadQualityOptions;
+  // 混合音源下同时展示两个源的 API 设置与账号信息
+  const showNeteaseSourceSettings =
+    isNeteaseEnabled && (isNeteaseSourceSelected || isMixedSourceSelected);
+  const showKugouSourceSettings =
+    isKugouEnabled && (isKugouSourceSelected || isMixedSourceSelected);
   const showKugouLocalApiPanel =
-    isKugouSourceSelected &&
-    isKugouEnabled &&
-    settings.network.useLocalKugouApiServer;
-  const selectOnlineSource = (source: "netease" | "kugou") => {
+    showKugouSourceSettings && settings.network.useLocalKugouApiServer;
+  const selectOnlineSource = (source: OnlineSourceSelection) => {
     setSelectedOnlineSource(source);
     onOnlineSourceChange(source);
   };
@@ -22148,31 +22327,37 @@ function SettingsScreen({
     settings.network.neteaseCookie.trim().length > 0;
   const hasSavedKugouCookie = settings.network.kugouCookie.trim().length > 0;
   const showLocalApiPanel =
-    isNeteaseSourceSelected &&
-    isNeteaseEnabled &&
-    settings.network.useLocalApiServer;
-  const localApiStatusLabel =
+    showNeteaseSourceSettings && settings.network.useLocalApiServer;
+  // 两个音源各自一份状态：面板只显示自己那一个源的信息
+  const localNeteaseApiStatus = localApiStatuses?.netease ?? null;
+  const localKugouApiStatus = localApiStatuses?.kugou ?? null;
+  const resolveLocalApiStatusLabel = (status: LocalApiServerStatus | null) =>
     copy.locale === "en-US"
-      ? localNeteaseApiStatus?.starting
+      ? status?.starting
         ? "Starting"
-        : localNeteaseApiStatus?.running
+        : status?.running
           ? "Running"
           : "Stopped"
-      : localNeteaseApiStatus?.starting
+      : status?.starting
         ? "启动中"
-        : localNeteaseApiStatus?.running
+        : status?.running
           ? "运行中"
           : "已停止";
-  const localApiStatusTone = localNeteaseApiStatus?.running
-    ? "running"
-    : localNeteaseApiStatus?.starting
-      ? "starting"
-      : "stopped";
-  const localApiMessage =
-    localNeteaseApiStatus?.message ||
+  const resolveLocalApiStatusTone = (status: LocalApiServerStatus | null) =>
+    status?.running ? "running" : status?.starting ? "starting" : "stopped";
+  const resolveLocalApiMessage = (status: LocalApiServerStatus | null) =>
+    status?.message ||
     (copy.locale === "en-US"
       ? "The app will manage the local API process and display its recent output here."
       : "应用会在这里显示本地 API 的启动状态与最近输出。");
+  const localApiStatusLabel = resolveLocalApiStatusLabel(localNeteaseApiStatus);
+  const localApiStatusTone = resolveLocalApiStatusTone(localNeteaseApiStatus);
+  const localApiMessage = resolveLocalApiMessage(localNeteaseApiStatus);
+  const kugouLocalApiStatusLabel = resolveLocalApiStatusLabel(
+    localKugouApiStatus,
+  );
+  const kugouLocalApiStatusTone = resolveLocalApiStatusTone(localKugouApiStatus);
+  const kugouLocalApiMessage = resolveLocalApiMessage(localKugouApiStatus);
   const neteaseCookiePreview = hasSavedNeteaseCookie
     ? maskSensitiveValue(settings.network.neteaseCookie.trim(), 20, 10)
     : copy.settings.sections.network.loginCookieEmpty;
@@ -23408,8 +23593,8 @@ function SettingsScreen({
   );
   const showNeteaseQrLogin = !hasSavedNeteaseCookie;
   const showAccountSection =
-    isNeteaseSourceSelected &&
     isNeteaseEnabled &&
+    (isNeteaseSourceSelected || selectedOnlineSource === "mixed") &&
     (!isSearchingSettings ||
       matchesSettingsSearch([
         copy.settings.sections.network.loginTitle,
@@ -25780,7 +25965,9 @@ function SettingsScreen({
                       ...current,
                       network: {
                         ...current.network,
-                        enabledSources: checked ? [selectedOnlineSource] : [],
+                        enabledSources: checked
+                          ? [...onlineSourceSelectionIds[selectedOnlineSource]]
+                          : [],
                       },
                     }))
                   }
@@ -25823,6 +26010,7 @@ function SettingsScreen({
                   searchParts={[
                     copy.settings.sections.network.sourceSelectorLabel,
                     copy.settings.sections.network.neteaseSourceLabel,
+                    copy.settings.sections.network.mixedSourceLabel,
                     copy.settings.sections.network.kugouSourceLabel,
                   ]}
                 >
@@ -25856,6 +26044,45 @@ function SettingsScreen({
                         {copy.settings.sections.network.neteaseSourceLabel}
                       </button>
                       <button
+                        className={[
+                          "online-source-selector__option",
+                          "online-source-selector__option--liquid",
+                        ].join(" ")}
+                        type="button"
+                        role="radio"
+                        aria-checked={isMixedSourceSelected}
+                        onClick={() => selectOnlineSource("mixed")}
+                      >
+                        <MixedSourceLiquidCanvas
+                          isSelected={isMixedSourceSelected}
+                        />
+                        <svg
+                          className="online-source-selector__icon"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <defs>
+                            <mask id="online-source-mixed-mask">
+                              <rect width="24" height="24" fill="#ffffff" />
+                              <circle cx="9.1" cy="12" r="4.2" fill="#000000" />
+                              <circle cx="9.1" cy="12" r="2.4" fill="#ffffff" />
+                              <circle cx="14.9" cy="12" r="4.2" fill="#000000" />
+                              <circle cx="14.9" cy="12" r="2.4" fill="#ffffff" />
+                            </mask>
+                          </defs>
+                          <rect
+                            x="2"
+                            y="2"
+                            width="20"
+                            height="20"
+                            rx="5"
+                            fill="#ffffff"
+                            mask="url(#online-source-mixed-mask)"
+                          />
+                        </svg>
+                        {copy.settings.sections.network.mixedSourceLabel}
+                      </button>
+                      <button
                         className="online-source-selector__option"
                         type="button"
                         role="radio"
@@ -25873,7 +26100,7 @@ function SettingsScreen({
                   </div>
                 </SettingsSearchItem>
               ) : null}
-              {isNeteaseSourceSelected && isNeteaseEnabled ? (
+              {showNeteaseSourceSettings ? (
                 <>
                   <SettingsSearchItem
                     itemKey="network-local-api"
@@ -26109,7 +26336,7 @@ function SettingsScreen({
                   </div>
                 </>
               ) : null}
-              {isKugouSourceSelected && isKugouEnabled ? (
+              {showKugouSourceSettings ? (
                 <>
                   <SettingsSearchItem
                     itemKey="kugou-local-api"
@@ -26134,9 +26361,13 @@ function SettingsScreen({
                           : "使用本地酷狗 API 服务"
                       }
                       description={
-                        copy.locale === "en-US"
-                          ? "Starts KuGouMusicApi through the system Node.js environment."
-                          : "通过系统 Node.js 环境启动 KuGouMusicApi。"
+                        isMixedSourceSelected
+                          ? copy.locale === "en-US"
+                            ? "Starts KuGouMusicApi through the system Node.js environment. Mixed source runs one local API per source, on each source's own port."
+                            : "通过系统 Node.js 环境启动 KuGouMusicApi。混合音源下两个源各自运行一个本地 API，端口分别取自各自的 API 地址。"
+                          : copy.locale === "en-US"
+                            ? "Starts KuGouMusicApi through the system Node.js environment."
+                            : "通过系统 Node.js 环境启动 KuGouMusicApi。"
                       }
                       checked={settings.network.useLocalKugouApiServer}
                       onChange={(checked) =>
@@ -26155,24 +26386,24 @@ function SettingsScreen({
                       <div className="local-api-console__header">
                         <div className="local-api-console__status">
                           <span
-                            className={`local-api-console__status-dot local-api-console__status-dot--${localApiStatusTone}`}
+                            className={`local-api-console__status-dot local-api-console__status-dot--${kugouLocalApiStatusTone}`}
                           />
                           <strong>
                             {copy.locale === "en-US"
                               ? "Local KuGou API"
                               : "本地酷狗 API"}
                           </strong>
-                          <span>{localApiStatusLabel}</span>
+                          <span>{kugouLocalApiStatusLabel}</span>
                         </div>
                         <span className="local-api-console__address">
                           {(
-                            localNeteaseApiStatus?.url ||
+                            localKugouApiStatus?.url ||
                             "http://127.0.0.1:3001"
                           ).replace(/\/$/, "")}
                         </span>
                       </div>
                       <p className="local-api-console__message">
-                        {localApiMessage}
+                        {kugouLocalApiMessage}
                       </p>
                       <div
                         className="local-api-console__output"
@@ -26182,8 +26413,8 @@ function SettingsScreen({
                             : "本地 API 输出"
                         }
                       >
-                        {localNeteaseApiStatus?.logLines.length ? (
-                          localNeteaseApiStatus.logLines.map((line, index) => (
+                        {localKugouApiStatus?.logLines.length ? (
+                          localKugouApiStatus.logLines.map((line, index) => (
                             <div
                               key={`${index}-${line}`}
                               className="local-api-console__line"
@@ -26316,7 +26547,7 @@ function SettingsScreen({
           </section>
         ) : null}
 
-        {isKugouSourceSelected && isKugouEnabled ? (
+        {showKugouSourceSettings ? (
           <section className="settings-card">
             <div className="settings-card__header">
               <div>
@@ -26477,20 +26708,13 @@ function SettingsScreen({
             <div className="settings-card__header">
               <div>
                 <h3 className="settings-card__title">
-                  {showNeteaseQrLogin
-                    ? copy.settings.sections.network.loginTitle
-                    : copy.settings.sections.network.accountTitle}
+                  {copy.locale === "en-US"
+                    ? "Netease Account"
+                    : "网易云用户信息"}
                 </h3>
               </div>
             </div>
-
             <div className="settings-card__body">
-              <p className="settings-screen__description settings-screen__description--compact">
-                {showNeteaseQrLogin
-                  ? copy.settings.sections.network.loginDescription
-                  : copy.settings.sections.network.accountDescription}
-              </p>
-
               {showNeteaseQrLogin ? (
                 <div className="netease-login-panel">
                   <div className="netease-login-panel__preview">
@@ -26514,15 +26738,6 @@ function SettingsScreen({
                         {qrLoginMessage ||
                           copy.settings.sections.network.loginHint}
                       </span>
-                    </div>
-
-                    <div className="netease-login-panel__cookie">
-                      <span className="netease-login-panel__cookie-label">
-                        {copy.settings.sections.network.loginCookieLabel}
-                      </span>
-                      <div className="netease-login-panel__cookie-value">
-                        {neteaseCookiePreview}
-                      </div>
                     </div>
 
                     <div className="settings-inline-actions">
@@ -26576,12 +26791,10 @@ function SettingsScreen({
                   </div>
 
                   {isLoadingNeteaseAccount ? (
-                    <div className="netease-account-card netease-account-card--empty">
-                      <UILoadingBlock
-                        label={copy.settings.sections.network.accountLoading}
-                        variant="inline"
-                      />
-                    </div>
+                    <UILoadingBlock
+                      label={copy.settings.sections.network.accountLoading}
+                      variant="inline"
+                    />
                   ) : neteaseAccount ? (
                     <div className="netease-account-card">
                       <div className="netease-account-card__header">
@@ -26616,17 +26829,12 @@ function SettingsScreen({
                             : copy.settings.sections.network.accountVipInactive}
                         </span>
                       </div>
-
-                      <p className="netease-account-card__signature">
-                        {neteaseAccount.signature ||
-                          copy.settings.sections.network.accountSignatureEmpty}
-                      </p>
                     </div>
                   ) : (
-                    <div className="netease-account-card netease-account-card--empty">
+                    <p className="library-empty">
                       {neteaseAccountError ||
                         copy.settings.sections.network.accountEmpty}
-                    </div>
+                    </p>
                   )}
                 </>
               )}
@@ -28274,8 +28482,8 @@ function HomeScreen({
     localTracks,
     8,
   );
-  // 在线状态来自状态层（session），组件内不再从 settings 自行推导
-  const isNeteaseEnabled = session.mode === "netease";
+  // 在线状态来自状态层（session）：混合音源下 activeSource 即侧栏滑块选中的音源
+  const isNeteaseEnabled = session.activeSource === "netease";
   const hasSavedNeteaseCookie = session.sources.netease.authenticated;
   const [neteaseAccount, setNeteaseAccount] =
     useState<NeteaseAccountProfile | null>(null);
@@ -29238,7 +29446,7 @@ function KugouPlaylistScreen({
   ) => void;
 }) {
   const playlistCopy = getPlaylistCopy(copy.locale);
-  const isKugouEnabled = session.mode === "kugou";
+  const isKugouEnabled = session.activeSource === "kugou";
   const hasCredentials = session.sources.kugou.authenticated;
   const kugouRequestSettingsKey = [
     settings.network.kugouCookie,
@@ -30174,7 +30382,7 @@ function KugouLikedSongsScreen({
   ) => void;
 }) {
   const likedSongsCopy = getLikedSongsCopy(copy.locale);
-  const isEnabled = session.mode === "kugou";
+  const isEnabled = session.activeSource === "kugou";
   const hasCredentials = session.sources.kugou.authenticated;
   const requestKey = [
     settings.network.kugouCookie,
@@ -30509,7 +30717,7 @@ function PlaylistScreen({
   const playlistCopy = getPlaylistCopy(copy.locale);
   const playlistEditorCopy = getPlaylistEditorCopy(copy.locale);
   const localeStrings = getLocaleStrings(copy.locale);
-  const isNeteaseEnabled = session.mode === "netease";
+  const isNeteaseEnabled = session.activeSource === "netease";
   const hasSavedNeteaseCookie = session.sources.netease.authenticated;
   const [neteaseAccount, setNeteaseAccount] =
     useState<NeteaseAccountProfile | null>(null);
@@ -31259,7 +31467,7 @@ function LikedSongsScreen({
   const homeCopy = getHomeCopy(copy.locale);
   const likedSongsCopy = getLikedSongsCopy(copy.locale);
   const localeStrings = getLocaleStrings(copy.locale);
-  const isNeteaseEnabled = session.mode === "netease";
+  const isNeteaseEnabled = session.activeSource === "netease";
   const hasSavedNeteaseCookie = session.sources.netease.authenticated;
   const [neteaseAccount, setNeteaseAccount] =
     useState<NeteaseAccountProfile | null>(null);
@@ -32875,6 +33083,7 @@ function mergePlaylistRecommendations(
 
 function LibraryScreen({
   copy,
+  session,
   settings,
   mediaLibrary,
   scanDirectories,
@@ -32907,6 +33116,7 @@ function LibraryScreen({
   onTrackContextMenu,
 }: {
   copy: UiCopy;
+  session: OnlineSession;
   settings: AppSettings;
   mediaLibrary: MediaLibrarySnapshot | null;
   scanDirectories: string[];
@@ -33008,8 +33218,17 @@ function LibraryScreen({
   const sourceTracks = tracks.filter((track) => {
     if (librarySource === "local") return track.source.kind === "localFile";
     if (librarySource === "remote") {
-      const selectedOnlineSource = settings.network.enabledSources[0] ?? "";
-      return track.source.kind === "remoteStream" && (track.playback.cacheKey ?? "").toLowerCase().includes(selectedOnlineSource);
+      // 混合音源下同时显示两个源的在线歌曲；未启用在线源时不做来源过滤。
+      const enabledSourceFilters = normalizeEnabledSources(
+        settings.network.enabledSources,
+      );
+      const sourceFilters =
+        enabledSourceFilters.length > 0 ? enabledSourceFilters : [""];
+      const cacheKey = (track.playback.cacheKey ?? "").toLowerCase();
+      return (
+        track.source.kind === "remoteStream" &&
+        sourceFilters.some((sourceId) => cacheKey.includes(sourceId))
+      );
     }
     return true;
   });
@@ -33862,6 +34081,7 @@ function LibraryScreen({
             queueTracks={visibleSongTracks}
             artworksById={artworksById}
             showAlbumArtwork={showAlbumArtwork}
+            showTrackSourceBadge={session.mode === "mixed"}
             activeTrackId={activeTrackId}
             isLoading={isLoading || isSongPageTransitioning}
             copy={copy}
@@ -34134,6 +34354,7 @@ function LibraryScreen({
               tracks={selectedArtistTracks}
               artworksById={artworksById}
               showAlbumArtwork={showAlbumArtwork}
+              showTrackSourceBadge={session.mode === "mixed"}
               activeTrackId={activeTrackId}
               isLoading={isLoading}
               copy={copy}
@@ -34186,6 +34407,7 @@ function LibraryScreen({
               tracks={selectedAlbumTracks}
               artworksById={artworksById}
               showAlbumArtwork={showAlbumArtwork}
+              showTrackSourceBadge={session.mode === "mixed"}
               activeTrackId={activeTrackId}
               isLoading={isLoading}
               copy={copy}
@@ -34199,6 +34421,77 @@ function LibraryScreen({
         </>
       ) : null}
     </section>
+  );
+}
+
+/** 在线曲目的来源（用于混合音源下在资料库里标注每条记录的出处） */
+function resolveTrackOnlineSource(track: TrackRecord): OnlineSourceId | null {
+  if (track.source.kind !== "remoteStream") {
+    return null;
+  }
+
+  const cacheKey = track.playback.cacheKey ?? "";
+
+  if (parseKugouTrackHashFromCacheKey(cacheKey)) {
+    return "kugou";
+  }
+
+  if (parseNeteaseTrackIdFromCacheKey(cacheKey)) {
+    return "netease";
+  }
+
+  return null;
+}
+
+/**
+ * 徽标用的平台标识路径（与 public/online-source-*.svg 中的图形一致）。
+ * 这里直接画"品牌色底 + 白色标识"，避免图片自带的白色内衬与底色之间出现空隙。
+ */
+const trackSourceBadgeGlyphs: Record<OnlineSourceId, string> = {
+  kugou:
+    "M7.5 5.5h3.4v4.45l4.12-4.45h3.9l-4.93 5.45 5.12 7.55h-3.95l-4.26-6.1v6.1H7.5z",
+  netease:
+    "M10.421 11.375c-.294 1.028.012 2.064.784 2.653 1.061.81 2.565.3 2.874-.995.08-.337.103-.722.027-1.056-.23-1.001-.52-1.988-.792-2.996-1.33.154-2.543 1.172-2.893 2.394zm5.548-.287c.273 1.012.285 2.017-.127 3-1.128 2.69-4.721 3.14-6.573.826-1.302-1.627-1.28-3.961.06-5.734.78-1.032 1.804-1.707 3.048-2.054l.379-.104c-.084-.415-.188-.816-.243-1.224-.176-1.317.512-2.503 1.744-3.04 1.226-.535 2.708-.216 3.53.76.406.479.395 1.08-.025 1.464-.412.377-.996.346-1.435-.09-.247-.246-.51-.44-.877-.436-.525.006-.987.418-.945.937.037.468.173.93.3 1.386.022.078.216.135.338.153 1.334.197 2.504.731 3.472 1.676 2.558 2.493 2.861 6.531.672 9.44-1.529 2.032-3.61 3.168-6.127 3.409-4.621.44-8.664-2.53-9.7-7.058C2.515 10.255 4.84 5.831 8.795 4.25c.586-.234 1.143-.031 1.371.498.232.537-.019 1.086-.61 1.35-2.368 1.06-3.817 2.855-4.215 5.424-.533 3.433 1.656 6.776 5 7.72 2.723.77 5.658-.166 7.308-2.33 1.586-2.08 1.4-5.099-.427-6.873a3.979 3.979 0 0 0-1.823-1.013c.198.716.389 1.388.57 2.062z",
+};
+
+function TrackSourceBadge({
+  track,
+  copy,
+}: {
+  track: TrackRecord;
+  copy: UiCopy;
+}) {
+  const source = resolveTrackOnlineSource(track);
+  if (!source) {
+    return null;
+  }
+
+  const label =
+    source === "kugou"
+      ? copy.settings.sections.network.kugouSourceLabel
+      : copy.settings.sections.network.neteaseSourceLabel;
+
+  return (
+    <svg
+      className={`track-source-badge track-source-badge--${source}`}
+      viewBox="0 0 24 24"
+      role="img"
+      aria-label={label}
+    >
+      <title>{label}</title>
+      <rect
+        className="track-source-badge__tile"
+        x="2"
+        y="2"
+        width="20"
+        height="20"
+        rx="5"
+      />
+      <path
+        className="track-source-badge__glyph"
+        d={trackSourceBadgeGlyphs[source]}
+      />
+    </svg>
   );
 }
 
@@ -34219,10 +34512,13 @@ function LibrarySongList({
   onOpenArtist,
   onOpenAlbum,
   disableMetaNavigation = false,
+  showTrackSourceBadge = false,
   onTrackContextMenu,
 }: {
   copy: UiCopy;
   tracks: TrackRecord[];
+  /** 混合音源下为每条在线记录标注来源图标 */
+  showTrackSourceBadge?: boolean;
   queueTracks?: TrackRecord[];
   artworksById: Map<string, ArtworkRecord>;
   showAlbumArtwork: boolean;
@@ -34322,7 +34618,14 @@ function LibrarySongList({
                 )}
               </div>
               <div className="library-song-item__identity-text">
-                <div className="library-song-item__title">{track.title}</div>
+                <div className="library-song-item__title">
+                  <span className="library-song-item__title-text">
+                    {track.title}
+                  </span>
+                  {showTrackSourceBadge ? (
+                    <TrackSourceBadge track={track} copy={copy} />
+                  ) : null}
+                </div>
                 <div className="library-song-item__meta">
                   {track.source.kind === "localFile"
                     ? track.source.fileName
@@ -38244,6 +38547,220 @@ function ImmersiveLyricsPanel({
         )}
       </div>
     </div>
+  );
+}
+
+/** 混合音源选项的"蓝红液体"源图：深底 + 红/蓝/紫色斑，交给 Kawarp 做域扭曲流动 */
+function buildMixedSourceLiquidCanvas(phase: number): HTMLCanvasElement | null {
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = 512;
+  sourceCanvas.height = 256;
+  const context = sourceCanvas.getContext("2d");
+  if (!context) {
+    return null;
+  }
+
+  const base = context.createLinearGradient(
+    0,
+    0,
+    sourceCanvas.width,
+    sourceCanvas.height,
+  );
+  base.addColorStop(0, mixHexColors("#df3e45", "#1c0f2c", 0.6));
+  base.addColorStop(0.5, "#241a44");
+  base.addColorStop(1, mixHexColors("#2878d4", "#0f1a33", 0.56));
+  context.fillStyle = base;
+  context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+
+  // 每个色斑带自己的相位：随时间做圆周漂移 + 半径呼吸，配合 Kawarp 的交叉淡入形成持续混合
+  const blobs = [
+    { color: "#ff4d5a", x: 0.16, y: 0.34, radius: 0.46, alpha: 0.98 },
+    { color: "#df3e45", x: 0.37, y: 0.74, radius: 0.38, alpha: 0.88 },
+    { color: "#8d5aa8", x: 0.52, y: 0.4, radius: 0.34, alpha: 0.74 },
+    { color: "#2878d4", x: 0.69, y: 0.68, radius: 0.42, alpha: 0.92 },
+    { color: "#3b8cff", x: 0.88, y: 0.3, radius: 0.48, alpha: 0.94 },
+  ];
+  const maxRadius = Math.max(sourceCanvas.width, sourceCanvas.height);
+
+  context.globalCompositeOperation = "screen";
+  blobs.forEach((blob, index) => {
+    const angle = phase + index * 1.7;
+    const x =
+      sourceCanvas.width *
+      clampNumber(blob.x + Math.cos(angle) * 0.2, -0.2, 1.2);
+    const y =
+      sourceCanvas.height *
+      clampNumber(blob.y + Math.sin(angle * 0.8) * 0.26, -0.2, 1.2);
+    const radius =
+      maxRadius * clampNumber(blob.radius + Math.sin(angle * 1.3) * 0.1, 0.16, 0.7);
+    const glow = context.createRadialGradient(x, y, 0, x, y, radius);
+    glow.addColorStop(
+      0,
+      withHexAlpha(mixHexColors(blob.color, "#ffffff", 0.2), blob.alpha),
+    );
+    glow.addColorStop(0.45, withHexAlpha(blob.color, blob.alpha * 0.55));
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = glow;
+    context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+  });
+
+  return sourceCanvas;
+}
+
+/**
+ * 混合音源液体底的画质/动效参数：
+ * - RENDER_SCALE 压到 0.38：内部分辨率只有显示尺寸的三分之一多一点，再由浏览器放大 →
+ *   精度明显下降、像素更少、画面自带柔化；
+ * - BLUR_PASSES 拉到 20（Kawarp 的 Kawase 层数上限 40，且模糊只在换帧时执行、不占每帧开销）；
+ * - ANIMATION_SPEED 顶到 Kawarp 的上限 5（着色器内部再 ×0.05，因此这是能达到的最快域扭曲速度）；
+ * - MORPH_INTERVAL_MS + TRANSITION_MS：每 0.7 秒重新生成一帧源图并交叉淡入，淡入比间隔更长，
+ *   于是红蓝两色始终处在互相渗透的状态，而不是"停一下再变一下"的生硬过渡。
+ */
+const MIXED_SOURCE_LIQUID_RENDER_SCALE = 0.38;
+const MIXED_SOURCE_LIQUID_MAX_DPR = 1.25;
+const MIXED_SOURCE_LIQUID_BLUR_PASSES = 20;
+const MIXED_SOURCE_LIQUID_ANIMATION_SPEED = 5;
+const MIXED_SOURCE_LIQUID_MORPH_INTERVAL_MS = 700;
+const MIXED_SOURCE_LIQUID_TRANSITION_MS = 1500;
+const MIXED_SOURCE_LIQUID_PHASE_STEP = 0.55;
+
+/**
+ * 混合音源选项的专用背景：复用沉浸式播放页的 Kawarp WebGL 流体（Kawase 模糊 + 域扭曲），
+ * 以红/蓝两色色斑呈现动态的"液体混合"效果。挂载时启动、卸载时释放 WebGL 上下文。
+ */
+function MixedSourceLiquidCanvas({ isSelected }: { isSelected: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const kawarpRef = useRef<Kawarp | null>(null);
+  const isSelectedRef = useRef(isSelected);
+
+  // 只有选中"混合音源"时才驱动动画：未选中则暂停渲染并停掉换帧
+  useEffect(() => {
+    isSelectedRef.current = isSelected;
+    const kawarp = kawarpRef.current;
+    if (!kawarp) {
+      return;
+    }
+
+    if (isSelected) {
+      kawarp.start();
+      return;
+    }
+
+    kawarp.stop();
+    kawarp.renderFrame(12);
+  }, [isSelected]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    let kawarp: Kawarp | null = null;
+    let resizeFrameId = 0;
+
+    const resize = () => {
+      const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
+      if (!rect.width || !rect.height) {
+        return;
+      }
+
+      const renderScale =
+        Math.min(window.devicePixelRatio || 1, MIXED_SOURCE_LIQUID_MAX_DPR) *
+        MIXED_SOURCE_LIQUID_RENDER_SCALE;
+      canvas.width = Math.max(24, Math.round(rect.width * renderScale));
+      canvas.height = Math.max(12, Math.round(rect.height * renderScale));
+    };
+
+    const rerenderForResize = () => {
+      resize();
+      kawarp?.resize();
+    };
+
+    const scheduleResize = () => {
+      if (resizeFrameId) {
+        return;
+      }
+
+      resizeFrameId = window.requestAnimationFrame(() => {
+        resizeFrameId = 0;
+        rerenderForResize();
+      });
+    };
+
+    resize();
+
+    try {
+      kawarp = new Kawarp(canvas, {
+        warpIntensity: 0.95,
+        blurPasses: MIXED_SOURCE_LIQUID_BLUR_PASSES,
+        animationSpeed: MIXED_SOURCE_LIQUID_ANIMATION_SPEED,
+        transitionDuration: MIXED_SOURCE_LIQUID_TRANSITION_MS,
+        saturation: 1.9,
+        tintIntensity: 0.05,
+        dithering: 0.008,
+        scale: 1.3,
+      });
+    } catch (error) {
+      console.warn("[online-source] failed to start liquid background", error);
+      return;
+    }
+
+    kawarpRef.current = kawarp;
+
+    let phase = 0;
+    const firstFrame = buildMixedSourceLiquidCanvas(phase);
+    if (firstFrame) {
+      kawarp.loadImageElement(firstFrame);
+    } else {
+      kawarp.loadGradient(["#df3e45", "#8d5aa8", "#2878d4"], 120);
+    }
+
+    // 持续产出新的色斑布局：淡入时长(1500ms)长于间隔(700ms)，两帧始终在互相渗透
+    const morphTimer = window.setInterval(() => {
+      if (!isSelectedRef.current) {
+        return;
+      }
+
+      phase += MIXED_SOURCE_LIQUID_PHASE_STEP;
+      const nextFrame = buildMixedSourceLiquidCanvas(phase);
+      if (nextFrame) {
+        kawarp?.loadImageElement(nextFrame);
+      }
+    }, MIXED_SOURCE_LIQUID_MORPH_INTERVAL_MS);
+
+    kawarp.resize();
+
+    if (isSelectedRef.current) {
+      kawarp.start();
+    } else {
+      kawarp.stop();
+    }
+
+    const resizeObserver = new ResizeObserver(scheduleResize);
+    resizeObserver.observe(canvas.parentElement ?? canvas);
+    window.addEventListener("resize", scheduleResize);
+
+    return () => {
+      window.clearInterval(morphTimer);
+      if (resizeFrameId) {
+        window.cancelAnimationFrame(resizeFrameId);
+      }
+      window.removeEventListener("resize", scheduleResize);
+      resizeObserver.disconnect();
+      kawarp?.stop();
+      kawarp?.dispose();
+      kawarp = null;
+      kawarpRef.current = null;
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="online-source-selector__liquid"
+      aria-hidden="true"
+    />
   );
 }
 

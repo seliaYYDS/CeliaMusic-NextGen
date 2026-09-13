@@ -12,7 +12,8 @@ import type { AppSettings } from "../settings/types";
  *
  * 本模块把三层收敛成一个 OnlineSession，并给出三个纯函数：
  *   - resolveVisibleNavIds / resolveNavFallback：显示层判定
- *   - resolveWorkspaceTemplate：分支（离线 / 网易云 / 酷狗）-> 模板
+ *   - resolveWorkspaceTemplate：分支（离线 / 网易云 / 酷狗 / 混合）-> 模板
+ * 混合音源下 activeSource 既是"当前音源"，也是页面渲染分支的来源。
  * 页面显示元素只允许通过 resolveWorkspaceTemplate 的结果来分支；各屏组件
  * 内部不得再从 settings 自行推导在线状态，应使用传入的 session。
  *
@@ -23,14 +24,38 @@ export const onlineSourceIds = ["netease", "kugou"] as const;
 
 export type OnlineSourceId = (typeof onlineSourceIds)[number];
 
-/** 在线分支：完全离线 / 网易云在线 / 酷狗在线 */
-export type OnlineMode = OnlineSourceId | "offline";
+/** 在线分支：完全离线 / 网易云在线 / 酷狗在线 / 混合音源（两个源同时启用） */
+export type OnlineMode = OnlineSourceId | "offline" | "mixed";
+
+/** 设置页"在线音源"单选滑块的取值 */
+export type OnlineSourceSelection = OnlineSourceId | "mixed";
 
 /**
- * 多源同时开启时的优先级。UI 目前是单选（enabledSources 至多一项），
- * 这里给出确定性顺序，与 Rust 侧本地 API 的 netease 优先保持一致。
+ * 多源同时开启时的归一化顺序，与 Rust 侧本地 API 的 netease 优先保持一致。
  */
 export const onlineSourcePriority: readonly OnlineSourceId[] = ["netease", "kugou"];
+
+/** 选择项 -> enabledSources 的映射（设置页唯一的写入口径） */
+export const onlineSourceSelectionIds: Record<
+  OnlineSourceSelection,
+  OnlineSourceId[]
+> = {
+  netease: ["netease"],
+  mixed: ["netease", "kugou"],
+  kugou: ["kugou"],
+};
+
+/** 由 enabledSources 反推设置页当前选中项 */
+export function resolveOnlineSourceSelection(
+  values: readonly string[] | null | undefined,
+): OnlineSourceSelection {
+  const sources = normalizeEnabledSources(values);
+  if (sources.length > 1) {
+    return "mixed";
+  }
+
+  return sources[0] ?? "netease";
+}
 
 export const navItemIds = [
   "home",
@@ -72,8 +97,15 @@ export type OnlineSourceSession = {
 
 export type OnlineSession = {
   mode: OnlineMode;
-  /** 当前在线分支对应的源；离线下为 null */
+  /** 当前在线分支对应的源；离线与混合音源下为 null */
   source: OnlineSourceId | null;
+  /**
+   * 当前用于 UI 分支的音源。
+   * - 单一音源分支：等于该音源；
+   * - 混合音源分支：由界面上的音源滑块决定（见 mixedSource 选项）；
+   * - 离线：null。
+   */
+  activeSource: OnlineSourceId | null;
   /** settings 中启用的源（已归一化、按优先级排序） */
   enabledSources: OnlineSourceId[];
   /** 是否存在在线分支 */
@@ -149,8 +181,14 @@ function buildSourceSession(
   };
 }
 
-/** 由 settings 派生在线状态（唯一的推导入口） */
-export function resolveOnlineSession(settings: AppSettings): OnlineSession {
+/**
+ * 由 settings 派生在线状态（唯一的推导入口）。
+ * options.mixedSource 用于混合音源分支：由侧栏音源滑块传入当前选中的音源。
+ */
+export function resolveOnlineSession(
+  settings: AppSettings,
+  options?: { mixedSource?: OnlineSourceId | null },
+): OnlineSession {
   const enabledSources = normalizeEnabledSources(settings.network.enabledSources);
   const source = enabledSources[0] ?? null;
   const sources: Record<OnlineSourceId, OnlineSourceSession> = {
@@ -158,12 +196,28 @@ export function resolveOnlineSession(settings: AppSettings): OnlineSession {
     kugou: buildSourceSession("kugou", settings, enabledSources, source),
   };
 
+  const isMixed = enabledSources.length > 1;
+
+  const requestedMixedSource =
+    options?.mixedSource && enabledSources.includes(options.mixedSource)
+      ? options.mixedSource
+      : null;
+
   return {
-    mode: source ?? "offline",
-    source,
+    mode: isMixed ? "mixed" : (source ?? "offline"),
+    source: isMixed ? null : source,
+    activeSource: isMixed ? (requestedMixedSource ?? "netease") : source,
     enabledSources,
     online: source !== null,
-    authenticated: source ? sources[source].authenticated : false,
+    // 混合音源下以“当前音源”（滑块选择）为准：收藏/歌单等依赖登录的入口随当前音源变化
+    authenticated: isMixed
+      ? Boolean(
+          (requestedMixedSource ?? "netease") &&
+            sources[requestedMixedSource ?? "netease"].authenticated,
+        )
+      : source
+        ? sources[source].authenticated
+        : false,
     sources,
   };
 }
@@ -183,6 +237,25 @@ export function isNavAvailable(session: OnlineSession, nav: NavId): boolean {
   }
 }
 
+/** 各分支下页面不可用时的兜底页 */
+export const modeDefaultNav: Record<OnlineMode, NavId> = {
+  offline: "home",
+  netease: "home",
+  kugou: "home",
+  mixed: "home",
+};
+
+/**
+ * 导航可用性。混合音源与单一音源使用同一张要求表：
+ * 在线状态看“是否有在线分支”，登录态看 session.authenticated（混合下即当前音源）。
+ */
+export function isNavAvailableInSession(
+  session: OnlineSession,
+  nav: NavId,
+): boolean {
+  return isNavAvailable(session, nav);
+}
+
 /** 当前分支下可见的导航项 */
 export function resolveVisibleNavIds(session: OnlineSession): NavId[] {
   return navItemIds.filter((nav) => isNavAvailable(session, nav));
@@ -195,7 +268,9 @@ export function resolveNavFallback(
   session: OnlineSession,
   activeNav: NavId,
 ): NavId | null {
-  return isNavAvailable(session, activeNav) ? null : "home";
+  return isNavAvailableInSession(session, activeNav)
+    ? null
+    : modeDefaultNav[session.mode];
 }
 
 /** 判定分支 -> 模板 */
@@ -205,38 +280,41 @@ export function resolveWorkspaceTemplate(input: {
   hasKugouCatalogDetail: boolean;
 }): WorkspaceTemplate {
   const { session, nav, hasKugouCatalogDetail } = input;
+  // 渲染分支的音源：混合音源取当前音源（侧栏滑块），单一音源即该源，离线下为 null
+  const branchSource =
+    session.mode === "offline" ? null : (session.activeSource ?? session.source);
 
   switch (nav) {
     case "home":
-      if (session.mode === "offline") {
+      if (!branchSource) {
         return { id: "offline-home" };
       }
-      return session.mode === "kugou"
+      return branchSource === "kugou"
         ? { id: "kugou-home" }
         : { id: "netease-home" };
     case "explore":
-      if (session.mode === "kugou") {
+      if (branchSource === "kugou") {
         return hasKugouCatalogDetail
           ? { id: "kugou-explore-detail" }
           : { id: "kugou-explore" };
       }
-      if (session.mode === "netease") {
+      if (branchSource === "netease") {
         return { id: "netease-explore" };
       }
       return { id: "placeholder", nav };
     case "playlist":
-      if (session.mode === "kugou") {
+      if (branchSource === "kugou") {
         return { id: "kugou-playlist" };
       }
-      if (session.mode === "netease") {
+      if (branchSource === "netease") {
         return { id: "netease-playlist" };
       }
       return { id: "placeholder", nav };
     case "favorites":
-      if (session.mode === "kugou") {
+      if (branchSource === "kugou") {
         return { id: "kugou-favorites" };
       }
-      if (session.mode === "netease") {
+      if (branchSource === "netease") {
         return { id: "netease-favorites" };
       }
       return { id: "placeholder", nav };
@@ -255,6 +333,7 @@ export function resolveWorkspaceTemplate(input: {
 export function describeOnlineSession(session: OnlineSession) {
   return {
     mode: session.mode,
+    activeSource: session.activeSource,
     enabledSources: session.enabledSources,
     authenticated: session.authenticated,
     neteaseAuthenticated: session.sources.netease.authenticated,

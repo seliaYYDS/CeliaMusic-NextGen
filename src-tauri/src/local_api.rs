@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fs,
     io::{BufRead, BufReader},
     net::{TcpListener, TcpStream},
@@ -32,14 +32,14 @@ const KUGOU_BRIDGE_SOURCE: &str = include_str!("kugou_bridge.cjs");
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct LocalNeteaseApiState {
-    runtime: Arc<Mutex<LocalNeteaseApiRuntime>>,
-    logs: Arc<Mutex<VecDeque<String>>>,
+    runtimes: Arc<Mutex<HashMap<LocalApiProvider, Arc<Mutex<LocalNeteaseApiRuntime>>>>>,
+    logs: Arc<Mutex<HashMap<LocalApiProvider, Arc<Mutex<VecDeque<String>>>>>>,
 }
 
 impl Clone for LocalNeteaseApiState {
     fn clone(&self) -> Self {
         Self {
-            runtime: Arc::clone(&self.runtime),
+            runtimes: Arc::clone(&self.runtimes),
             logs: Arc::clone(&self.logs),
         }
     }
@@ -48,9 +48,32 @@ impl Clone for LocalNeteaseApiState {
 impl Default for LocalNeteaseApiState {
     fn default() -> Self {
         Self {
-            runtime: Arc::new(Mutex::new(LocalNeteaseApiRuntime::default())),
-            logs: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LOG_LINES))),
+            runtimes: Arc::new(Mutex::new(HashMap::new())),
+            logs: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+}
+
+impl LocalNeteaseApiState {
+    /// 每个音源各自持有一份本地 API 运行时，避免两个源的进程/端口/日志互相串用。
+    fn runtime_for(&self, provider: LocalApiProvider) -> Arc<Mutex<LocalNeteaseApiRuntime>> {
+        let Ok(mut runtimes) = self.runtimes.lock() else {
+            return Arc::new(Mutex::new(LocalNeteaseApiRuntime::default()));
+        };
+
+        Arc::clone(runtimes.entry(provider).or_insert_with(|| {
+            Arc::new(Mutex::new(LocalNeteaseApiRuntime::default()))
+        }))
+    }
+
+    fn logs_for(&self, provider: LocalApiProvider) -> Arc<Mutex<VecDeque<String>>> {
+        let Ok(mut logs) = self.logs.lock() else {
+            return Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LOG_LINES)));
+        };
+
+        Arc::clone(logs.entry(provider).or_insert_with(|| {
+            Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LOG_LINES)))
+        }))
     }
 }
 
@@ -82,7 +105,7 @@ struct KugouDeviceIdentity {
     webgl: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum LocalApiProvider {
     Netease,
     Kugou,
@@ -95,11 +118,25 @@ impl LocalApiProvider {
             Self::Kugou => "KuGou",
         }
     }
+
+    /// 与前端 settings.network.enabledSources 中的 id 保持一致
+    fn id(self) -> &'static str {
+        match self {
+            Self::Netease => "netease",
+            Self::Kugou => "kugou",
+        }
+    }
+
+    fn all() -> [Self; 2] {
+        [Self::Netease, Self::Kugou]
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalNeteaseApiServerStatus {
+    /// 该状态属于哪个音源（netease / kugou），禁用时为 None
+    pub provider: Option<String>,
     pub enabled: bool,
     pub running: bool,
     pub starting: bool,
@@ -108,6 +145,14 @@ pub struct LocalNeteaseApiServerStatus {
     pub port: u16,
     pub message: Option<String>,
     pub log_lines: Vec<String>,
+}
+
+/// 两个音源各自的本地 API 状态，互不覆盖
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalApiServersStatus {
+    pub netease: LocalNeteaseApiServerStatus,
+    pub kugou: LocalNeteaseApiServerStatus,
 }
 
 fn is_netease_enabled(settings: &AppSettings) -> bool {
@@ -165,35 +210,64 @@ fn build_signature(config: &LocalNeteaseApiConfig) -> String {
     .join("|")
 }
 
-fn resolve_desired_config(
+fn build_provider_config(
     settings: &AppSettings,
+    provider: LocalApiProvider,
     kugou_device: Option<KugouDeviceIdentity>,
 ) -> Option<LocalNeteaseApiConfig> {
-    if settings.network.use_local_api_server && is_netease_enabled(settings) {
-        return Some(LocalNeteaseApiConfig {
-            provider: LocalApiProvider::Netease,
-            port: resolve_local_api_port(settings, LocalApiProvider::Netease),
-            cookie: settings.network.netease_cookie.trim().to_string(),
-            proxy: settings.network.netease_proxy.trim().to_string(),
-            real_ip: settings.network.netease_real_ip.trim().to_string(),
-            kugou_device: None,
-            kugou_runtime_dir: None,
-        });
-    }
+    match provider {
+        LocalApiProvider::Netease => {
+            if !(settings.network.use_local_api_server && is_netease_enabled(settings)) {
+                return None;
+            }
 
-    if settings.network.use_local_kugou_api_server && is_kugou_enabled(settings) {
-        return Some(LocalNeteaseApiConfig {
-            provider: LocalApiProvider::Kugou,
-            port: resolve_local_api_port(settings, LocalApiProvider::Kugou),
-            cookie: settings.network.kugou_cookie.trim().to_string(),
-            proxy: String::new(),
-            real_ip: String::new(),
-            kugou_device,
-            kugou_runtime_dir: None,
-        });
-    }
+            Some(LocalNeteaseApiConfig {
+                provider,
+                port: resolve_local_api_port(settings, provider),
+                cookie: settings.network.netease_cookie.trim().to_string(),
+                proxy: settings.network.netease_proxy.trim().to_string(),
+                real_ip: settings.network.netease_real_ip.trim().to_string(),
+                kugou_device: None,
+                kugou_runtime_dir: None,
+            })
+        }
+        LocalApiProvider::Kugou => {
+            if !(settings.network.use_local_kugou_api_server && is_kugou_enabled(settings)) {
+                return None;
+            }
 
-    None
+            Some(LocalNeteaseApiConfig {
+                provider,
+                port: resolve_local_api_port(settings, provider),
+                cookie: settings.network.kugou_cookie.trim().to_string(),
+                proxy: String::new(),
+                real_ip: String::new(),
+                kugou_device,
+                kugou_runtime_dir: None,
+            })
+        }
+    }
+}
+
+/// 两个音源各自独立判定，互不抢占（此前 netease 优先导致酷狗本地 API 永远无法启动）
+fn resolve_desired_configs(
+    settings: &AppSettings,
+    kugou_device: Option<KugouDeviceIdentity>,
+) -> Vec<LocalNeteaseApiConfig> {
+    LocalApiProvider::all()
+        .into_iter()
+        .filter_map(|provider| build_provider_config(settings, provider, kugou_device.clone()))
+        .collect()
+}
+
+fn desired_config_for(
+    configs: &[LocalNeteaseApiConfig],
+    provider: LocalApiProvider,
+) -> Option<LocalNeteaseApiConfig> {
+    configs
+        .iter()
+        .find(|config| config.provider == provider)
+        .cloned()
 }
 
 fn load_or_create_kugou_device_identity(app: &AppHandle) -> anyhow::Result<KugouDeviceIdentity> {
@@ -602,6 +676,7 @@ fn detect_local_api_dependencies(
 
 fn build_status_from_runtime(
     runtime: &LocalNeteaseApiRuntime,
+    provider: LocalApiProvider,
     enabled: bool,
     port: u16,
     logs: &Arc<Mutex<VecDeque<String>>>,
@@ -613,6 +688,7 @@ fn build_status_from_runtime(
     };
 
     LocalNeteaseApiServerStatus {
+        provider: Some(provider.id().to_string()),
         enabled,
         running: enabled && runtime.child.is_some() && !runtime.is_starting,
         starting: enabled && runtime.child.is_some() && runtime.is_starting,
@@ -624,21 +700,8 @@ fn build_status_from_runtime(
     }
 }
 
-fn snapshot_local_netease_api_status(
-    state: &LocalNeteaseApiState,
-    settings: &AppSettings,
-) -> anyhow::Result<LocalNeteaseApiServerStatus> {
-    let desired_config = resolve_desired_config(settings, None);
-    let enabled = desired_config.is_some();
-    let preferred_port = desired_config
-        .as_ref()
-        .map(|config| config.port)
-        .unwrap_or_else(|| resolve_local_api_port(settings, LocalApiProvider::Netease));
-    let mut runtime = state
-        .runtime
-        .lock()
-        .map_err(|_| anyhow!("failed to acquire local api runtime lock"))?;
-
+/// 清理已退出的子进程，并记录退出原因
+fn refresh_runtime_child(runtime: &mut LocalNeteaseApiRuntime) {
     if let Some(child) = runtime.child.as_mut() {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -656,6 +719,25 @@ fn snapshot_local_netease_api_status(
             }
         }
     }
+}
+
+fn snapshot_provider_status(
+    state: &LocalNeteaseApiState,
+    settings: &AppSettings,
+    provider: LocalApiProvider,
+    desired_config: Option<&LocalNeteaseApiConfig>,
+) -> anyhow::Result<LocalNeteaseApiServerStatus> {
+    let enabled = desired_config.is_some();
+    let preferred_port = desired_config
+        .map(|config| config.port)
+        .unwrap_or_else(|| resolve_local_api_port(settings, provider));
+    let logs = state.logs_for(provider);
+    let runtime_handle = state.runtime_for(provider);
+    let mut runtime = runtime_handle
+        .lock()
+        .map_err(|_| anyhow!("failed to acquire local api runtime lock"))?;
+
+    refresh_runtime_child(&mut runtime);
 
     if !enabled || runtime.child.is_none() || runtime.port == 0 {
         runtime.port = preferred_port;
@@ -663,14 +745,43 @@ fn snapshot_local_netease_api_status(
 
     Ok(build_status_from_runtime(
         &runtime,
+        provider,
         enabled,
         preferred_port,
-        &state.logs,
+        &logs,
     ))
 }
 
-pub fn shutdown_local_netease_api_server(state: &LocalNeteaseApiState) {
-    if let Ok(mut runtime) = state.runtime.lock() {
+/// 两个音源各自的本地 API 状态
+pub fn snapshot_local_api_servers_status(
+    state: &LocalNeteaseApiState,
+    settings: &AppSettings,
+) -> anyhow::Result<LocalApiServersStatus> {
+    let desired_configs = resolve_desired_configs(settings, None);
+
+    Ok(LocalApiServersStatus {
+        netease: snapshot_provider_status(
+            state,
+            settings,
+            LocalApiProvider::Netease,
+            desired_config_for(&desired_configs, LocalApiProvider::Netease).as_ref(),
+        )?,
+        kugou: snapshot_provider_status(
+            state,
+            settings,
+            LocalApiProvider::Kugou,
+            desired_config_for(&desired_configs, LocalApiProvider::Kugou).as_ref(),
+        )?,
+    })
+}
+
+pub fn shutdown_local_api_servers(state: &LocalNeteaseApiState) {
+    for provider in LocalApiProvider::all() {
+        let runtime_handle = state.runtime_for(provider);
+        let Ok(mut runtime) = runtime_handle.lock() else {
+            continue;
+        };
+
         stop_child_process(runtime.child.take());
         runtime.signature = None;
         runtime.last_error = None;
@@ -678,23 +789,19 @@ pub fn shutdown_local_netease_api_server(state: &LocalNeteaseApiState) {
     }
 }
 
-pub fn sync_local_netease_api_server_for_settings(
+/// 同步单个音源的本地 API：启用则启动/复用，未启用则停止。
+fn sync_provider(
     app: &AppHandle,
     state: &LocalNeteaseApiState,
     settings: &AppSettings,
+    provider: LocalApiProvider,
+    desired_config: Option<LocalNeteaseApiConfig>,
 ) -> anyhow::Result<LocalNeteaseApiServerStatus> {
-    let kugou_device = if settings.network.use_local_kugou_api_server && is_kugou_enabled(settings)
-    {
-        Some(load_or_create_kugou_device_identity(app)?)
-    } else {
-        None
-    };
-    let desired_config = resolve_desired_config(settings, kugou_device);
-    let logs = Arc::clone(&state.logs);
+    let logs = state.logs_for(provider);
+    let runtime_handle = state.runtime_for(provider);
 
     {
-        let mut runtime = state
-            .runtime
+        let mut runtime = runtime_handle
             .lock()
             .map_err(|_| anyhow!("failed to acquire local api runtime lock"))?;
 
@@ -724,11 +831,12 @@ pub fn sync_local_netease_api_server_for_settings(
             stop_child_process(runtime.child.take());
             runtime.signature = None;
             runtime.last_error = None;
-            runtime.port = resolve_local_api_port(settings, LocalApiProvider::Netease);
+            runtime.port = resolve_local_api_port(settings, provider);
             runtime.is_starting = false;
             clear_log_lines(&logs);
             return Ok(build_status_from_runtime(
                 &runtime,
+                provider,
                 false,
                 runtime.port,
                 &logs,
@@ -739,6 +847,7 @@ pub fn sync_local_netease_api_server_for_settings(
         if runtime.child.is_some() && runtime.signature.as_deref() == Some(signature.as_str()) {
             return Ok(build_status_from_runtime(
                 &runtime,
+                provider,
                 true,
                 config.port,
                 &logs,
@@ -782,6 +891,7 @@ pub fn sync_local_netease_api_server_for_settings(
                 push_log_line(&logs, format!("[system] {error}"));
                 return Ok(build_status_from_runtime(
                     &runtime,
+                    provider,
                     true,
                     config.port,
                     &logs,
@@ -800,6 +910,7 @@ pub fn sync_local_netease_api_server_for_settings(
                     push_log_line(&logs, format!("[system] {error}"));
                     return Ok(build_status_from_runtime(
                         &runtime,
+                        provider,
                         true,
                         config.port,
                         &logs,
@@ -812,7 +923,7 @@ pub fn sync_local_netease_api_server_for_settings(
         runtime.child = Some(child);
         runtime.signature = Some(signature);
 
-        let runtime_state = Arc::clone(&state.runtime);
+        let runtime_state = Arc::clone(&runtime_handle);
         let logs_state = Arc::clone(&logs);
         let startup_signature = runtime.signature.clone();
         let startup_port = config.port;
@@ -854,32 +965,145 @@ pub fn sync_local_netease_api_server_for_settings(
     }
 
     let config = desired_config.expect("desired config must exist when local api is enabled");
-    let runtime = state
-        .runtime
+    let runtime = runtime_handle
         .lock()
         .map_err(|_| anyhow!("failed to acquire local api runtime lock"))?;
     Ok(build_status_from_runtime(
         &runtime,
+        provider,
         true,
         config.port,
         &logs,
     ))
 }
 
+/// 两个音源各自起始/停止自己的本地 API 进程，互不抢占。
+pub fn sync_local_api_servers_for_settings(
+    app: &AppHandle,
+    state: &LocalNeteaseApiState,
+    settings: &AppSettings,
+) -> anyhow::Result<LocalApiServersStatus> {
+    let kugou_device = if settings.network.use_local_kugou_api_server && is_kugou_enabled(settings)
+    {
+        Some(load_or_create_kugou_device_identity(app)?)
+    } else {
+        None
+    };
+    let desired_configs = resolve_desired_configs(settings, kugou_device);
+
+    Ok(LocalApiServersStatus {
+        netease: sync_provider(
+            app,
+            state,
+            settings,
+            LocalApiProvider::Netease,
+            desired_config_for(&desired_configs, LocalApiProvider::Netease),
+        )?,
+        kugou: sync_provider(
+            app,
+            state,
+            settings,
+            LocalApiProvider::Kugou,
+            desired_config_for(&desired_configs, LocalApiProvider::Kugou),
+        )?,
+    })
+}
+
 #[tauri::command]
-pub fn sync_local_netease_api_server(
+pub fn sync_local_api_servers(
     app: AppHandle,
     state: State<'_, LocalNeteaseApiState>,
     settings: AppSettings,
-) -> Result<LocalNeteaseApiServerStatus, String> {
-    sync_local_netease_api_server_for_settings(&app, &state, &settings)
+) -> Result<LocalApiServersStatus, String> {
+    sync_local_api_servers_for_settings(&app, &state, &settings)
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn get_local_netease_api_server_status(
+pub fn get_local_api_servers_status(
     state: State<'_, LocalNeteaseApiState>,
     settings: AppSettings,
-) -> Result<LocalNeteaseApiServerStatus, String> {
-    snapshot_local_netease_api_status(&state, &settings).map_err(|error| error.to_string())
+) -> Result<LocalApiServersStatus, String> {
+    snapshot_local_api_servers_status(&state, &settings).map_err(|error| error.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings_with(
+        enabled: &[&str],
+        use_netease_local: bool,
+        use_kugou_local: bool,
+    ) -> AppSettings {
+        let mut settings = AppSettings::default();
+        settings.network.enabled_sources = enabled.iter().map(|value| value.to_string()).collect();
+        settings.network.use_local_api_server = use_netease_local;
+        settings.network.use_local_kugou_api_server = use_kugou_local;
+        settings
+    }
+
+    fn providers(configs: &[LocalNeteaseApiConfig]) -> Vec<LocalApiProvider> {
+        configs.iter().map(|config| config.provider).collect()
+    }
+
+    #[test]
+    fn mixed_mode_starts_both_local_api_servers() {
+        // 混合音源：两个源各自启停自己的本地 API（此前 netease 优先会让酷狗本地 API 永不启动）
+        let settings = settings_with(&["netease", "kugou"], true, true);
+        assert_eq!(
+            providers(&resolve_desired_configs(&settings, None)),
+            vec![LocalApiProvider::Netease, LocalApiProvider::Kugou]
+        );
+    }
+
+    #[test]
+    fn kugou_only_does_not_start_the_netease_local_api() {
+        let settings = settings_with(&["kugou"], true, true);
+        assert_eq!(
+            providers(&resolve_desired_configs(&settings, None)),
+            vec![LocalApiProvider::Kugou]
+        );
+        assert!(build_provider_config(&settings, LocalApiProvider::Netease, None).is_none());
+    }
+
+    #[test]
+    fn disabled_or_unused_sources_never_start_a_local_api() {
+        let offline = settings_with(&[], true, true);
+        assert!(resolve_desired_configs(&offline, None).is_empty());
+
+        let netease_only = settings_with(&["netease"], true, true);
+        assert_eq!(
+            providers(&resolve_desired_configs(&netease_only, None)),
+            vec![LocalApiProvider::Netease]
+        );
+
+        let flags_off = settings_with(&["netease", "kugou"], false, false);
+        assert!(resolve_desired_configs(&flags_off, None).is_empty());
+    }
+
+    #[test]
+    fn ports_follow_each_source_base_url() {
+        let mut settings = settings_with(&["netease", "kugou"], true, true);
+        settings.network.netease_api_base_url = "http://127.0.0.1:4100".to_string();
+        settings.network.kugou_api_base_url = "http://127.0.0.1:4200".to_string();
+
+        let configs = resolve_desired_configs(&settings, None);
+        assert_eq!(configs[0].port, 4100);
+        assert_eq!(configs[1].port, 4200);
+    }
+
+    #[test]
+    fn provider_ids_match_frontend_source_ids() {
+        assert_eq!(LocalApiProvider::Netease.id(), "netease");
+        assert_eq!(LocalApiProvider::Kugou.id(), "kugou");
+    }
+
+    #[test]
+    fn provider_signatures_stay_distinct() {
+        let settings = settings_with(&["netease", "kugou"], true, true);
+        let configs = resolve_desired_configs(&settings, None);
+        assert_ne!(build_signature(&configs[0]), build_signature(&configs[1]));
+    }
+}
+

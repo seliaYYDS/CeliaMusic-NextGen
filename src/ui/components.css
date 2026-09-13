@@ -585,7 +585,7 @@
 .online-source-selector {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   min-height: 38px;
   padding: 3px;
   overflow: hidden;
@@ -597,18 +597,39 @@
 .online-source-selector__indicator {
   position: absolute;
   inset: 3px auto 3px 3px;
-  width: calc(50% - 3px);
+  width: calc((100% - 6px) / 3);
   border-radius: 4px;
   background: #df3e45;
   box-shadow: 0 1px 3px rgba(142, 37, 45, 0.24);
   transform: translateX(0);
-  transition: transform 180ms ease;
+  transition:
+    transform 180ms ease,
+    background 180ms ease;
+}
+
+.online-source-selector--mixed .online-source-selector__indicator {
+  transform: translateX(100%);
+  background: linear-gradient(90deg, #df3e45 0%, #8d5aa8 50%, #2878d4 100%);
+  box-shadow: 0 1px 3px rgba(74, 58, 128, 0.26);
 }
 
 .online-source-selector--kugou .online-source-selector__indicator {
-  transform: translateX(100%);
+  transform: translateX(200%);
   background: #2878d4;
   box-shadow: 0 1px 3px rgba(26, 94, 173, 0.24);
+}
+
+.online-source-selector--pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.online-source-selector--pair .online-source-selector__indicator {
+  width: calc((100% - 6px) / 2);
+}
+
+.online-source-selector--pair.online-source-selector--kugou
+  .online-source-selector__indicator {
+  transform: translateX(100%);
 }
 
 .online-source-selector__option {
@@ -624,8 +645,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  font-size: 0.82rem;
+  gap: 5px;
+  font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0;
   transition: color 180ms ease;
@@ -644,6 +665,39 @@
 .online-source-selector__option:focus-visible {
   outline: 2px solid #8ecdf4;
   outline-offset: -1px;
+}
+
+/*
+ * 混合音源选项：WebGL 液体底（Kawarp），仅在选中该音源时显示；
+ * 未选中时保持与其它选项一致的透明背景，不会残留高亮。
+ * background 是 WebGL 不可用时的兜底渐变，画布以负层级绘制在图标与文字之下。
+ */
+.online-source-selector__option--liquid {
+  overflow: hidden;
+}
+
+.online-source-selector__option--liquid[aria-checked="true"] {
+  color: #ffffff;
+  background: linear-gradient(90deg, #df3e45 0%, #8d5aa8 52%, #2878d4 100%);
+}
+
+.online-source-selector__liquid {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  pointer-events: none;
+  /* 低分辨率放大后的像素台阶再柔化一层，并轻微提饱和保住红蓝对比 */
+  filter: blur(1.5px) saturate(1.08);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.online-source-selector__option--liquid[aria-checked="true"]
+  .online-source-selector__liquid {
+  opacity: 1;
 }
 
 .ui-chip {

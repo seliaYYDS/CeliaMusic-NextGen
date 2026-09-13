@@ -807,7 +807,7 @@ export function ExploreScreen({
   onPlaylistContextMenu,
 }: ExploreScreenProps) {
   const copy = getExploreCopy(locale);
-  const isEnabled = session.mode === "netease";
+  const isEnabled = session.activeSource === "netease";
   const initialState = initialSnapshot ?? createDefaultExploreScreenSnapshot();
 
   const [detailView, setDetailView] = useState<ExploreDetailView>(initialState.detailView);
