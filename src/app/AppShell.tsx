@@ -9645,6 +9645,72 @@ export function AppShell({
       return;
     }
 
+    const kugouRecoveryHash = parseKugouTrackHashFromCacheKey(
+      activeTrack?.playback.cacheKey,
+    );
+
+    if (
+      activeTrack &&
+      kugouRecoveryHash &&
+      recoveryKey &&
+      isKugouSourceEnabled(settingsRef.current) &&
+      attemptedPlaybackRecoveryKeyRef.current !== recoveryKey
+    ) {
+      const recoveryRequestId = playbackRequestSequenceRef.current;
+      attemptedPlaybackRecoveryKeyRef.current = recoveryKey;
+      const shouldResumeAfterRecovery =
+        pendingAutoplayRef.current || isPlayingRef.current;
+      pendingAutoplayRef.current = shouldResumeAfterRecovery;
+
+      void prepareKugouPlaybackTrack(activeTrack, kugouRecoveryHash, {
+        announceNotice: false,
+      })
+        .then((refreshedTrack) => {
+          if (!refreshedTrack) {
+            throw new Error(
+              "No refreshed KuGou playback candidates were returned.",
+            );
+          }
+
+          const refreshedCandidates = collectTrackPlaybackUris(refreshedTrack);
+          if (refreshedCandidates.length === 0) {
+            throw new Error(
+              "No refreshed KuGou playback candidates were returned.",
+            );
+          }
+
+          if (
+            playbackRequestSequenceRef.current !== recoveryRequestId ||
+            currentTrackIdRef.current !== activeTrack.id ||
+            currentTrackRef.current?.id !== activeTrack.id ||
+            audio.dataset.trackId !== activeTrack.id
+          ) {
+            return;
+          }
+
+          currentTrackRef.current = refreshedTrack;
+          pushDynamicIslandNotification(
+            localeStrings.notifications.playbackRecovered,
+          );
+
+          playbackCandidatesRef.current = refreshedCandidates;
+          playbackCandidateIndexRef.current = 0;
+          setIsPlaybackLoading(true);
+          audio.dataset.trackId = activeTrack.id;
+          audio.src = refreshedCandidates[0];
+          audio.load();
+        })
+        .catch((error) => {
+          console.error("[player] failed to recover kugou audio source", error);
+          setIsPlaying(false);
+          setIsPlaybackLoading(false);
+          pushDynamicIslandNotification(
+            localeStrings.notifications.trackUnavailable,
+          );
+        });
+      return;
+    }
+
     console.error(
       "[player] failed to load audio source",
       currentTrackRef.current,
@@ -10871,6 +10937,41 @@ export function AppShell({
       settingsRef.current.playback.songTransitionMode === "auto-mix" ||
       (settingsRef.current.playback.equalizerEnabled &&
         track.source.kind === "remoteStream");
+
+    // KuGou stream urls are short lived: library records keep a raw CDN url
+    // from an earlier session, and proxy urls only stay valid while the media
+    // proxy that produced them still listens on the same port. Refresh them
+    // before the cache download or the audio element ever touches them.
+    const kugouTrackHash = parseKugouTrackHashFromCacheKey(
+      track.playback.cacheKey,
+    );
+    if (kugouTrackHash && isKugouSourceEnabled(settingsRef.current)) {
+      const mediaProxyBaseUrl = await resolveKugouMediaProxyBaseUrl();
+      const hasFreshProxiedStream =
+        mediaProxyBaseUrl !== null &&
+        collectTrackPlaybackUris(track).some((uri) =>
+          isFreshKugouMediaProxyUrl(uri, mediaProxyBaseUrl),
+        );
+
+      if (!hasFreshProxiedStream) {
+        const refreshedTrack = await prepareKugouPlaybackTrack(
+          track,
+          kugouTrackHash,
+          {
+            announceNotice: options?.announceNotice,
+            mediaProxyBaseUrl,
+          },
+        );
+        if (refreshedTrack) {
+          // Re-run with the refreshed uris so the remaining steps (playback
+          // cache, candidate list, netease bookkeeping) all see fresh streams.
+          return ensureTrackReadyForPlayback(refreshedTrack, {
+            announceNotice: false,
+          });
+        }
+      }
+    }
+
     let cachedPlaybackPath =
       playbackCachedAudioPathsRef.current[track.id] ?? null;
 
@@ -10941,41 +11042,6 @@ export function AppShell({
       }
 
       return readyTrack;
-    }
-
-    const kugouHash = parseKugouTrackHashFromCacheKey(track.playback.cacheKey);
-    if (kugouHash && isKugouSourceEnabled(settingsRef.current)) {
-      console.warn("[kugou-playback] resolving queued track", {
-        hash: summarizeKugouPlaybackHash(kugouHash),
-      });
-      const resolvedTrack = await resolveKugouTrack(
-        settingsRef.current,
-        createKugouSongDetailFromTrack(track, kugouHash),
-      );
-      const mediaProxy = await getMediaProxyServerStatus();
-      if (!mediaProxy.running || !mediaProxy.url.trim()) {
-        throw new Error(mediaProxy.message ?? "Media proxy is unavailable.");
-      }
-      const proxiedStreams = proxyKugouPlaybackStreams(
-        resolvedTrack,
-        mediaProxy.url,
-      );
-      const transientTrack = createTransientKugouTrack(
-        resolvedTrack.detail,
-        proxiedStreams,
-      );
-      upsertTransientRemoteEntries([
-        {
-          track: transientTrack,
-          artworkUrl: resolvedTrack.detail.artworkUrl ?? null,
-        },
-      ]);
-      syncPlaybarArtworkOverrideUrl(resolvedTrack.detail.artworkUrl ?? null);
-      console.warn("[kugou-playback] queued track resolved", {
-        hash: summarizeKugouPlaybackHash(kugouHash),
-        fallbackCount: proxiedStreams.fallbackStreams.length,
-      });
-      return transientTrack;
     }
 
     throw new Error("The selected track does not have any playable source.");
@@ -17744,6 +17810,93 @@ export function AppShell({
       stream: proxyStream(resolved.stream),
       fallbackStreams: resolved.fallbackStreams.map(proxyStream),
     };
+  };
+
+  const resolveKugouMediaProxyBaseUrl = async (): Promise<string | null> => {
+    const status = await getMediaProxyServerStatus();
+    const baseUrl = status.running ? status.url.trim().replace(/\/+$/, "") : "";
+    return baseUrl.length > 0 ? baseUrl : null;
+  };
+
+  // Resolve a KuGou track again and route its streams through the local media
+  // proxy. The returned record keeps the caller's track id so queue positions,
+  // library ids and playback bookkeeping stay valid.
+  const prepareKugouPlaybackTrack = async (
+    track: TrackRecord,
+    kugouHash: string,
+    options?: {
+      announceNotice?: boolean;
+      mediaProxyBaseUrl?: string | null;
+    },
+  ): Promise<TrackRecord | null> => {
+    const mediaProxyBaseUrl =
+      typeof options?.mediaProxyBaseUrl === "string"
+        ? options.mediaProxyBaseUrl
+        : await resolveKugouMediaProxyBaseUrl();
+    if (!mediaProxyBaseUrl) {
+      throw new Error("Media proxy is unavailable.");
+    }
+
+    console.warn("[kugou-playback] refreshing playback streams", {
+      trackId: track.id,
+      hash: summarizeKugouPlaybackHash(kugouHash),
+      persistedLibraryTrack: isPersistedLibraryTrack(track.id),
+    });
+
+    const resolvedTrack = await resolveKugouTrack(
+      settingsRef.current,
+      getCachedKugouSongDetail(kugouHash) ??
+        createKugouSongDetailFromTrack(track, kugouHash),
+    );
+    const proxiedStreams = proxyKugouPlaybackStreams(
+      resolvedTrack,
+      mediaProxyBaseUrl,
+    );
+    const refreshedCandidates = collectKugouPlaybackCandidates(proxiedStreams);
+    if (refreshedCandidates.length === 0) {
+      return null;
+    }
+
+    const preparedTrack: TrackRecord = {
+      ...track,
+      source: {
+        kind: "remoteStream",
+        url: refreshedCandidates[0],
+        mimeType:
+          track.source.kind === "remoteStream" ? track.source.mimeType : null,
+        headers:
+          track.source.kind === "remoteStream" ? track.source.headers : {},
+      },
+      playback: {
+        ...track.playback,
+        mode: "remoteStream",
+        primaryUri: refreshedCandidates[0],
+        fallbackUri: refreshedCandidates[1] ?? null,
+        fallbackUris: refreshedCandidates.slice(1),
+      },
+    };
+
+    // Shadow the existing record (same id) so every lookup the player performs
+    // sees the fresh proxied streams.
+    upsertTransientRemoteEntries([
+      {
+        track: preparedTrack,
+        artworkUrl: resolvedTrack.detail.artworkUrl ?? null,
+      },
+    ]);
+    syncPlaybarArtworkOverrideUrl(resolvedTrack.detail.artworkUrl ?? null);
+
+    if (options?.announceNotice !== false && resolvedTrack.notice) {
+      pushDynamicIslandNotification(resolvedTrack.notice);
+    }
+
+    console.warn("[kugou-playback] playback streams refreshed", {
+      trackId: preparedTrack.id,
+      hash: summarizeKugouPlaybackHash(kugouHash),
+      fallbackCount: refreshedCandidates.length - 1,
+    });
+
+    return preparedTrack;
   };
 
   const handleSaveNeteaseCookie = async (cookie: string) => {
@@ -40849,6 +41002,45 @@ function resolveTrackPlaybackCandidates(
   }
 
   return candidates;
+}
+
+function collectTrackPlaybackUris(track: TrackRecord) {
+  return [
+    track.source.kind === "remoteStream" ? track.source.url : "",
+    track.playback.primaryUri,
+    track.playback.fallbackUri ?? "",
+    ...(track.playback.fallbackUris ?? []),
+  ]
+    .map((uri) => (uri ?? "").trim())
+    .filter(
+      (uri, index, collection) =>
+        uri.length > 0 && collection.indexOf(uri) === index,
+    );
+}
+
+function collectKugouPlaybackCandidates(
+  streams: Pick<KugouResolvedTrack, "stream" | "fallbackStreams">,
+) {
+  const urls = [
+    streams.stream.url,
+    ...streams.fallbackStreams.map((stream) => stream.url),
+  ];
+
+  return urls
+    .map((uri) => (uri ?? "").trim())
+    .filter(
+      (uri, index, collection) =>
+        uri.length > 0 && collection.indexOf(uri) === index,
+    );
+}
+
+function isFreshKugouMediaProxyUrl(value: string, mediaProxyBaseUrl: string) {
+  const normalizedValue = value.trim();
+  const normalizedBaseUrl = mediaProxyBaseUrl.trim().replace(/\/+$/, "");
+  return (
+    normalizedBaseUrl.length > 0 &&
+    normalizedValue.startsWith(`${normalizedBaseUrl}/media-proxy`)
+  );
 }
 
 function buildShuffledQueue(queueIds: string[], currentTrackId: string | null) {
