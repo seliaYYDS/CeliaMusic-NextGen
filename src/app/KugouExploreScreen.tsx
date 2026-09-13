@@ -10,11 +10,11 @@ import {
   UIPagination,
   SearchIcon,
 } from "../ui/components";
+import type { OnlineSession } from "./onlineSession";
 import {
   getKugouPlaylistTags,
   getKugouSearchHotKeywords,
   getKugouTopPlaylists,
-  isKugouSourceEnabled,
   searchKugouAlbums,
   searchKugouArtists,
   searchKugouSongDetailsPage,
@@ -31,6 +31,7 @@ import "./styles.css";
 
 type Props = {
   locale: string;
+  session: OnlineSession;
   settings: AppSettings;
   onPlayTrack: (hash: string, queueSongs: KugouSongDetail[]) => void;
   onSongContextMenu: (
@@ -336,6 +337,7 @@ function Songs({
 
 export function KugouExploreScreen({
   locale,
+  session,
   settings,
   onPlayTrack,
   onSongContextMenu,
@@ -344,7 +346,7 @@ export function KugouExploreScreen({
   onOpenPlaylist,
 }: Props) {
   const text = copy(locale);
-  const enabled = isKugouSourceEnabled(settings);
+  const enabled = session.mode === "kugou";
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
   const [tab, setTab] = useState<Tab>("all");

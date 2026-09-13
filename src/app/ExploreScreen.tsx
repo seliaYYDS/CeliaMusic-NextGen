@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+import type { OnlineSession } from "./onlineSession";
 import {
   UIButton,
   UILoadingBlock,
@@ -28,7 +29,6 @@ import {
   getNeteaseSearchHotKeywords,
   getNeteaseTopArtists,
   getNeteaseTopPlaylists,
-  isNeteaseSourceEnabled,
   searchNeteaseAlbums,
   searchNeteaseArtists,
   searchNeteasePlaylistsPage,
@@ -52,6 +52,7 @@ import "./styles.css";
 
 type ExploreScreenProps = {
   locale: string;
+  session: OnlineSession;
   settings: AppSettings;
   initialSnapshot?: ExploreScreenSnapshot | null;
   onSnapshotChange?: (snapshot: ExploreScreenSnapshot) => void;
@@ -792,6 +793,7 @@ function DetailHero({
 
 export function ExploreScreen({
   locale,
+  session,
   settings,
   initialSnapshot,
   onSnapshotChange,
@@ -805,7 +807,7 @@ export function ExploreScreen({
   onPlaylistContextMenu,
 }: ExploreScreenProps) {
   const copy = getExploreCopy(locale);
-  const isEnabled = isNeteaseSourceEnabled(settings);
+  const isEnabled = session.mode === "netease";
   const initialState = initialSnapshot ?? createDefaultExploreScreenSnapshot();
 
   const [detailView, setDetailView] = useState<ExploreDetailView>(initialState.detailView);

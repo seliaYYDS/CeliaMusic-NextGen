@@ -231,6 +231,14 @@ import {
 import { KugouExploreScreen } from "./KugouExploreScreen";
 import { KugouHomeScreen } from "./KugouHomeScreen";
 import {
+  resolveNavFallback,
+  resolveOnlineSession,
+  resolveVisibleNavIds,
+  resolveWorkspaceTemplate,
+  type NavId,
+  type OnlineSession,
+} from "./onlineSession";
+import {
   createWallpaperEngineProjectPath,
   isWallpaperEngineProjectPath,
   parseWallpaperEngineProjectPath,
@@ -267,17 +275,7 @@ function summarizePlaybackUrlHost(value: string) {
 
 const SYSTEM_MEDIA_SYNC_SEEK_STEP_SECONDS = 5;
 
-const navItemIds = [
-  "home",
-  "explore",
-  "favorites",
-  "playlist",
-  "library",
-  "tools",
-  "settings",
-] as const;
-
-function NavItemIcon({ id }: { id: (typeof navItemIds)[number] }) {
+function NavItemIcon({ id }: { id: NavId }) {
   return (
     <svg className="nav-chip__icon" viewBox="0 0 20 20" aria-hidden="true">
       {id === "home" ? (
@@ -3830,7 +3828,6 @@ function buildThemeStyle(
   } as CSSProperties;
 }
 
-type NavId = (typeof navItemIds)[number];
 type PlaylistSelection = {
   id: number;
   title: string;
@@ -5476,30 +5473,18 @@ export function AppShell({
   const copy = getUiCopy(settings.appearance.language);
   const localeStrings = getLocaleStrings(copy.locale);
   const playlistEditorCopy = getPlaylistEditorCopy(copy.locale);
-  const isOnlineFeaturesAvailable = settings.network.enabledSources.some(
-    (source) => {
-      const normalizedSource = source.trim().toLowerCase();
-      return normalizedSource === "netease" || normalizedSource === "kugou";
-    },
-  );
-  const hasSavedNeteaseCookie =
-    settings.network.neteaseCookie.trim().length > 0;
-  const navItems = navItemIds
-    .filter((id) => {
-      if (!isOnlineFeaturesAvailable) {
-        return id !== "explore" && id !== "favorites" && id !== "playlist";
-      }
-
-      if (!hasSavedNeteaseCookie) {
-        return id !== "favorites" && id !== "playlist";
-      }
-
-      return true;
-    })
-    .map((id) => ({
-      id,
-      label: copy.nav[id],
-    }));
+  // 在线状态唯一入口：分支（离线 / 网易云 / 酷狗）+ 凭据，均由状态层派生。
+  // 显示层只消费 onlineSession / workspaceTemplate，不再直接读 enabledSources 或 cookie。
+  const onlineSession = resolveOnlineSession(settings);
+  const navItems = resolveVisibleNavIds(onlineSession).map((id) => ({
+    id,
+    label: copy.nav[id],
+  }));
+  const workspaceTemplate = resolveWorkspaceTemplate({
+    session: onlineSession,
+    nav: activeNav,
+    hasKugouCatalogDetail: kugouCatalogDetailRequest !== null,
+  });
   const languageOptions = [...copy.options.language];
   const themeOptions = getThemePresetOptions(copy.locale);
   const qualityOptions = [...copy.options.quality];
@@ -9088,30 +9073,18 @@ export function AppShell({
   ]);
 
   useEffect(() => {
-    if (!isOnlineFeaturesAvailable) {
-      if (
-        activeNav === "explore" ||
-        activeNav === "favorites" ||
-        activeNav === "playlist"
-      ) {
-        setPlaylistReturnSnapshot(null);
-        setExploreReturnSnapshot(null);
-        setSelectedPlaylist(null);
-        setActiveNav("home");
-      }
+    // 当前分支下 activeNav 不可用（离线看探索页、未登录看歌单/收藏等）时回落到首页。
+    // 依赖只用稳定原语，避免每次渲染都跑（onlineSession 是派生对象）。
+    const fallbackNav = resolveNavFallback(onlineSession, activeNav);
+    if (!fallbackNav) {
       return;
     }
 
-    if (
-      !hasSavedNeteaseCookie &&
-      (activeNav === "favorites" || activeNav === "playlist")
-    ) {
-      setPlaylistReturnSnapshot(null);
-      setExploreReturnSnapshot(null);
-      setSelectedPlaylist(null);
-      setActiveNav("home");
-    }
-  }, [activeNav, hasSavedNeteaseCookie, isOnlineFeaturesAvailable]);
+    setPlaylistReturnSnapshot(null);
+    setExploreReturnSnapshot(null);
+    setSelectedPlaylist(null);
+    setActiveNav(fallbackNav);
+  }, [activeNav, onlineSession.mode, onlineSession.authenticated]);
 
   useEffect(() => {
     schedulePlaybackResumePersistence();
@@ -18539,8 +18512,8 @@ export function AppShell({
 
   const contextMenuCopy = getContextMenuCopy(copy.locale);
   const canUseNeteaseContextActions =
-    isNeteaseSourceEnabled(settings) &&
-    settings.network.neteaseCookie.trim().length > 0;
+    onlineSession.sources.netease.enabled &&
+    onlineSession.sources.netease.authenticated;
   const playlistLibraryCacheKey = buildNeteaseCacheKey(
     settingsRef.current,
     "playlist:library",
@@ -18593,8 +18566,8 @@ export function AppShell({
         const currentPlaylistId =
           activeNav === "playlist" ? (selectedPlaylist?.id ?? null) : null;
         const canUseKugouContextActions =
-          isKugouSourceEnabled(settings) &&
-          settings.network.kugouCookie.trim().length > 0;
+          onlineSession.sources.kugou.enabled &&
+          onlineSession.sources.kugou.authenticated;
         const canRemoveFromCurrentPlaylist =
           canUseKugouContextActions &&
           currentPlaylistId !== null &&
@@ -18752,7 +18725,7 @@ export function AppShell({
             }
           : null,
         neteaseTrackId !== null &&
-        isOnlineFeaturesAvailable &&
+        onlineSession.sources.netease.enabled &&
         settings.library.downloadEnabled &&
         contextMenuBusyActionId === null
           ? {
@@ -19197,8 +19170,9 @@ export function AppShell({
     };
   }, [workspaceTransitionKey]);
 
+  // 工作区模板：分支判定全部由 resolveWorkspaceTemplate 完成，这里只做 id -> 组件 映射
   const workspaceScreen =
-    activeNav === "settings" ? (
+    workspaceTemplate.id === "settings" ? (
       <SettingsScreen
         copy={copy}
         languageOptions={languageOptions}
@@ -19236,9 +19210,26 @@ export function AppShell({
         onClearLibrary={() => void handleClearLibrary()}
         onReleaseMemoryCache={() => void handleReleaseMemoryCache()}
       />
-    ) : activeNav === "home" && isKugouSourceEnabled(settings) ? (
+    ) : workspaceTemplate.id === "offline-home" ? (
+      <OfflineHomeTemplate
+        copy={copy}
+        settings={settings}
+        mediaLibrary={mediaLibrary}
+        isLibraryLoading={isLibraryLoading}
+        onOpenLibrary={() => setActiveNav("library")}
+        onImportMusic={() => {
+          setActiveNav("library");
+          setLibraryView("import");
+        }}
+        onPlayLocalTrack={playTrackSelection}
+        onTrackContextMenu={handleTrackContextMenu}
+        onOpenTrackArtist={(track) => void handleOpenTrackArtist(track)}
+        onOpenTrackAlbum={(track) => void handleOpenTrackAlbum(track)}
+      />
+    ) : workspaceTemplate.id === "kugou-home" ? (
       <KugouHomeScreen
         locale={copy.locale}
+        session={onlineSession}
         settings={settings}
         mediaLibrary={mediaLibrary}
         isLibraryLoading={isLibraryLoading}
@@ -19269,9 +19260,10 @@ export function AppShell({
           })
         }
       />
-    ) : activeNav === "home" ? (
+    ) : workspaceTemplate.id === "netease-home" ? (
       <HomeScreen
         copy={copy}
+        session={onlineSession}
         settings={settings}
         dataVersion={neteaseUiVersion}
         mediaLibrary={mediaLibrary}
@@ -19312,9 +19304,10 @@ export function AppShell({
         onPlaylistContextMenu={handlePlaylistContextMenu}
         onLoadSuccess={() => setIsStartupApiWaitPending(false)}
       />
-    ) : activeNav === "playlist" && isKugouSourceEnabled(settings) ? (
+    ) : workspaceTemplate.id === "kugou-playlist" ? (
       <KugouPlaylistScreen
         copy={copy}
+        session={onlineSession}
         settings={settings}
         dataVersion={neteaseUiVersion}
         initialSelection={selectedPlaylist}
@@ -19328,9 +19321,10 @@ export function AppShell({
         }
         onSongContextMenu={handleKugouSongContextMenu}
       />
-    ) : activeNav === "playlist" ? (
+    ) : workspaceTemplate.id === "netease-playlist" ? (
       <PlaylistScreen
         copy={copy}
+        session={onlineSession}
         settings={settings}
         dataVersion={neteaseUiVersion}
         initialSelection={selectedPlaylist}
@@ -19361,9 +19355,10 @@ export function AppShell({
         onCreatePlaylist={openCreatePlaylistEditor}
         onEditPlaylist={openEditPlaylistEditor}
       />
-    ) : activeNav === "favorites" && isKugouSourceEnabled(settings) ? (
+    ) : workspaceTemplate.id === "kugou-favorites" ? (
       <KugouLikedSongsScreen
         copy={copy}
+        session={onlineSession}
         settings={settings}
         dataVersion={neteaseUiVersion}
         onPlayTrack={(hash, queueSongs, playlist) =>
@@ -19373,9 +19368,10 @@ export function AppShell({
         onOpenAlbum={(id, name) => openKugouCatalogView("album", id, name)}
         onSongContextMenu={handleKugouSongContextMenu}
       />
-    ) : activeNav === "favorites" ? (
+    ) : workspaceTemplate.id === "netease-favorites" ? (
       <LikedSongsScreen
         copy={copy}
+        session={onlineSession}
         settings={settings}
         dataVersion={neteaseUiVersion}
         onPlayNeteaseTrack={(trackId, queueSongs, sourcePlaylist) =>
@@ -19400,11 +19396,11 @@ export function AppShell({
         onSongContextMenu={handleNeteaseSongContextMenu}
         onPlaylistContextMenu={handlePlaylistContextMenu}
       />
-    ) : activeNav === "tools" ? (
+    ) : workspaceTemplate.id === "tools" ? (
       toolsView === "kugouImport" ? (
         <KugouImportScreen
           copy={copy}
-          settings={settings}
+          session={onlineSession}
           playlists={toolOwnedPlaylists}
           isLoadingPlaylists={isToolPlaylistsLoading}
           selectedPlaylistId={selectedKugouImportPlaylistId}
@@ -19472,7 +19468,7 @@ export function AppShell({
           onOpenKugouImport={() => setToolsView("kugouImport")}
         />
       )
-    ) : activeNav === "library" ? (
+    ) : workspaceTemplate.id === "library" ? (
       <LibraryScreen
         copy={copy}
         settings={settings}
@@ -19514,8 +19510,7 @@ export function AppShell({
         isNavigatingToRemoteDetail={workspaceLoadingMessage !== null}
         onTrackContextMenu={handleTrackContextMenu}
       />
-    ) : activeNav === "explore" &&
-      isKugouSourceEnabled(settings) &&
+    ) : workspaceTemplate.id === "kugou-explore-detail" &&
       kugouCatalogDetailRequest ? (
       <KugouCatalogDetailScreen
         copy={copy}
@@ -19529,9 +19524,10 @@ export function AppShell({
         }
         onSongContextMenu={handleKugouSongContextMenu}
       />
-    ) : activeNav === "explore" && isKugouSourceEnabled(settings) ? (
+    ) : workspaceTemplate.id === "kugou-explore" ? (
       <KugouExploreScreen
         locale={copy.locale}
+        session={onlineSession}
         settings={settings}
         onPlayTrack={(hash, queueSongs) =>
           void handlePlayKugouTrackSelection(hash, queueSongs)
@@ -19551,9 +19547,10 @@ export function AppShell({
           })
         }
       />
-    ) : activeNav === "explore" ? (
+    ) : workspaceTemplate.id === "netease-explore" ? (
       <ExploreScreen
         locale={copy.locale}
+        session={onlineSession}
         settings={settings}
         initialSnapshot={exploreScreenSnapshot}
         onSnapshotChange={setExploreScreenSnapshot}
@@ -28015,8 +28012,185 @@ function NetworkSectionError({
   );
 }
 
+/**
+ * 离线分支模板（branch = offline）
+ * ---------------------------------------------------------------------------
+ * 由 resolveWorkspaceTemplate() 判定为 { id: "offline-home" } 时渲染。
+ * 该模板不包含任何在线区块，因此离线态不会再出现"启用/登录网易云"之类的串源提示。
+ */
+function OfflineHomeTemplate({
+  copy,
+  settings,
+  mediaLibrary,
+  isLibraryLoading,
+  onOpenLibrary,
+  onImportMusic,
+  onPlayLocalTrack,
+  onTrackContextMenu,
+  onOpenTrackArtist,
+  onOpenTrackAlbum,
+}: {
+  copy: UiCopy;
+  settings: AppSettings;
+  mediaLibrary: MediaLibrarySnapshot | null;
+  isLibraryLoading: boolean;
+  onOpenLibrary: () => void;
+  onImportMusic: () => void;
+  onPlayLocalTrack: (trackId: string, queueTracks: TrackRecord[]) => void;
+  onTrackContextMenu: (
+    event: ReactMouseEvent<HTMLElement>,
+    track: TrackRecord,
+    queueTracks: TrackRecord[],
+  ) => void;
+  onOpenTrackArtist: (track: TrackRecord) => void;
+  onOpenTrackAlbum: (track: TrackRecord) => void;
+}) {
+  const homeCopy = getHomeCopy(copy.locale);
+  const tracks = mediaLibrary?.tracks ?? [];
+  const localTracks = tracks.filter((track) => track.source.kind === "localFile");
+  const offlinePicks = buildHomeOfflineRecommendations(localTracks, 8);
+  const artworksById = new Map(
+    (mediaLibrary?.artworks ?? []).map((artwork) => [artwork.id, artwork]),
+  );
+  const uniqueArtists = new Set(
+    localTracks.flatMap((track) =>
+      splitTrackArtistNames(track.artist, copy.library.songFields.unknownArtist),
+    ),
+  );
+  const uniqueAlbums = new Set(
+    localTracks.map(
+      (track) => track.album?.trim() || copy.library.songFields.unknownAlbum,
+    ),
+  );
+  const pickItems = offlinePicks.map((track) => ({
+    id: track.id,
+    track,
+    title: track.title,
+    artistLabel: track.artist?.trim() || copy.library.songFields.unknownArtist,
+    albumLabel: track.album?.trim() || copy.library.songFields.unknownAlbum,
+    durationLabel: formatDurationMs(track.durationMs),
+    artworkUrl: settings.appearance.showAlbumArtwork
+      ? resolveTrackArtworkUrl(track, artworksById)
+      : null,
+  }));
+
+  return (
+    <section className="home-screen">
+      <header className="home-hero">
+        <div className="home-hero__copy">
+          <h2 className="settings-screen__title">{homeCopy.titleLoggedOut}</h2>
+          <p className="settings-screen__description">
+            {homeCopy.descriptionLoggedOut}
+          </p>
+        </div>
+        <div className="home-hero__actions">
+          <UIButton variant="secondary" onClick={onOpenLibrary}>
+            {homeCopy.quickLibrary}
+          </UIButton>
+          <UIButton variant="primary" onClick={onImportMusic}>
+            {homeCopy.quickImport}
+          </UIButton>
+        </div>
+      </header>
+
+      <div className="home-stat-grid">
+        <div className="home-stat-card">
+          <span>{homeCopy.statsTracks}</span>
+          <strong>{tracks.length.toLocaleString(copy.locale)}</strong>
+          <small>{homeCopy.sourceOffline}</small>
+        </div>
+        <div className="home-stat-card">
+          <span>{homeCopy.statsLocalTracks}</span>
+          <strong>{localTracks.length.toLocaleString(copy.locale)}</strong>
+          <small>{homeCopy.sourceOffline}</small>
+        </div>
+        <div className="home-stat-card">
+          <span>{homeCopy.statsArtists}</span>
+          <strong>{uniqueArtists.size.toLocaleString(copy.locale)}</strong>
+          <small>{homeCopy.sourceOffline}</small>
+        </div>
+        <div className="home-stat-card">
+          <span>{homeCopy.statsAlbums}</span>
+          <strong>{uniqueAlbums.size.toLocaleString(copy.locale)}</strong>
+          <small>{homeCopy.sourceOffline}</small>
+        </div>
+      </div>
+
+      <section className="home-section">
+        <div className="home-section__header">
+          <div>
+            <p className="settings-screen__eyebrow">{homeCopy.sourceOffline}</p>
+            <h3 className="settings-card__title">
+              {homeCopy.sectionOfflinePicks}
+            </h3>
+          </div>
+        </div>
+        {isLibraryLoading ? (
+          <UILoadingBlock label={homeCopy.loading} variant="list" />
+        ) : pickItems.length === 0 ? (
+          <p className="library-empty">{homeCopy.emptyLibrary}</p>
+        ) : (
+          <div className="home-song-list">
+            {pickItems.map((item) => (
+              <div
+                key={item.id}
+                className="home-song-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => onPlayLocalTrack(item.track.id, offlinePicks)}
+                onContextMenu={(event) =>
+                  onTrackContextMenu(event, item.track, offlinePicks)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onPlayLocalTrack(item.track.id, offlinePicks);
+                  }
+                }}
+              >
+                <span className="home-song-card__cover" aria-hidden="true">
+                  {item.artworkUrl ? (
+                    <img src={item.artworkUrl} alt="" loading="lazy" />
+                  ) : (
+                    <span className="home-song-card__cover-fallback">
+                      <SongsTileIcon />
+                    </span>
+                  )}
+                </span>
+                <span className="home-song-card__copy">
+                  <span className="home-song-card__title">{item.title}</span>
+                  <span className="home-song-card__subtitle">
+                    <SongMetaButton
+                      label={item.artistLabel}
+                      onClick={() => onOpenTrackArtist(item.track)}
+                    />
+                  </span>
+                </span>
+                <span className="home-song-card__meta">
+                  <SongMetaButton
+                    label={item.albumLabel}
+                    onClick={() => onOpenTrackAlbum(item.track)}
+                    disabled={!item.track.album?.trim()}
+                  />
+                </span>
+                <span className="home-song-card__duration">
+                  {item.durationLabel}
+                </span>
+                <span className="home-song-card__badge">
+                  {homeCopy.localFileTag}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
 function HomeScreen({
   copy,
+  session,
   settings,
   dataVersion,
   mediaLibrary,
@@ -28037,6 +28211,7 @@ function HomeScreen({
   onLoadSuccess,
 }: {
   copy: UiCopy;
+  session: OnlineSession;
   settings: AppSettings;
   dataVersion: number;
   mediaLibrary: MediaLibrarySnapshot | null;
@@ -28099,9 +28274,9 @@ function HomeScreen({
     localTracks,
     8,
   );
-  const isNeteaseEnabled = isNeteaseSourceEnabled(settings);
-  const hasSavedNeteaseCookie =
-    settings.network.neteaseCookie.trim().length > 0;
+  // 在线状态来自状态层（session），组件内不再从 settings 自行推导
+  const isNeteaseEnabled = session.mode === "netease";
+  const hasSavedNeteaseCookie = session.sources.netease.authenticated;
   const [neteaseAccount, setNeteaseAccount] =
     useState<NeteaseAccountProfile | null>(null);
   const [isHomeLoading, setIsHomeLoading] = useState(false);
@@ -29033,6 +29208,7 @@ function PlaylistBrowserSection({
 
 function KugouPlaylistScreen({
   copy,
+  session,
   settings,
   dataVersion,
   initialSelection,
@@ -29045,6 +29221,7 @@ function KugouPlaylistScreen({
   onSongContextMenu,
 }: {
   copy: UiCopy;
+  session: OnlineSession;
   settings: AppSettings;
   dataVersion: number;
   initialSelection: PlaylistSelection;
@@ -29061,8 +29238,8 @@ function KugouPlaylistScreen({
   ) => void;
 }) {
   const playlistCopy = getPlaylistCopy(copy.locale);
-  const isKugouEnabled = isKugouSourceEnabled(settings);
-  const hasCredentials = settings.network.kugouCookie.trim().length > 0;
+  const isKugouEnabled = session.mode === "kugou";
+  const hasCredentials = session.sources.kugou.authenticated;
   const kugouRequestSettingsKey = [
     settings.network.kugouCookie,
     settings.network.kugouApiBaseUrl,
@@ -29971,6 +30148,7 @@ function KugouCatalogDetailScreen({
 
 function KugouLikedSongsScreen({
   copy,
+  session,
   settings,
   dataVersion,
   onPlayTrack,
@@ -29979,6 +30157,7 @@ function KugouLikedSongsScreen({
   onSongContextMenu,
 }: {
   copy: UiCopy;
+  session: OnlineSession;
   settings: AppSettings;
   dataVersion: number;
   onPlayTrack: (
@@ -29995,8 +30174,8 @@ function KugouLikedSongsScreen({
   ) => void;
 }) {
   const likedSongsCopy = getLikedSongsCopy(copy.locale);
-  const isEnabled = isKugouSourceEnabled(settings);
-  const hasCredentials = settings.network.kugouCookie.trim().length > 0;
+  const isEnabled = session.mode === "kugou";
+  const hasCredentials = session.sources.kugou.authenticated;
   const requestKey = [
     settings.network.kugouCookie,
     settings.network.kugouApiBaseUrl,
@@ -30276,6 +30455,7 @@ function KugouLikedSongsScreen({
 
 function PlaylistScreen({
   copy,
+  session,
   settings,
   dataVersion,
   initialSelection,
@@ -30293,6 +30473,7 @@ function PlaylistScreen({
   isStartingIntelligenceMode,
 }: {
   copy: UiCopy;
+  session: OnlineSession;
   settings: AppSettings;
   dataVersion: number;
   initialSelection: PlaylistSelection;
@@ -30328,9 +30509,8 @@ function PlaylistScreen({
   const playlistCopy = getPlaylistCopy(copy.locale);
   const playlistEditorCopy = getPlaylistEditorCopy(copy.locale);
   const localeStrings = getLocaleStrings(copy.locale);
-  const isNeteaseEnabled = isNeteaseSourceEnabled(settings);
-  const hasSavedNeteaseCookie =
-    settings.network.neteaseCookie.trim().length > 0;
+  const isNeteaseEnabled = session.mode === "netease";
+  const hasSavedNeteaseCookie = session.sources.netease.authenticated;
   const [neteaseAccount, setNeteaseAccount] =
     useState<NeteaseAccountProfile | null>(null);
   const [userPlaylists, setUserPlaylists] = useState<
@@ -31038,6 +31218,7 @@ function PlaylistScreen({
 
 function LikedSongsScreen({
   copy,
+  session,
   settings,
   dataVersion,
   onPlayNeteaseTrack,
@@ -31049,6 +31230,7 @@ function LikedSongsScreen({
   onPlaylistContextMenu,
 }: {
   copy: UiCopy;
+  session: OnlineSession;
   settings: AppSettings;
   dataVersion: number;
   onPlayNeteaseTrack: (
@@ -31077,9 +31259,8 @@ function LikedSongsScreen({
   const homeCopy = getHomeCopy(copy.locale);
   const likedSongsCopy = getLikedSongsCopy(copy.locale);
   const localeStrings = getLocaleStrings(copy.locale);
-  const isNeteaseEnabled = isNeteaseSourceEnabled(settings);
-  const hasSavedNeteaseCookie =
-    settings.network.neteaseCookie.trim().length > 0;
+  const isNeteaseEnabled = session.mode === "netease";
+  const hasSavedNeteaseCookie = session.sources.netease.authenticated;
   const [neteaseAccount, setNeteaseAccount] =
     useState<NeteaseAccountProfile | null>(null);
   const [likedPlaylist, setLikedPlaylist] =
@@ -32177,7 +32358,7 @@ function SongMetadataFillScreen({
 
 function KugouImportScreen({
   copy,
-  settings,
+  session,
   playlists,
   isLoadingPlaylists,
   selectedPlaylistId,
@@ -32205,7 +32386,7 @@ function KugouImportScreen({
   onRetryEntry,
 }: {
   copy: UiCopy;
-  settings: AppSettings;
+  session: OnlineSession;
   playlists: NeteasePlaylistRecommendation[];
   isLoadingPlaylists: boolean;
   selectedPlaylistId: string;
@@ -32242,9 +32423,9 @@ function KugouImportScreen({
   const kugouImportCopy = getKugouImportCopy(copy.locale);
   const toolsCopy = getToolsCopy(copy.locale);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const isNeteaseEnabled = isNeteaseSourceEnabled(settings);
-  const hasSavedNeteaseCookie =
-    settings.network.neteaseCookie.trim().length > 0;
+  // 该工具的目标歌单来自网易云，因此这里的"启用/登录"必须显式指向网易云源
+  const isNeteaseEnabled = session.sources.netease.enabled;
+  const hasSavedNeteaseCookie = session.sources.netease.authenticated;
   const playlistOptions: UISelectOption[] =
     playlists.length > 0
       ? playlists.map((playlist) => ({

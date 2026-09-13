@@ -1,12 +1,12 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { UIButton, UILoadingBlock } from "../ui/components";
+import type { OnlineSession } from "./onlineSession";
 import {
   getKugouDailyRecommendedSongs,
   getKugouLoggedInAccount,
   getKugouPersonalFmSongs,
   getKugouTopPlaylists,
-  isKugouSourceEnabled,
 } from "../network/kugou";
 import type {
   KugouAccountProfile,
@@ -20,6 +20,7 @@ import "./styles.css";
 
 type Props = {
   locale: string;
+  session: OnlineSession;
   settings: AppSettings;
   mediaLibrary: MediaLibrarySnapshot | null;
   isLibraryLoading: boolean;
@@ -292,6 +293,7 @@ function SongRow({
 }
 
 export function KugouHomeScreen({
+  session,
   settings,
   locale,
   mediaLibrary,
@@ -308,7 +310,7 @@ export function KugouHomeScreen({
   onLoadSuccess,
 }: Props) {
   const text = getCopy(locale);
-  const enabled = isKugouSourceEnabled(settings);
+  const enabled = session.mode === "kugou";
   const offlineRecommendations = getOfflineRecommendations(
     (mediaLibrary?.tracks ?? []).filter(
       (track) => track.source.kind === "localFile",
