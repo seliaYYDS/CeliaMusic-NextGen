@@ -5,7 +5,7 @@ use std::{
     net::{TcpListener, TcpStream},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
@@ -627,51 +627,86 @@ fn prepare_kugou_runtime(
     Ok(runtime_dir)
 }
 
+/// `node --version` 会 spawn 一个进程，而调用方（每次启动/重启本地 API）都会
+/// 走到这里。Node 是否存在是进程级不变的属性，因此只探测一次并缓存结果。
+fn node_is_available() -> bool {
+    static NODE_AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *NODE_AVAILABLE.get_or_init(|| run_command_success("node", &["--version"]))
+}
+
+/// `npx` 缓存目录（`npx -y <pkg>` 下载后落在 `<cache>/_npx/<hash>/node_modules`）。
+/// 仅用于判断网易云的包是否已在本地，取不到时按「没缓存」处理即可。
+#[cfg(windows)]
+fn npx_cache_root() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(|base| PathBuf::from(base).join("npm-cache").join("_npx"))
+}
+
+#[cfg(not(windows))]
+fn npx_cache_root() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|base| PathBuf::from(base).join(".npm").join("_npx"))
+}
+
+/// 网易云的包是否已经在 npx 缓存里。
+///
+/// 这里刻意只查文件系统。此前用 `npx --no-install NeteaseCloudMusicApi --version`
+/// 探测，有两个致命问题：
+///   1. 它并不查 npx 缓存（npm 10 直接以 "npx canceled due to missing packages"
+///      失败退出），却要花掉约 2 秒，而且永远得出「本地没有包」的错误结论；
+///   2. NeteaseCloudMusicApi 的 bin 是 `./app.js`，而 app.js 会忽略 argv 直接
+///      `serveNcmApi()` 起服务且永不退出。只要该解析成功（例如全局安装过），
+///      `Command::status()` 就会永久阻塞——而它当时跑在 Tauri 主线程上。
+/// 探测的唯一用途只是挑一个就绪超时，不值得付出这种代价。
+fn is_netease_runtime_cached() -> bool {
+    let Some(cache_root) = npx_cache_root() else {
+        return false;
+    };
+
+    fs::read_dir(cache_root)
+        .map(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                entry
+                    .path()
+                    .join("node_modules")
+                    .join("NeteaseCloudMusicApi")
+                    .join("app.js")
+                    .is_file()
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn detect_local_api_dependencies(
     provider: LocalApiProvider,
     logs: &Arc<Mutex<VecDeque<String>>>,
 ) -> anyhow::Result<Duration> {
-    #[cfg(windows)]
-    let npx_command = "npx.cmd";
-    #[cfg(not(windows))]
-    let npx_command = "npx";
-
-    if !run_command_success("node", &["--version"]) {
+    if !node_is_available() {
         return Err(anyhow!(
             "Node.js is not installed or not available in PATH, so the local {} API server cannot be started.",
             provider.label()
         ));
     }
 
-    if provider == LocalApiProvider::Netease && !run_command_success(npx_command, &["--version"]) {
-        return Err(anyhow!(
-            "npx is not available in PATH, so the local {} API server cannot be started.",
-            provider.label()
-        ));
-    }
+    match provider {
+        LocalApiProvider::Netease => {
+            if is_netease_runtime_cached() {
+                return Ok(Duration::from_secs(LOCAL_API_STARTUP_TIMEOUT_SECS));
+            }
 
-    if provider == LocalApiProvider::Netease
-        && !run_command_success(
-            npx_command,
-            &["--no-install", "NeteaseCloudMusicApi", "--version"],
-        )
-    {
-        push_log_line(
-            logs,
-            "[system] NeteaseCloudMusicApi is not available locally yet; first startup may download the package and take longer.",
-        );
-        return Ok(Duration::from_secs(LOCAL_API_STARTUP_EXTENDED_TIMEOUT_SECS));
+            push_log_line(
+                logs,
+                "[system] NeteaseCloudMusicApi is not in the local npx cache yet; first startup may download the package and take longer.",
+            );
+            Ok(Duration::from_secs(LOCAL_API_STARTUP_EXTENDED_TIMEOUT_SECS))
+        }
+        LocalApiProvider::Kugou => {
+            push_log_line(
+                logs,
+                "[system] KuGouMusicApi uses the persistent local module bridge; first startup may take longer.",
+            );
+            Ok(Duration::from_secs(LOCAL_API_STARTUP_EXTENDED_TIMEOUT_SECS))
+        }
     }
-
-    if provider == LocalApiProvider::Kugou {
-        push_log_line(
-            logs,
-            "[system] KuGouMusicApi uses the persistent local module bridge; first startup may take longer.",
-        );
-        return Ok(Duration::from_secs(LOCAL_API_STARTUP_EXTENDED_TIMEOUT_SECS));
-    }
-
-    Ok(Duration::from_secs(LOCAL_API_STARTUP_TIMEOUT_SECS))
 }
 
 fn build_status_from_runtime(
@@ -1009,22 +1044,38 @@ pub fn sync_local_api_servers_for_settings(
     })
 }
 
+/// 这两个命令内部会 spawn 子进程（node / npx / npm）并同步等待其退出。
+/// 同步的命令会跑在 Tauri 主线程上——也就是跑窗口消息循环的那条线程——一旦
+/// 阻塞住，整个窗口就会「未响应」。因此这里必须 async + spawn_blocking，把
+/// 阻塞工作甩到阻塞线程池，绝不能让主线程等待任何子进程。
 #[tauri::command]
-pub fn sync_local_api_servers(
+pub async fn sync_local_api_servers(
     app: AppHandle,
     state: State<'_, LocalNeteaseApiState>,
     settings: AppSettings,
 ) -> Result<LocalApiServersStatus, String> {
-    sync_local_api_servers_for_settings(&app, &state, &settings)
-        .map_err(|error| error.to_string())
+    let state = state.inner().clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        sync_local_api_servers_for_settings(&app, &state, &settings)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn get_local_api_servers_status(
+pub async fn get_local_api_servers_status(
     state: State<'_, LocalNeteaseApiState>,
     settings: AppSettings,
 ) -> Result<LocalApiServersStatus, String> {
-    snapshot_local_api_servers_status(&state, &settings).map_err(|error| error.to_string())
+    let state = state.inner().clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        snapshot_local_api_servers_status(&state, &settings).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
