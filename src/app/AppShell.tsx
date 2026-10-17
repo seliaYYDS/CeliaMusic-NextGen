@@ -2076,10 +2076,22 @@ type QueueDragState = {
   rowCenters: Record<string, number>;
 };
 
+type PersistedPlaybackResumeTrack = {
+  id: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  durationMs: number | null;
+  artworkUrl: string | null;
+  cacheKey: string | null;
+};
+
 type PersistedPlaybackResumeState = {
   queueIds: string[];
   trackId: string | null;
   kugouTracks: KugouSongDetail[];
+  /** 队列曲目的轻量元数据：即使本地 API 不可用、在线缓存被清理，也能重建播放列表。 */
+  queueTracks: PersistedPlaybackResumeTrack[];
 };
 
 type PlaybackRestoreSessionState = {
@@ -2087,6 +2099,7 @@ type PlaybackRestoreSessionState = {
   queueIds: string[];
   trackId: string | null;
   kugouTracks: KugouSongDetail[];
+  queueTracks: PersistedPlaybackResumeTrack[];
   sequence: number;
 } | null;
 
@@ -8924,6 +8937,7 @@ export function AppShell({
       queueIds: rawQueueIds,
       trackId: rawTrackIdCandidate,
       kugouTracks: persistedState.kugouTracks,
+      queueTracks: persistedState.queueTracks,
       sequence: playbackRestoreSequenceRef.current + 1,
     });
   }, [
@@ -8957,6 +8971,35 @@ export function AppShell({
             : current,
         );
       }
+      const restorableTrackIds = new Set(
+        [...rawQueueIds, rawTrackIdCandidate].filter(
+          (trackId): trackId is string => Boolean(trackId),
+        ),
+      );
+      // 先用上次退出时保存的曲目元数据重建队列。这样即使本地 API 没启动、
+      // 网络不可用或者在线曲目缓存被清理，播放列表也不会因为"解析不到"
+      // 而在恢复阶段被丢掉。
+      const resumablePlaceholderTracks = restoreSession.queueTracks.filter(
+        (entry) =>
+          restorableTrackIds.has(entry.id) &&
+          findTrackById(entry.id) === null &&
+          (parseNeteaseTrackIdFromCacheKey(entry.cacheKey ?? entry.id) !==
+            null ||
+            parseKugouTrackHashFromCacheKey(entry.cacheKey ?? entry.id) !==
+              null),
+      );
+      if (resumablePlaceholderTracks.length > 0) {
+        upsertTransientRemoteEntries(
+          resumablePlaceholderTracks.map((entry) => ({
+            track: createResumePlaceholderTrack(entry),
+            artworkUrl: entry.artworkUrl ?? null,
+          })),
+          {
+            protectedTrackIds: Array.from(restorableTrackIds),
+          },
+        );
+      }
+
       const missingNeteaseTrackIds = Array.from(
         new Set(
           [...rawQueueIds, rawTrackIdCandidate]
@@ -8991,7 +9034,19 @@ export function AppShell({
           detail,
         ]),
       );
-      const restorableKugouTracks = missingKugouTrackHashes
+      // 用保存下来的酷狗曲目详情恢复队列（不依赖"当前能否解析到曲目"，
+      // 这样即使曲目已经被占位记录重建，详情缓存也不会漏掉）。
+      const queueKugouTrackHashes = Array.from(
+        new Set(
+          [...rawQueueIds, rawTrackIdCandidate]
+            .filter((trackId): trackId is string => Boolean(trackId))
+            .flatMap((trackId) => {
+              const kugouHash = parseKugouTrackHashFromCacheKey(trackId);
+              return kugouHash ? [kugouHash] : [];
+            }),
+        ),
+      );
+      const restorableKugouTracks = queueKugouTrackHashes
         .map(
           (hash) =>
             persistedKugouTracksByHash.get(hash.trim().toUpperCase()) ?? null,
@@ -9004,6 +9059,9 @@ export function AppShell({
             track: createTransientKugouTrack(detail),
             artworkUrl: detail.artworkUrl ?? null,
           })),
+          {
+            protectedTrackIds: Array.from(restorableTrackIds),
+          },
         );
       }
       const unresolvedKugouTrackHashes = missingKugouTrackHashes.filter(
@@ -9012,7 +9070,8 @@ export function AppShell({
 
       if (
         missingNeteaseTrackIds.length > 0 ||
-        unresolvedKugouTrackHashes.length > 0
+        unresolvedKugouTrackHashes.length > 0 ||
+        resumablePlaceholderTracks.length > 0
       ) {
         try {
           await waitForLocalApisReady(settings, {
@@ -9101,7 +9160,13 @@ export function AppShell({
         return;
       }
 
+      // 队列整体保留（即使某一首暂时解析不到，也不能把它从播放列表里删掉），
+      // 只有"当前播放曲目"必须是可以真正播放的那一首。
       const restoredQueueIds = rawQueueIds.filter(
+        (trackId, index, collection) =>
+          Boolean(trackId) && collection.indexOf(trackId) === index,
+      );
+      const restorableQueueIds = restoredQueueIds.filter(
         (trackId) => findTrackById(trackId) !== null,
       );
       const restoredTrackIdCandidate =
@@ -9109,7 +9174,7 @@ export function AppShell({
           ? rawTrackIdCandidate
           : null;
       const restoredTrackId =
-        restoredTrackIdCandidate ?? restoredQueueIds[0] ?? null;
+        restoredTrackIdCandidate ?? restorableQueueIds[0] ?? null;
       const restoredQueueForPlayback =
         restoredQueueIds.length > 0
           ? restoredQueueIds
@@ -9216,9 +9281,17 @@ export function AppShell({
     [libraryArtworks],
   );
   const trackLookup = useMemo(() => {
-    const nextTrackLookup = new Map(
+    const nextTrackLookup = new Map<string, TrackRecord>(
       libraryTracks.map((track) => [track.id, track]),
     );
+    // 队列用的是在线歌曲的缓存键，这里补一份缓存键索引，
+    // 让媒体库里的在线歌曲在重启后依然能在播放列表中显示。
+    libraryTracks.forEach((track) => {
+      const cacheKey = track.playback.cacheKey;
+      if (cacheKey && !nextTrackLookup.has(cacheKey)) {
+        nextTrackLookup.set(cacheKey, { ...track, id: cacheKey });
+      }
+    });
     Object.values(transientRemoteTracks).forEach((track) => {
       nextTrackLookup.set(track.id, track);
     });
@@ -9243,7 +9316,10 @@ export function AppShell({
     return (
       trackLookup.get(trackId) ??
       transientRemoteTracksRef.current[trackId] ??
-      mediaLibraryRef.current?.tracks.find((track) => track.id === trackId) ??
+      findLibraryTrackIdentityMatch(
+        mediaLibraryRef.current?.tracks ?? [],
+        trackId,
+      ) ??
       null
     );
   };
@@ -9308,7 +9384,7 @@ export function AppShell({
         .filter((track): track is TrackRecord => track !== null),
     [currentQueueIds],
   );
-  const collectPlaybackCacheProtectedTrackIds = () => {
+  const collectNearbyPlaybackTrackIds = () => {
     const protectedTrackIds = new Set<string>();
     const currentWindowStart =
       currentQueueIndex >= 0 ? Math.max(0, currentQueueIndex - 4) : 0;
@@ -9351,6 +9427,26 @@ export function AppShell({
 
     return protectedTrackIds;
   };
+
+  /**
+   * 播放队列里的每一首都必须保持"可解析"。
+   * 之前只保护当前位置前后十几首，于是后台内存压缩 / 队列增删 / 缓存清理
+   * 会把队列中其余歌曲从在线曲目缓存里删掉，播放列表随之丢歌。
+   */
+  const collectPlaybackQueueTrackIds = () => {
+    const protectedTrackIds = collectNearbyPlaybackTrackIds();
+
+    [...playbackQueueIds, ...currentQueueIds].forEach((trackId) => {
+      if (trackId) {
+        protectedTrackIds.add(trackId);
+      }
+    });
+
+    return protectedTrackIds;
+  };
+
+  const collectPlaybackCacheProtectedTrackIds = () =>
+    collectPlaybackQueueTrackIds();
 
   const pruneTrackAnalysisCache = (protectedTrackIds?: Iterable<string>) => {
     const removedTrackIds = pruneBoundedRecord(
@@ -9415,9 +9511,12 @@ export function AppShell({
       }
 
       const protectedTrackIds = collectPlaybackCacheProtectedTrackIds();
+      // 之前这里的上限就是"被保护的曲目数"，等于把当前位置以外的歌曲
+      // 全部从在线曲目缓存里删掉，队列随即丢歌。改为在保留整个队列的前提下
+      // 只回收与队列无关的浏览缓存。
       const removedRemoteTrackIds = pruneBoundedRecord(
         transientRemoteTracksRef.current,
-        protectedTrackIds.size,
+        Math.max(TRANSIENT_REMOTE_TRACK_CACHE_LIMIT, protectedTrackIds.size),
         protectedTrackIds,
       );
       if (removedRemoteTrackIds.length > 0) {
@@ -10621,7 +10720,10 @@ export function AppShell({
 
   const findTrackById = (trackId: string) =>
     transientRemoteTracksRef.current[trackId] ??
-    mediaLibraryRef.current?.tracks.find((track) => track.id === trackId) ??
+    findLibraryTrackIdentityMatch(
+      mediaLibraryRef.current?.tracks ?? [],
+      trackId,
+    ) ??
     null;
 
   const buildQueueIds = (queueTracks: TrackRecord[]) =>
@@ -10649,11 +10751,11 @@ export function AppShell({
       preserveSourcePlaylist?: boolean;
     },
   ) => {
+    // 只做去重，不再因为"当前解析不到曲目对象"而把歌曲从队列里剔除：
+    // 在线曲目缓存被压缩时会导致解析失败，那样会把播放列表永久改短。
     const deduplicatedQueueIds = nextQueueIds.filter(
       (trackId, index, collection) =>
-        Boolean(trackId) &&
-        collection.indexOf(trackId) === index &&
-        findTrackById(trackId) !== null,
+        Boolean(trackId) && collection.indexOf(trackId) === index,
     );
     setPlaybackQueueIds(deduplicatedQueueIds);
     if (deduplicatedQueueIds.length === 0) {
@@ -11320,11 +11422,14 @@ export function AppShell({
   }, [currentTrack, settings.playback.equalizerEnabled]);
 
   useEffect(() => {
+    // 磁盘缓存文件只保留当前位置附近，避免整队列缓存占满磁盘。
+    const nearbyTrackIds = collectNearbyPlaybackTrackIds();
+    // 曲目解析缓存（在线歌曲）必须保留整个队列，否则播放列表会丢歌。
     const keepTrackIds = collectPlaybackCacheProtectedTrackIds();
 
     Object.entries(playbackCachedAudioPathsRef.current).forEach(
       ([trackId, path]) => {
-        if (keepTrackIds.has(trackId)) {
+        if (nearbyTrackIds.has(trackId)) {
           return;
         }
 
@@ -11333,12 +11438,12 @@ export function AppShell({
       },
     );
 
-    pruneTrackAnalysisCache(keepTrackIds);
+    pruneTrackAnalysisCache(nearbyTrackIds);
     pruneTransientRemoteCaches(keepTrackIds);
     pruneBoundedRecord(
       autoMixDecisionCacheRef.current,
       AUTO_MIX_DECISION_CACHE_LIMIT,
-      keepTrackIds,
+      nearbyTrackIds,
     );
   }, [
     currentQueueIds,
@@ -12853,13 +12958,18 @@ export function AppShell({
 
   const readPersistedPlaybackResumeState = (): PersistedPlaybackResumeState => {
     if (typeof window === "undefined") {
-      return { queueIds: [], trackId: null, kugouTracks: [] };
+      return { queueIds: [], trackId: null, kugouTracks: [], queueTracks: [] };
     }
 
     try {
       const rawValue = window.localStorage.getItem(PLAYBACK_RESUME_STORAGE_KEY);
       if (!rawValue) {
-        return { queueIds: [], trackId: null, kugouTracks: [] };
+        return {
+          queueIds: [],
+          trackId: null,
+          kugouTracks: [],
+          queueTracks: [],
+        };
       }
 
       const parsedValue = JSON.parse(
@@ -12886,18 +12996,57 @@ export function AppShell({
               typeof (track as KugouSongDetail).name === "string",
           )
         : [];
+      const queueTracks: PersistedPlaybackResumeTrack[] = [];
+      if (Array.isArray(parsedValue?.queueTracks)) {
+        parsedValue.queueTracks.forEach((entry) => {
+          if (!entry || typeof entry !== "object") {
+            return;
+          }
+
+          const entryId =
+            typeof entry.id === "string" ? entry.id.trim() : "";
+          if (!entryId || queueTracks.some((track) => track.id === entryId)) {
+            return;
+          }
+
+          const entryTitle =
+            typeof entry.title === "string" ? entry.title.trim() : "";
+          const entryCacheKey =
+            typeof entry.cacheKey === "string" && entry.cacheKey.trim().length > 0
+              ? entry.cacheKey
+              : null;
+
+          queueTracks.push({
+            id: entryId,
+            title: entryTitle.length > 0 ? entryTitle : entryId,
+            artist: typeof entry.artist === "string" ? entry.artist : null,
+            album: typeof entry.album === "string" ? entry.album : null,
+            durationMs:
+              typeof entry.durationMs === "number" &&
+              Number.isFinite(entry.durationMs)
+                ? entry.durationMs
+                : null,
+            artworkUrl:
+              typeof entry.artworkUrl === "string" && entry.artworkUrl.length > 0
+                ? entry.artworkUrl
+                : null,
+            cacheKey: entryCacheKey,
+          });
+        });
+      }
 
       return {
         queueIds,
         trackId,
         kugouTracks,
+        queueTracks,
       };
     } catch (error) {
       console.error(
         "[player] failed to read persisted playback resume state",
         error,
       );
-      return { queueIds: [], trackId: null, kugouTracks: [] };
+      return { queueIds: [], trackId: null, kugouTracks: [], queueTracks: [] };
     }
   };
 
@@ -13022,20 +13171,70 @@ export function AppShell({
       }),
     );
 
+  const buildPersistedResumeQueueTracks = (
+    queueIds: string[],
+  ): PersistedPlaybackResumeTrack[] => {
+    const artworksById = new Map(
+      (mediaLibraryRef.current?.artworks ?? []).map((artwork) => [
+        artwork.id,
+        artwork,
+      ]),
+    );
+    // 队列可能上千首，这里用一次索引把查找从 O(n*m) 降到 O(n+m)。
+    const tracksById = new Map<string, TrackRecord>();
+    (mediaLibraryRef.current?.tracks ?? []).forEach((track) => {
+      tracksById.set(track.id, track);
+      const cacheKey = track.playback.cacheKey;
+      if (cacheKey && !tracksById.has(cacheKey)) {
+        tracksById.set(cacheKey, { ...track, id: cacheKey });
+      }
+    });
+    Object.values(transientRemoteTracksRef.current).forEach((track) => {
+      tracksById.set(track.id, track);
+    });
+    const persistedTracks = new Map<string, PersistedPlaybackResumeTrack>();
+
+    queueIds.forEach((trackId) => {
+      if (!trackId || persistedTracks.has(trackId)) {
+        return;
+      }
+
+      const track = tracksById.get(trackId) ?? null;
+      if (!track) {
+        return;
+      }
+
+      persistedTracks.set(trackId, {
+        id: trackId,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        durationMs: track.durationMs,
+        artworkUrl:
+          resolveTrackArtworkUrl(track, artworksById) ??
+          transientRemoteArtworkUrlsRef.current[trackId] ??
+          null,
+        cacheKey: track.playback.cacheKey ?? null,
+      });
+    });
+
+    return Array.from(persistedTracks.values());
+  };
+
   const persistPlaybackResumeSettings = async () => {
     const baseSettings = settingsRef.current;
     const nextSettings = buildPlaybackResumeSettings(baseSettings);
+    const resumeQueueIds = [
+      ...nextSettings.playback.resumeQueueTrackIds,
+      ...(nextSettings.playback.resumeTrackId
+        ? [nextSettings.playback.resumeTrackId]
+        : []),
+    ];
     writePersistedPlaybackResumeState({
       queueIds: nextSettings.playback.resumeQueueTrackIds,
       trackId: nextSettings.playback.resumeTrackId,
-      kugouTracks: buildPersistedKugouResumeTracks(
-        [
-          ...nextSettings.playback.resumeQueueTrackIds,
-          ...(nextSettings.playback.resumeTrackId
-            ? [nextSettings.playback.resumeTrackId]
-            : []),
-        ],
-      ),
+      kugouTracks: buildPersistedKugouResumeTracks(resumeQueueIds),
+      queueTracks: buildPersistedResumeQueueTracks(resumeQueueIds),
     });
 
     settingsRef.current = nextSettings;
@@ -15713,6 +15912,7 @@ export function AppShell({
         queueIds: [],
         trackId: null,
         kugouTracks: [],
+        queueTracks: [],
       });
     }
 
@@ -18200,13 +18400,27 @@ export function AppShell({
           .length,
       };
 
+      // 播放队列里的曲目不是缓存，而是应用状态：一旦被清掉，播放列表就会
+      // 丢歌（旧实现会在这里清空整个在线曲目缓存）。这里只保留队列用到的条目，
+      // 其余与队列无关的浏览缓存照常释放。
+      const retainedTransientTrackIds = collectPlaybackCacheProtectedTrackIds();
+      const retainedTransientTracks: Record<string, TrackRecord> = {};
+      const retainedTransientArtworkUrls: Record<string, string | null> = {};
+      Object.entries(transientRemoteTracksRef.current).forEach(
+        ([trackId, track]) => {
+          if (retainedTransientTrackIds.has(trackId)) {
+            retainedTransientTracks[trackId] = track;
+            retainedTransientArtworkUrls[trackId] =
+              transientRemoteArtworkUrlsRef.current[trackId] ?? null;
+          }
+        },
+      );
+
       repairingArtworkTrackKeysRef.current.clear();
       repairedArtworkTrackKeysRef.current.clear();
       loggedTrackAnalysisKeysRef.current.clear();
       trackAnalysisByTrackIdRef.current = {};
       trackAnalysisRequestsRef.current = {};
-      transientRemoteTracksRef.current = {};
-      transientRemoteArtworkUrlsRef.current = {};
       autoMixDecisionCacheRef.current = {};
       lyricsCacheRef.current = {};
       lyricsFailedCacheKeysRef.current.clear();
@@ -18221,8 +18435,10 @@ export function AppShell({
       }
       playbackCacheScheduledTrackIdRef.current = null;
 
-      setTransientRemoteTracks({});
-      setTransientRemoteArtworkUrls({});
+      transientRemoteTracksRef.current = retainedTransientTracks;
+      transientRemoteArtworkUrlsRef.current = retainedTransientArtworkUrls;
+      setTransientRemoteTracks({ ...retainedTransientTracks });
+      setTransientRemoteArtworkUrls({ ...retainedTransientArtworkUrls });
 
       const playbackCacheReleaseResults = await Promise.allSettled(
         cachedEntries.map(([, path]) => clearCachedRemoteAudio(path)),
@@ -41786,6 +42002,69 @@ function playbackModeLabel(mode: PlaybackModeOption, locale = "zh-CN") {
     default:
       return locale === "en-US" ? "Ordered Playback" : "顺序播放";
   }
+}
+
+/** 用上次退出时保存的轻量元数据重建一条在线曲目（流地址在播放前再解析）。 */
+function createResumePlaceholderTrack(
+  entry: PersistedPlaybackResumeTrack,
+): TrackRecord {
+  const now = Date.now();
+  const cacheKey = entry.cacheKey ?? entry.id;
+
+  return {
+    id: entry.id,
+    source: {
+      kind: "remoteStream",
+      url: "",
+      mimeType: null,
+      headers: {},
+    },
+    playback: {
+      mode: "remoteStream",
+      primaryUri: "",
+      fallbackUri: null,
+      fallbackUris: [],
+      cacheKey,
+    },
+    title: entry.title,
+    artist: entry.artist,
+    album: entry.album,
+    albumArtist: null,
+    durationMs: entry.durationMs,
+    trackNumber: null,
+    discNumber: null,
+    year: null,
+    genre: null,
+    artworkIds: [],
+    config: createDefaultSongConfig(),
+    importedAtMs: now,
+    updatedAtMs: now,
+  };
+}
+
+/**
+ * 在线歌曲写入媒体库时会分配随机 UUID 主键，但播放队列始终使用
+ * `netease:track:<id>` / `kugou:track:<hash>` 这类缓存键作为曲目 id。
+ * 按主键找不到时回退到缓存键匹配，并把返回记录的 id 归一化为队列 id，
+ * 这样重启、清空内存缓存后队列依然能把歌曲解析出来。
+ */
+function findLibraryTrackIdentityMatch(
+  tracks: TrackRecord[],
+  trackId: string,
+): TrackRecord | null {
+  let cacheKeyMatch: TrackRecord | null = null;
+
+  for (const track of tracks) {
+    if (track.id === trackId) {
+      return track;
+    }
+
+    if (!cacheKeyMatch && track.playback.cacheKey === trackId) {
+      cacheKeyMatch = track;
+    }
+  }
+
+  return cacheKeyMatch ? { ...cacheKeyMatch, id: trackId } : null;
 }
 
 function resolveTrackArtworkUrl(
